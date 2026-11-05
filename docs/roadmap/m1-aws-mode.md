@@ -1,6 +1,6 @@
 # M1 AWS mode, single user
 
-**Status: draft 9, 2026-11-05. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
+**Status: draft 10, 2026-11-05. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
 Phase R: round 1 (eight Fable reviewers) on draft 1 (df4d331); rounds 2 and 3 (eight Opus
 reviewers each, delta, OD-577) on drafts 2 (272df2a) and 3 (1c2e2f5). After round 3 kept finding
 holes at the seams drafts 2 and 3 had added, the operator chose to simplify before the next round
@@ -8,8 +8,9 @@ holes at the seams drafts 2 and 3 had added, the operator chose to simplify befo
 reviewers, full review of draft 4, 9642729) led to OD-623 to OD-625; round 5 (eight Opus reviewers,
 delta, draft 5, 49cd6f1) to OD-640 to OD-642; round 6 (eight Opus reviewers, delta, draft 6, 7b4e5e4)
 to OD-644 to OD-646; round 7 (eight Opus reviewers, delta, draft 7, b01ceee) to OD-649 to OD-653;
-round 8 (eight Opus reviewers, delta, draft 8, 264ef2b) to OD-655 to OD-657.
-Every finding and decision (OD-593 to OD-657) is folded in and listed under "Plan review findings". Code references
+round 8 (eight Opus reviewers, delta, draft 8, 264ef2b) to OD-655 to OD-657; round 9 (eight Opus
+reviewers, delta, draft 9, d6c48a4) to OD-658 to OD-660.
+Every finding and decision (OD-593 to OD-660) is folded in and listed under "Plan review findings". Code references
 are as of `93e0fea`. Ships as one release at the end (OD-600).
 
 This document replaces, for M1, the design plan's M1 parts
@@ -369,7 +370,8 @@ grant signatures (OD-615), Jev, the Mistral judges and set generation in AWS mod
   - The path is chosen by the measured Scan time alone (drain is the same on both paths), with a
     margin so it doesn't flip between runs. A message that arrives during a hold is put back with its
     visibility set to the hold's expected end before anything is written, so nothing counts it as a
-    crash. Amends OD-650.
+    crash. Amends OD-650. (The rollback's `moving_back` and grace case, `rollback --cancel`, and stops
+    during rollback and merge holds are replaced by OD-658; the holder's own lease by OD-658 too.)
 - **OD-656, stop records: authority at commit, never a wedge (W3, W4):**
   - Whether a Cancel or Reject is allowed is decided when its transaction commits (identity, person
     and the role read just before). When `ecf-worker` or `ecf-jobs` applies a stop it re-checks only
@@ -405,7 +407,10 @@ grant signatures (OD-615), Jev, the Mistral judges and set generation in AWS mod
     legacy Cancel or Reject value (v1 cards carry only the item or grant, `approvals.py:383, 600`) is
     refused with "Not done: this card is from before the move; use the new card".
   - `ecf-jobs` gets grants-table `UpdateItem` on `status` only (`dynamodb:Attributes`), so it can void
-    a grant as v1's `_void` does when it applies a stop. Amends OD-649.
+    a grant as v1's `_void` does when it applies a stop. Amends OD-649. (Round 9: the resolve edges
+    are exempt, not checked; completeness and the answers' first rows are replaced by OD-658;
+    `ecf-jobs` voids by deleting the grant again, since an update right on `status` could set it back to
+    `approved`; "cutover re-renders every open card" is replaced by cutover step 9's "moved" edit.)
 - **OD-657, Slack forms and cards (W5; round-8 Slack 4 6, performance 3, cost 2):**
   - A form submission is answered by `ecf-slack-in` with `response_action: update` and a "Checking…"
     view; `ecf-worker` then sends `views.update` with the result: the next view, or the form again
@@ -427,7 +432,142 @@ grant signatures (OD-615), Jev, the Mistral judges and set generation in AWS mod
     whether an `Action.Execute` replacement card shows to everyone is unverified (M11).
   - M1 supports single-workspace Slack installs only; an org-wide (Enterprise Grid) install is refused.
     The payload paths for team and enterprise IDs are checked in Step 9 (unverified), and `doctor`
-    compares `auth.test` with the stack parameters. Amends OD-651.
+    compares `auth.test` with the stack parameters. Amends OD-651. (Round 9: the renderer's list,
+    the edit-before-post rule and the 300 s counting are completed in "After round 9".)
+
+### After Phase R round 9 (SPEC OD-658 to OD-660, operator 2026-11-05)
+
+Round 9 again found most of its highs in draft 9's own fixes; applying the operator's rule, the
+operator chose to simplify the rollback and the audit IDs and to finish key rotation.
+
+- **OD-658, rollbacks and merges pause first; scheduled exports don't look for stops (X1, X2;
+  round-9 safety 1-4):** v1 already holds a paused address's delayed sends at the tick
+  (`approvals.py:574-579`) and its actions in the runner (`execute.py:49`), and a restore leaves every
+  address paused until a mail check passes and the operator resumes it (`restore.py:18, 161`).
+  - A rollback, and an AWS restore or import merge, first pauses every address (v1's pause), then sets
+    the hold. Nothing can start sending, so no `delayed` item moves to `executing` during the grace.
+    `moving_back` is gone: the hold records its kind (`scheduled_export`, `upgrade`, `rollback`,
+    `merge`) and the holding job's ID.
+  - During a rollback or merge hold, `ecf-slack-in` (which reads `MAINT` in its existing `BatchGetItem`,
+    never in the stop transaction) refuses a Cancel or Reject with "Not done: ecf is moving back to
+    your computer (or: a restore is running); nothing is sent until you approve it again there (or:
+    resume the address)". That is true: the item stays held, and v1's restore turns `delayed` into
+    `awaiting_approval` (`import_plan.py:14-16`). A Cancel that read `MAINT` just before the hold and
+    commits after it is caught: the holder waits the grace (longer than `ecf-slack-in`'s timeout),
+    then finds every pending stop with the consistent Scan it does anyway, applies them, reads the
+    affected items again, and only then exports or merges.
+  - Rollbacks and merges always take the Scan path (they are rare). There is no `ecf migrate
+    rollback --cancel`: a rollback, once requested, runs to the end.
+  - A scheduled export doesn't look for stops: stop records aren't exported, and the tick applies them
+    after the hold. Stops are allowed during its hold, and `slack-out` posts that write only live-kept
+    records run during it too.
+  - **The holder's own lease:** `MAINT` names the holding job; the drain skips that job's lease;
+    `ecf-jobs` runs that job's messages during the hold; the tick still re-queues it, still emits its
+    heartbeat, and alarms on a hold with no live holder for 30 minutes. Every hold, `ecf upgrade`'s
+    included, waits the 90 s grace after the drain. Fetch pages, backfill pages and job pages are each
+    bounded to 60 s, so the worst-case hold is about 120 s (drain) + 90 s + the Scan, recorded on `MAINT`
+    as its expected end. Step 8 records the hold's p99.
+  - The resolve edges (`resolved_manual`, `resolved_by_mailbox`, address remove, `close_gone`) are
+    exempt from the stop check: resolve wins and the stop becomes `moot`. `ecf cancel` and `ecf reject`
+    in `ecf-api` leave the item at the stop's own outcome, which the apply treats as `applied`.
+  - The answer table's first rows: a hold of kind `rollback` or `merge` → the text above; identity,
+    person or role refused → "not allowed"; budget exhausted → "click again". "Already cancelled or
+    rejected" only when the stop put failed and the item, read again, is `cancelled`, `rejected` or
+    still at the stop's status; otherwise the status rows. Reject keeps v1's text ("this email is
+    <status>: nothing to reject", `approvals.py:426`); Cancel's texts are new wording, recorded. A Reject
+    on a re-offered card is told "out of date", a deliberate change from v1 (which rejects whatever the
+    grant).
+  - `ecf-jobs` voids a grant by deleting it (its only grants right, as before draft 9); the broker treats
+    a missing grant as not approved. Amends OD-655 and OD-656.
+- **OD-659, a random audit `uid` for every new row (X3; operator chose this over fixing the prefix):**
+  every new audit row gets a random `uid` (`lower(hex(randomblob(16)))` in an `AFTER INSERT` trigger
+  when the writer left it null; a ULID in DynamoDB), so no two installs or copies can collide and no
+  prefix setting exists. Only rows from before M1 get a derived `uid`, `<install.id>:<id>`: at the
+  SQLite migration for the install's own rows, and at import for a bundle's rows that carry none
+  (computed from the bundle's `install_id` before anything else writes to the staged database; the
+  migration's backfill in a staged database covers only ids up to the bundle's highest audit id, so rows
+  the staged migrations insert, such as 0041's, get random ones). Re-importing the same old bundle
+  still finds its duplicates. `importer.copy` inserts audit rows `WHERE NOT EXISTS` on `uid`. Replaces
+  draft 9's `audit.uid_prefix` and `import:` prefix.
+- **OD-660, backup-key rotation in AWS mode (operator chose to finish it in M1):**
+  - It runs in the CLI only (after `migrate finalize` there is no local service): `new_root`,
+    `key_text`, `fingerprint` and `same_fingerprint` (`backup_key.py:60-95`) move to the `ecf` module
+    with `derive`.
+  - Step-up purpose `export_key` (v1's, `export_keys.py:114-131`): admin only, bound to the new
+    fingerprints, which the operator types, as v1.
+  - Order: (1) the step-up gates an `ecf-api` route that records the rotation as pending, with the new
+    export and relink fingerprints (audited, Security Notice); (2) the laptop writes the new seed, with
+    the expected recipient and relink fingerprints in the same secret value, as a new version with a
+    pending label; (3) one deploy switches: the age recipient and the relink verify key are replaced
+    (single values; the leaked root can neither relink nor read new exports), the new export verify key
+    is added and the previous ones kept in `ExportKeysPrevious` (only to verify older bundles; pruned
+    when no kept backup needs them), and the functions read the seed version the deploy names;
+    (4) `doctor` confirms the deployed fingerprints equal the recorded ones. A crash before (3) leaves
+    the old keys in force; re-running is idempotent. Whether Secrets Manager's staging labels behave as
+    needed is unverified: Step 8 checks it, else versions are addressed by ID.
+  - The relink fingerprint is defined like OD-341's (80 bits of SHA-256, 4 groups of 4 Crockford
+    characters) over `ecf/relink-fp/v1` and the relink verify key; it is recorded at `init`, shown beside
+    the OD-341 fingerprint wherever that is shown, and compared by `migrate plan`, `doctor` and
+    `export --pull`.
+  - Refused until `migrate finalize`. Amends OD-616 and OD-653.
+- **Also from round 9 (no new decision):**
+  - **Identity:** relink uses one nonce, as cutover (the nonce record holds purpose, old identity,
+    `people.id` and new subject; the signature and the step-up carry the same nonce; verify, then one
+    `TransactWriteItems` consumes nonce and `jti`, revokes the old identity and writes the new); "bound to
+    the same manifest hash" reads "carrying the same nonce" everywhere; `RATE#` counting is the only
+    write before the consume, and verification covers `client_id`, `token_use`, scope, `auth_time`,
+    `iat`, issuer, `ecf_nonce` and `sub`; the attestation body is never stored or logged; per-entry
+    flags are keyed by (phase, kind, target). An OS identity's issuer is `os:<machine UUID>` and its
+    subject the user name; a re-bind after a restore creates a new identity and never revives a revoked
+    one. Local relink checks the typed root against `export.key`'s OD-341 fingerprint (v1's
+    `same_fingerprint`), so upgraded v1 installs need no stored relink key. Identity merges: an identity
+    with no `people_id` keeps the live record; one whose `people_id` differs between live and bundle
+    keeps live, audited. `export_bundle.verify` moves with `_split`, `MAGIC`, `SIG_BYTES`, `MAX_HEADER`
+    and `BundleError` to an `ecf` bundle-format module.
+  - **Slack:** the renderer covers every `item:<sid>` card site: approvals (`approvals.py:820`),
+    escalations (`escalations.py:88-108`, `close_card`) and answers (`answers.py:288-318`); its inputs add
+    the facts (kind or title, `dismissible`, payment note), the clarification question and round, the
+    first post's mention, and the escalation's carded or merged state; one parity test per site. An
+    edit that finds no `message_ts` is dropped (the first post writes `message_ts` and then re-reads the
+    version and queues an edit if it changed). A post is put back on 300 s once SQS's
+    `ApproximateReceiveCount` passes 15, whatever the cause; a post waiting on a Slack-wide hold uses
+    min(`hold_until` − now, 300 s); `views.open` is exempt from the holds. The "Checking…" view sets
+    `external_id` = the submission's dedupe key and the queue message carries `view.id` as a fallback
+    (Step 9 records which works); a re-shown form fills each input from the submitted
+    `view.state.values`; a refusal whose view was closed (`not_found`) is sent as an ephemeral. Cutover
+    edits old cards to "moved" and posts fresh cards (step 9); a legacy click in between is refused with
+    "this card is from before the move". An org-wide install is detected by `auth.test`'s enterprise
+    fields at `init` and by `doctor` (unverified field names, Step 9); the runbook gives the repair
+    for a workspace later moved into Grid (a stack parameter update). For M11, still unverified: who
+    sees a Teams invoke reply, its time limit, and `Action.Submit`'s fallback, which can't return a
+    card.
+  - **IAM:** every Allow statement granting main-table writes to a role other than `ecf-jobs` and
+    `ecf-api` carries `ForAllValues:StringNotLike` `dynamodb:LeadingKeys` `["MAINT"]` and `Null`
+    `dynamodb:LeadingKeys` `false` (`ForAllValues` is true when a request has no key,
+    `reference_policies_condition-single-vs-multi-valued-context-keys.html`, fetched 2026-11-05 (rv));
+    `ConditionCheckItem` sits in its own statements, so the broker's lease-take check on `MAINT` is
+    allowed while its `PutItem` on `MAINT` is denied (a Step 8 test). The main table's key attributes are
+    `pk` and `sk`; an item is a single record `pk = ITEM#<stable_id>`, `sk = ITEM`, and per-item records
+    use their own prefixes (`CARD#`, `DRAFTV#`, `CHECK#`), through one key helper with a round-trip test;
+    `ecf-slack-in`'s Attributes lists name `pk`, `sk` and `stopq`. The expected recipient and relink
+    fingerprints live in the seed secret (runtime roles can't write it); `doctor` and `--pull` on the
+    laptop are the real control. CloudFormation events match the stack or change-set name and add
+    `CancelUpdateStack`, `RollbackStack`, `ContinueUpdateRollback` and `SetStackPolicy`; each notice is
+    matched to a recorded `ecf upgrade` or rotation, and an unmatched one is flagged. Stated limit: a
+    compromised `ecf-slack-in` can overwrite its own `AUDIT#SLACKIN#` rows before the next flush.
+  - **Migration:** the bundle reader's table allow-list depends on the kind: `migrate` adds
+    `slack_messages` and `draft_versions`, `rollback` adds `alert_outbox` (rows `queued` or `rolled_up`
+    only, inserted with new ids; a row with `message_id` set and not settled is listed in the runbook
+    as a possible duplicate). The shared transition helper writes `via: stop` and the stop's ID into the
+    `item.transitioned` row, which is how "stopped after the restore point" is decided (a Step 0
+    contract test). The highest generation AWS has seen is kept on the install's keys item.
+  - **Measurement:** Step 1b runs on a second named local install (`ecf --install m1ref`, a real
+    service), and its result file's path and sha256 go in SPEC §16. Step 12 uses a throwaway real local
+    install (`ecf init` under its own name, a test Slack app and a test mailbox, as M8 Step 10), whose
+    gate rows come from a `--fraud-only` C run on it with Step 12's code (go-ahead). The dedicated
+    checkout is a full clone at a pinned commit at or after the eval/private merge. The clean-and-pushed
+    check used by uploads and by for-gate runs is one function in `ecf.eval`; the membership counts are
+    one function in `ecf.eval` too, called by the laptop and by `ecf-jobs`.
 
 ## Design
 
@@ -512,7 +652,7 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   `StringEqualsIfExists` `dynamodb:ReturnValues` `NONE` on `PutItem` and `ConditionCheckItem`, so a
   deliberately failing check can't return an item; Cancel's and Reject's puts both use
   `attribute_not_exists`). Its `ConditionCheckItem` statement has its own `ForAllValues:StringEquals`
-  `dynamodb:Attributes` list (keys, `status`, `grant_id`, `answer_pending`, `moving_back`, `hold`,
+  `dynamodb:Attributes` list (`pk`, `sk`, `stopq`, `status`, `grant_id`, `answer_pending`,
   identity `status` and `people_id`, person `active`, stop `state`), because a pass or fail is itself
   an answer: without the list, checks like `begins_with(subject, :p)` would read item content a
   character at a time (`specifying-conditions.html`: Attributes covers attributes evaluated in a
@@ -526,7 +666,8 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   `action.granted` row, and trusts `action.granted` only under the API and worker writers' prefixes;
   readers and `ecf audit` show each row's writer prefix). IAM has no condition key that can require a
   `ConditionExpression`, so create-once and the stop transaction's checks bind honest code only: a
-  compromised `ecf-slack-in` can write a bare stop, which `ecf-worker` refuses to apply (OD-649). The broker's `dynamodb:Attributes` list (keys, every attribute its
+  compromised `ecf-slack-in` can write a bare stop, which is applied whenever the item is still at that
+  status and grant (stated limit) and otherwise marked `invalid` and alarmed (OD-656). The broker's `dynamodb:Attributes` list (keys, every attribute its
   conditions read, status and consume fields, `ReturnValues` limited) is a guard against bugs, not
   against a compromised broker, which has mailbox authority anyway.
 - **The broker's writes** (a closed list through the conditional-update helper; the OD-181 rule is
@@ -558,8 +699,8 @@ enough to use a queue or read a secret. So every boundary is stated on both side
 | `ecf-api` role | API Gateway | all tables; S3 `eval/` | main (incl. `ConditionCheckItem` on `STOP#*` and `MAINT`); `ecf-api` table; grants table (put, update); excerpts `expires_at` only; S3 `jobs/` presigned URLs (incl. GETs on `exports/`, `backups/`); sends `slack-out.fifo`, `jobs.fifo`; invokes broker | mailbox secrets and Slack secrets write-only (`set-tokens`, migrate); relink and export verify keys (stack parameters); Cognito `AdminUserGlobalSignOut` |
 | `ecf-worker` role | `slack-in.fifo`, `slack-out.fifo`; tick schedule role | all tables (incl. `Query` on the unapplied-stop index) | main (incl. applying stop records: update `STOP#*`); `ecf-api` table; grants table (put, update); S3 `logs/` (create-only); receives and deletes on both Slack queues (the only consumer); sends `slack-out.fifo`, `jobs.fifo`; invokes broker | Slack signing secret, bot token |
 | `ecf-broker` | `ecf-api`, `ecf-worker` (async) | main; `ecf-api` table (settings, read); grants table | main (closed list); grants (status and consume attributes); spend records (create only); excerpts; sends `slack-out.fifo` | mailbox secrets (read, `lambda:SourceFunctionArn` condition) |
-| `ecf-jobs` | `jobs.fifo` | all tables (incl. `Scan`); S3 | main and `ecf-api` table (import, restore, migrate, merges); excerpts (import, restore); grants (delete; `UpdateItem` on `status` only, OD-656); `MAINT`; S3 `exports/`, `jobs/`, `backups/`, `eval/`; backup and scratch tables; sends `slack-out.fifo` | export seed (read); age recipient and verify keys (stack parameters) |
-| `ecf-slack-in` | API Gateway | `ecf-api` table: `IDENT#` items, people and roles only (`dynamodb:LeadingKeys` on those prefixes, `dynamodb:Attributes` limited, `dynamodb:Select` specific attributes; no `Query` or `Scan`); main: `ITEM#*` status, `grant_id`, `answer_pending` and card record, and the `MAINT` item, the same limits | `PutItem` only, create-once, on `STOP#*` and `AUDIT#SLACKIN#*` (OD-644, OD-649); `ConditionCheckItem` on `ITEM#*`, `STOP#*`, `MAINT`, `IDENT#*` and the person (`ReturnValues` `NONE`, its own Attributes list); Slack table (dedupe keys); sends `slack-in.fifo` | Slack signing secret; bot token (`views.open`) |
+| `ecf-jobs` | `jobs.fifo` | all tables (incl. `Scan`); S3 | main and `ecf-api` table (import, restore, migrate, merges); excerpts (import, restore); grants (delete only, OD-658); `MAINT`; S3 `exports/`, `jobs/`, `backups/`, `eval/`; backup and scratch tables; sends `slack-out.fifo` | export seed (read); age recipient and verify keys (stack parameters) |
+| `ecf-slack-in` | API Gateway | `ecf-api` table: `IDENT#` items, people and roles only (`dynamodb:LeadingKeys` on those prefixes, `dynamodb:Attributes` limited, `dynamodb:Select` specific attributes; no `Query` or `Scan`); main: `ITEM#*` status, `grant_id`, `answer_pending` and card record, and the `MAINT` item, the same limits | `PutItem` only, create-once, on `STOP#*` and `AUDIT#SLACKIN#*` (OD-644, OD-649); `ConditionCheckItem` on `ITEM#*`, `STOP#*`, `IDENT#*` and the person (`ReturnValues` `NONE`, its own Attributes list); Slack table (dedupe keys); sends `slack-in.fifo` | Slack signing secret; bot token (`views.open`) |
 
 ### The functions
 
@@ -587,7 +728,7 @@ enough to use a queue or read a secret. So every boundary is stated on both side
     a run that never started is retried after 5 minutes and a running one gets no second invoke; a busy
     lease writes no due time while its holder is live); approval expiry,
     `delayed → executing` (making that address's check due now; a transaction with a `ConditionCheck`
-    that no stop record exists for the item's grant, OD-649), applying stop records left in the
+    that no stop for the item's grant is `pending`, OD-656), applying stop records left in the
     unapplied-stop index, stale marking; "Needs you",
     reminders and refresh warnings, each re-reading status inside the winning conditional write; the
     audit flush (its own lease); re-queueing jobs whose progress item shows they stopped (a job
@@ -605,7 +746,7 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   - computes facts, triggers and the pre-check decision in memory and writes them in one
     transaction;
   - executes due approved actions with the open mailbox (an item reaches `executing` only through the
-    tick's or an approval's stop-checked transition, so no Cancel can win after that, OD-649); the
+    tick's or an approval's transition, checked for a pending stop, so no Cancel can win after that, OD-649); the
     attempt's outcome records whether the send was handed over and accepted, and which side effects
     ran. A socket timeout bounds each read, not a
     command (imaplib, smtplib and TLS `sendall` loop over reads and writes), so **a watchdog closes the
@@ -645,7 +786,8 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   **Cancel and Reject (OD-649)**: two strongly consistent reads, budgeted: `GetItem` on the `IDENT#`
   item, then one `BatchGetItem` for the person and role, the item (status, `grant_id`,
   `answer_pending`) and its card record (the button's `container.message_ts` must be the item's card);
-  then the stop transaction (OD-649, with the identity, person and `MAINT.moving_back` checks); then a
+  then the stop transaction (OD-649, with the identity and person checks; `MAINT` is read in the
+  `BatchGetItem`, never checked in the transaction, OD-658); then a
   message to `slack-in.fifo` (group `stop:<grant>`, carrying the `response_url` and the person) so
   `ecf-worker` applies it; then the result ephemeral through `response_url` if the budget allows, else
   `ecf-worker` posts it (OD-651). The answer is mapped from `CancellationReasons` (OD-649). The
@@ -665,10 +807,12 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   starts and does nothing while a hold is up; broker and job leases are taken only with a `ConditionCheck`
   that no hold is up, and their holders re-check between steps. A holder sets the hold, waits for the
   leases to drain, then waits 90 s more (the longest unleased timeout plus margin) before it reads or
-  merges. `ecf-slack-in`'s stop records are allowed during a hold (they change no item or grant) and are
-  applied by the holding job, found by a consistent read (OD-656). A rollback sets `moving_back` in the
-  same write as the hold, so `ecf-slack-in` answers every click with "ecf is moving back to your
-  computer; use it there". `ecf upgrade` disables the `slack-in.fifo` mapping during maintenance and, on
+  merges. `MAINT` names the holding job, whose lease the drain skips and whose messages `ecf-jobs`
+  runs during the hold (OD-658). Exceptions to "does nothing while a hold is up": the holding job;
+  `ecf-slack-in` (which reads `MAINT` in its `BatchGetItem`, accepts stops during scheduled-export and
+  upgrade holds, and refuses Cancel and Reject during rollback and merge holds with the OD-658 answer);
+  `ecf-worker`'s result ephemerals (OD-651); and, during a scheduled export, `slack-out` posts that
+  write only live-kept records. A rollback or merge first pauses every address (OD-658). `ecf upgrade` disables the `slack-in.fifo` mapping during maintenance and, on
   exit, re-enables it and drains it before the tick resumes.
 - **Laptop:** the CLI and Claude Code; the relay (0600 Unix socket for `ecf-mcp` and the status line,
   loopback TCP for OTLP only, session token required, `Host` checked, `Origin` refused, fixed route
@@ -698,7 +842,10 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   check; config apply + stage demotion. Counters use `ADD` under the condition. The shared
   conditional-write helper retries a `TransactionConflict` (DynamoDB conflicts any two transactions
   touching one item, a `ConditionCheck` included, and the SDKs don't retry it,
-  `transaction-apis.html`, fetched 2026-11-05 (rv)) up to 3 times with jitter, for every writer;
+  `transaction-apis.html`, fetched 2026-11-05 (rv)) up to 3 times with jitter, for every writer, in both
+  forms: a transaction's `TransactionCanceledException` with a `TransactionConflict` reason (told apart
+  from `ConditionalCheckFailed` per `CancellationReasons` entry) and a plain write's
+  `TransactionConflictException`; a lease take maps a conflict to "retry now", never "busy lease";
   conflicts are alarmed; Step 8 runs a burst (Approve all on 50 items during a tick sweep and renders)
   and records the conflict count and p99 write latency.
 - **Storage versions:** `storage_version` per item (`schema_version` already means the classification
@@ -721,7 +868,7 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   | people, roles, `IDENT#` identities | yes | yes | yes | OD-596, OD-622; `revoked` is sticky both ways (live or bundle); an identity whose `people_id` isn't on the target is dropped |
   | audit (`uid`) | yes | yes | yes | insert when `uid` absent, never delete |
   | grants, `GRANTUSE#`, `GRANTRES#` | no | no | no | `GRANT#` deleted (voided); attempt and outcome records kept |
-  | `STOP#` stop records | no | no | no | pending ones applied before the merge, found by a consistent read (OD-656); live-wins; an item whose live last transition is a stop's `cancelled` or `rejected` after the restore point (by the transition history, not by whether the stop record still exists) keeps its live status |
+  | `STOP#` stop records | no | no | no | pending ones applied before the merge, found by the merge's consistent Scan (OD-658); live-wins; an item whose live last transition is a stop's `cancelled` or `rejected` after the restore point (by the transition history, not by whether the stop record still exists) keeps its live status |
   | `AUDIT#SLACKIN#` rows | as audit | as audit | as audit | as audit |
   | nonce, `RATE#`, `MAINT`, leases, `TICK#`, dedupe; Slack pacing and hold records, per-post crash counts, cards' rendered versions | no | no | no | live kept |
   | `alert_outbox` (unsent alert email) | no | no | yes | the local restore queues it again |
@@ -753,9 +900,10 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   `ecf/relink/v1`, the new identity's kind, issuer and subject (for Cognito the issuer names the pool
   and the subject is the `sub`), the old identity (issuer, subject), `people.id`, `install.id`, nonce,
   expiry; a cross-replay test (a relink signature refused as an attestation and the reverse). A Cognito
-  step-up by the new identity, bound to the relink hash, proves it holds the new TOTP; an OS-user relink
-  uses v1's local step-up instead. Locally the relink verify key is stored in settings whenever it is
-  derived (`init`, key rotation, restore), since v1's `export.key` holds none (`export_keys.py:39`). The old identity is revoked in the same transaction
+  step-up by the new identity, carrying the relink's nonce (one nonce, verified before it is consumed,
+  as cutover), proves it holds the new TOTP; an OS-user relink uses v1's local step-up instead, and
+  locally the typed root is checked against `export.key`'s OD-341 fingerprint (v1's `same_fingerprint`),
+  so no relink key is stored locally. The old identity is revoked in the same transaction
   (status `revoked`, its refresh tokens revoked); a later restore of an older bundle doesn't bring a
   revoked identity back (the restore keeps the live identity table's revocations). Audited, with a
   Security Notice. Locally, a same-install restore under the typed key re-binds the OS-user identity.
@@ -869,13 +1017,13 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   maintenance hold, waits for leases to drain and then the 90 s grace (OD-655), and reads the live
   tables with strongly consistent parallel Scans while the hold lasts (DynamoDB gives no snapshot across
   a Scan, only per item, API_Scan.html, fetched 2026-11-05 (rv); the hold and grace are what make the
-  read consistent: no writer can still be running). Pending stop records found by the Scan are applied
-  and their items read again (OD-656); the stop and `AUDIT#SLACKIN#` prefixes are scanned last and rows
-  written after the hold began are listed. When Step 8's measured Scan time passes its line (with a
-  margin against flipping), it records a point in time T after the grace instead, lifts the hold, and
-  reads scratch copies restored by PITR to T, after a consistent Scan of the live table for pending
-  stops. The scheduled export re-checks the age recipient's fingerprint against the value stored at
-  `init` and alarms on a change. The migrate export is local, not one of these.
+  read consistent: no writer can still be running). A rollback export, which always takes this path,
+  applies the pending stop records its Scan finds and reads their items again before writing (OD-658);
+  rows written after the hold began are listed. A scheduled export doesn't look for stops (they aren't
+  exported); when Step 8's measured Scan time passes its line (with a margin against flipping), it
+  records a point in time T after the grace instead, lifts the hold, and reads scratch copies restored
+  by PITR to T. The scheduled export re-checks the age recipient's fingerprint against the expected
+  value in the seed secret (OD-660) and alarms on a change. The migrate export is local, not one of these.
 - **`ecf upgrade --to <previous>`:** code only; data forward-compatible.
 - **Restoring:** never by swapping tables. `ecf-jobs` restores all four tables to scratch tables
   (from the upgrade backups, or by PITR with one `RestoreDateTime` so they share a point), then merges
@@ -918,8 +1066,9 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   view counts as done.
 - **Cancel and Reject (OD-649):** as v1: Cancel only while `delayed`, Reject only while awaiting
   approval or step-up, each against the item's current grant. The stop record `STOP#<grant>` and the
-  tick's stop-checked `delayed → executing` are serializable transactions, so exactly one wins; every
-  other move out of those states checks the stop record too. `ecf cancel` and `ecf reject` run v1's
+  tick's `delayed → executing` (checked for a pending stop) are serializable transactions, so exactly
+  one wins; every other move out of those states checks for a pending stop too, except the resolve
+  edges (OD-656, OD-658). `ecf cancel` and `ecf reject` run v1's
   transitions in `ecf-api` with the same conditions. No handover record; SPEC §6.2 is unchanged.
 - **Holds:** a paused address or tripped send limit holds an action without counting an attempt.
 - **EventBridge Scheduler:** the tick on `ecf-worker`; housekeeping schedules send to `jobs.fifo`;
@@ -984,10 +1133,10 @@ enough to use a queue or read a secret. So every boundary is stated on both side
   only in the `bedrock` row. The operator's install gets its own Bedrock pass after the release
   (OD-619).
 - **First Bedrock pass (dev stack, Step 11):** a full C `/ecf-eval` through Bedrock against the AWS
-  install, compared with Step 10(c)'s plan-provider run on the same install under the one rule
-  (`--margin 5`): 0 unsafe, fraud guard N/N, `compare` showing no input difference except "different
-  provider"; the 10-case determinism repeat on named case IDs, passing when it flips at most one more
-  field than 10(c)'s repeat.
+  install, compared with Step 10(c)'s plan-provider run on the same install and with 1b under the one
+  rule (`--margin 5`): 0 unsafe, fraud guard N/N, `compare` showing no input difference except
+  "different provider"; the 10-case determinism repeat on named case IDs, passing when it flips at most
+  one more field than 10(c)'s repeat and than 1b's.
 - **Cost (OD-604, OD-619):** about US$0.042-0.050 an item at global list prices, about 10 % more
   through `us.` (unverified on Bedrock), cache hits possibly lower: about US$415-825 a month at
   300-500 emails a day; a full gate run about US$20. `init` and `--provider bedrock` print it; the
@@ -1132,14 +1281,12 @@ SPEC §12.4 AWS mode:
   environment,
   kept by `UsePreviousValue` on upgrade; `doctor` and `export --pull` re-check the OD-341 fingerprint
   (unchanged: the age recipient and the Ed25519 key, `backup_key.py:12-14`) and a separate relink
-  fingerprint every time. **Rotation in AWS mode:** `ecf export keys rotate` runs on the laptop (only it
-  ever holds a root). Order: (1) a step-up gates an `ecf-api` route that records the new fingerprints;
-  (2) the new export and relink verify keys and recipient are deployed alongside the previous ones (a
-  list parameter `ExportKeysPrevious`, v1's `export.keys_previous`); (3) the new seed is written as a
-  new secret version; (4) the switch; the deploy is checked against the recorded fingerprints, and a
-  Security Notice goes out. Redeploying the relink verify key matters: a rotation after a leak must stop
-  the old root relinking. Refused until `migrate finalize`. OD-616's "through `ecf-api` into Secrets
-  Manager" is amended by these laptop writes.
+  fingerprint every time. **Rotation in AWS mode (OD-660):** in the CLI only; v1's `export_key` step-up;
+  the rotation recorded as pending; the new seed (with the expected fingerprints) written as a pending
+  version; one deploy replaces the recipient and the relink verify key and adds the new export verify
+  key to `ExportKeysPrevious` (kept only to verify older bundles); `doctor` confirms the fingerprints.
+  Refused until `migrate finalize`. OD-616's "through `ecf-api` into Secrets Manager" is amended by
+  these laptop writes.
 - **CI:** GitHub OIDC trust on `aud`, `sub = repo:<owner>/<repo>:ref:refs/heads/main` and the
   validator workflow's `job_workflow_ref`; `cfn-policy-validator` on pushes to `main`; static policy
   tests on pull requests; dedicated empty account.
@@ -1165,11 +1312,12 @@ SPEC §12.4 AWS mode:
 
 ### Cost (one user, us-east-1; prices fetched 2026-11-04 (rv); restores the plan's §15)
 
-Alarms (31 metrics, 10 free): `ecf-api`, `ecf-worker`, `ecf-broker`, `ecf-jobs`, `ecf-slack-in` errors
+Alarms (34 metrics, 10 free): `ecf-api`, `ecf-worker`, `ecf-broker`, `ecf-jobs`, `ecf-slack-in` errors
 (metric math, 2 each: 10) and throttles (5); 3 FIFO DLQs; 2 on-failure queues (`ecf-broker`,
 `ecf-worker`; tick failures also reach the Scheduler DLQ); the one shared Scheduler DLQ;
 `DestinationDeliveryFailures`, `InvocationsFailedToBeSentToDeadLetterCount` and
-`InvocationDroppedCount` (3); 5 custom metrics, emitted through Powertools' embedded metric format
+`InvocationDroppedCount` (3); `TransactionConflict` and a hold with no live holder for 30 minutes (2);
+an age-recipient fingerprint change (1); 8 custom metrics, emitted through Powertools' embedded metric format
 (no `PutMetricData` calls) and inside CloudWatch's 10 free custom metrics (aws.amazon.com/cloudwatch/pricing,
 fetched 2026-11-05 (rv)): the tick heartbeat, a user without TOTP, Slack signature failures, the
 stop-record rate and invalid stop records (OD-649, OD-656); `jobs.fifo` oldest age; the Cognito
@@ -1185,7 +1333,7 @@ approval-started and alert-drain runs: about 8,000.
 | Item | Idle | 300-500 emails a day, 3 addresses |
 |---|---|---|
 | Secrets Manager, 6 at $0.40 | $2.40 | same |
-| CloudWatch alarms, 31 metrics (10 free, $0.10 each); 5 custom metrics in the free tier | ~$2.10 | same |
+| CloudWatch alarms, 34 metrics (10 free, $0.10 each); 8 custom metrics in the free tier | ~$2.40 | same |
 | CloudTrail (first management copy free) and its S3 | $0.10-0.20 | same |
 | DynamoDB on-demand, PITR, under 1 GB | ~$0.10 | $0.20-0.40 |
 | SQS: idle long polling by 3 mappings with `MaximumConcurrency` (which disables Lambda's poller reduction), est. 1-2M requests a month, 1M free; FIFO rate not rendered | $0-0.50 (unverified; Step 8 measures) | same |
@@ -1193,7 +1341,7 @@ approval-started and alert-drain runs: about 8,000.
 | Daily scheduled export (OD-650): strongly consistent reads, about $1 per GB of table data a month (1 RRU per 4 KB at $0.125 per million, aws.amazon.com/dynamodb/pricing/on-demand, fetched 2026-11-05 (rv); whether a Scan is charged by summed item size is unverified); the PITR path $0.15 per GB per restore, about $4.50 per GB a month | ~$0.05 | $0.10-0.40 at 0.1-0.4 GB |
 | CloudWatch Logs, Scheduler, SNS, SSM, S3 audit writes, API Gateway, EventBridge rules | ~$0.10 | ~$0.15 |
 | Cognito Essentials | $0 | $0 |
-| **Infrastructure** | **about $4.85-5.45** | **about $5.05-6.15 in the free tier; up to about $8.05 over it; up to about $14.70 if all Lambda is billed** |
+| **Infrastructure** | **about $5.15-5.75** | **about $5.35-6.45 in the free tier; up to about $8.35 over it; up to about $15.00 if all Lambda is billed** |
 | If Step 9 needs it: provisioned concurrency 1 on `ecf-slack-in` at 512 MB | +~$5.40 (no free tier with it) | same |
 | **Bedrock, when chosen** | $0 unused | **about $415-825**; a full gate run about $20 |
 
@@ -1214,25 +1362,23 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
   secret, configuration token; cutover: mailbox passwords, bot token) need one attestation signed by
   the CLI with the relink key over the phase's manifest (at cutover, the manifest the held service
   built from the values it will send), verified by `ecf-api` against the relink verify key, and one
-  Cognito step-up (purpose `migrate_secret`, pending identity, migrating install only) bound to the same
-  manifest hash. On `init --migrating` the first-login confirmation is disabled and spent:
+  Cognito step-up (purpose `migrate_secret`, pending identity, migrating install only) carrying the
+  same nonce. On `init --migrating` the first-login confirmation is disabled and spent:
   the Cognito identity is confirmed only by `migrate_link` (step 7).
 - **Audit across migrate and rollback (round 4 S7, round 5, round 7):** every audit row gets a source
   (`install.id`, `install.generation`) and a `uid`; a SQLite migration (Step 0) adds `source` and `uid`
-  columns with a unique index (`id` stays the local order). A SQLite row's `uid` is plain text: rows
+  columns with a unique index (`id` stays the local order). `uid` is an opaque string (OD-659): rows
   that exist when the migration runs get `<install.id>:<id>` (the setting is JSON-quoted, so the
-  migration uses `json_extract`; plain SQL, no hash function); rows written later get
-  `<audit.uid_prefix>:<id>` from an `AFTER INSERT` trigger when the writer left it null (v1 has about 90
-  audit inserts, some in SQL migrations). `audit.uid_prefix` is a machine-local setting (not in
-  bundles), `<install.id>.<generation>`, so a restore, which bumps the generation, never writes into
-  an old prefix, and two diverged copies of one install don't collide. An import's or restore's
-  temporary database gets the prefix `import:<bundle sha256>` after the bundle's rows load and before
-  its second `migrate`, `config.convert_rules` and the SQL migrations that insert audit rows, so rows
-  the import itself writes never take the source's namespace. `importer.copy` inserts audit rows with
+  migration uses `json_extract`; plain SQL); every row written later gets a random one,
+  `lower(hex(randomblob(16)))`, from an `AFTER INSERT` trigger when the writer left it null (v1 has about
+  90 audit inserts, some in SQL migrations). An import computes `<bundle install_id>:<id>` for bundle
+  rows that carry no `uid` before anything else writes to its staged database, and the staged
+  migration's backfill covers only ids up to the bundle's highest audit id, so rows the staged
+  migrations insert get random ones. `importer.copy` inserts audit rows with
   `INSERT … WHERE NOT EXISTS` on `uid` (today an `IntegrityError` refuses the whole import,
   `importer.py:402-419`). Tests: no row has a null `uid`; an import or restore followed by 1,000 writes
-  gives no UNIQUE failure and skips no source row. DynamoDB rows get a ULID; `uid` is an opaque string
-  compared for equality. The migration is added to `CHECKPOINT_AFTER` (`db.py:111`). Every readable
+  gives no UNIQUE failure and skips no source row; the same old bundle imported twice gives the same
+  derived `uid`s. DynamoDB rows get a ULID; `uid` is compared for equality. The migration is added to `CHECKPOINT_AFTER` (`db.py:111`). Every readable
   bundle (formats 4 and 5, `bundle_reader.py:50`) carries `install_id` in its header, manifest and
   settings; import checks that the manifest's and the settings' values agree. Stated limit: rows imported before M1 carry the
   importing install's `uid`, so re-importing a later bundle from their original install duplicates
@@ -1285,7 +1431,7 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
      laptop verifies the bundle under the typed key and records its SHA-256;
   5. the held local service transfers the mailbox passwords and the Slack bot token to `ecf-api`
      (write-only), under the phase's cutover attestation signed by the CLI and one `migrate_secret`
-     step-up bound to its manifest (OD-653);
+     step-up carrying the same nonce (OD-653);
   6. `migrate run`: `ecf-jobs` decrypts with the one-time identity (then deleted), checks the bundle
      against the stored verify key and imports it under restore's rules: same `install.id`,
      generation + 1, install name, routes, alerts, identity links, the 7-day restored-keyword guard;
@@ -1308,13 +1454,13 @@ Step 8 runs the stack idle for 24 h with schedules on and records requests, GB-s
   the `AUDIT#` rows (the aborted run's step-ups, transfers and Security Notices stay; the new import
   merges audit by `uid`), and imports the new bundle at generation max(the bundle's, the highest AWS
   has seen) + 1.
-- **Rollback (requested within 7 days of step 6's `restore.at`; refused after):** `MAINT.moving_back`
-  is set first (OD-650: stop transactions check it, so no Cancel is told "cancelled" after this); a
-  running scheduled export is stopped at its next page and its partial object deleted, so the rollback
-  takes the lease; the AWS install is held (maintenance, every address held, schedules disabled,
-  mailbox access removed) and its leases have drained; `ecf-jobs` applies every outstanding stop record;
-  then an `ecf-jobs` export of the rollback kind (exempt from the maintenance flag: it reads data and bumps only
-  `export.seq`) is pulled to the laptop; the local unit is reinstalled and comes up in the `migrating`
+- **Rollback (requested within 7 days of step 6's `restore.at`; refused after; no cancel, OD-658):**
+  every address is paused (v1's pause holds delayed sends and actions); a running scheduled export is
+  stopped at its next page and its partial object deleted, so the rollback takes the lease; the hold
+  (kind `rollback`, naming the rollback job) is set, schedules disabled and mailbox access removed; the
+  leases drain, then the 90 s grace; the rollback job's consistent Scan finds and applies every pending
+  stop and reads those items again; then the rollback-kind export (the holding job, so not held) is
+  pulled to the laptop; the local unit is reinstalled and comes up in the `migrating`
   hold; `ecf restore` of that bundle under the backup key (same `install.id`, generation max + 1, the
   7-day guard); the hold is released; Slack goes back to Socket Mode with a new app-level token made by
   hand; cards re-edited. Only the rollback-kind bundle is accepted.
@@ -1388,7 +1534,11 @@ mail only, destroyed after each run with the Budget alarm on.
   (OD-652), the held service signing at cutover (OD-653); from draft 8: the `MAINT` check on every
   write and `moving_back` set before the hold (OD-655), the apply-time role re-check and the index used
   for completeness (OD-656), `response_action: errors` for form refusals (OD-657), plain SHA-256
-  manifest entries and two nonces per phase, the extended OD-341 fingerprint.
+  manifest entries and two nonces per phase, the extended OD-341 fingerprint; from draft 9:
+  `moving_back`, the grace-period send case and `rollback --cancel` (OD-658), stops searched by
+  scheduled exports and on the PITR path (OD-658), `audit.uid_prefix` and the `import:` prefix
+  (OD-659), the previous-keys list for the recipient and relink key (OD-660), `ecf-jobs`' grant
+  `status` update (OD-658), a stored local relink key, "1b's dev service" for Step 12.
 
 ## Steps
 
@@ -1448,11 +1598,17 @@ small task with its own review.
    10(c) and 11 are checked against); `ecf eval build` in the dedicated checkout runs with the pinned
    public commit's own code (so M1's builder can't change the bytes), and afterwards `git status
    --porcelain` is empty in both repositories; the for-gate check's `git branch -r --contains` output
-   is recorded (EVAL-PRIVATE Step 3 tests a detached HEAD); 1b runs on `ecf-server dev` with its own
-   database, never the operator's launchd install (whose `EVAL_ROOT` would otherwise move), and the
-   live install's `EVAL_ROOT` is unchanged afterwards. Before comparing with `ce3be1df`, any shared ID
-   whose label row differs between the two sets refuses the comparison until `ce3be1df` is rescored on
-   the pinned labels (`compare --subset` skips the version check, `results.py:252`).
+   is recorded (EVAL-PRIVATE Step 3 tests a detached HEAD); the dedicated checkout is a full clone at
+   a pinned commit at or after the eval/private merge, built with `uv run` there, and `merge.json`
+   exists after the build; 1b runs on a second named local install (`ecf --install m1ref`, a real
+   service with its own database), never the operator's main install (whose `EVAL_ROOT` would
+   otherwise move, and whose live install's `EVAL_ROOT` is checked unchanged afterwards), and its
+   result file's path and sha256 are recorded in SPEC §16; `public_cases`, `private_cases` and
+   `private_injection_cases` are each above 0 and equal `merge.json`'s counts. A shared ID whose label
+   row differs from `ce3be1df`'s is excluded from that comparison and listed (whether `rescore` can
+   re-score a v3 result on changed labels is unverified, so it isn't relied on). Before comparing with `ce3be1df`, any shared ID
+   whose label row differs between the two sets is handled as above (`compare --subset` skips the
+   version check, `results.py:252`).
 2. **Chat seam inbound and cards:** `ChatInbound`, `respond() → Ack` with `Decided`, registry,
    `FakeChat` variants; typed button values and the legacy-value table; the card renderer from status
    and its inputs (OD-651, OD-657); the answer table (OD-656). *Pass:* suite green on Slack and on both
@@ -1503,7 +1659,12 @@ small task with its own review.
    the same check as a for-gate run and records the private commit with the upload); the AWS
    membership counts (`public_cases`, `private_cases`, `private_injection_cases`, computed by
    `ecf-jobs` with the shared merge and marker constant, `starter-injection` excluded by its sha256)
-   equal the laptop's `merge.json` counts, and an upload with 0 injection cases is refused.
+   equal the laptop's `merge.json` counts, and an upload with 0 injection cases is refused; both the
+   clean-and-pushed check and the counts come from one function each in `ecf.eval`; AWS key rotation
+   (OD-660) in the CLI with a crash after each step (the old keys stay in force until the deploy; a
+   re-run finishes), the old relink key refused after the switch, rotation refused before `migrate
+   finalize`; a relink with a forged signature leaves its nonce unspent; the attestation body appears in
+   no log or table (a test); an import of a rollback bundle with an unsettled alert row lists it.
 7. **Dev stack, Cognito (go-ahead):** deploy; fresh login and logout redirect (a second login within
    the hour prompts; a no-prompt authorize fails); refresh; step-up with `ClientMetadata` on both
    calls, `ecf_nonce`, `ecf/stepup`, `jti` consumed, replay refused; `migrate_link` only while
@@ -1533,7 +1694,12 @@ small task with its own review.
    export hold answered within 30 s of the hold lifting and not dead-lettered; two concurrent applies
    of one stop (one applies, the other is skipped, no alarm); a retry with the same
    `ClientRequestToken` after a `TransactionConflict` (behaviour recorded; AWS documents only a retry
-   after success); the transaction-conflict burst (Repositories, atomicity); a 24 h idle run (compared with the cost line scaled to the dev stack's own resource counts);
+   after success); the transaction-conflict burst (Repositories, atomicity), retrying both
+   `TransactionCanceledException` and a plain write's `TransactionConflictException` (botocore's own
+   retry behaviour recorded); a scheduled export forced across two `ecf-jobs` invocations (the holder's
+   own messages run during its hold and it resumes); the broker's `ConditionCheck` on `MAINT` allowed
+   while its `PutItem` on `MAINT` is denied; Secrets Manager staging labels for the pending seed version
+   (OD-660); the hold's p99 against its recorded expected end; a 24 h idle run (compared with the cost line scaled to the dev stack's own resource counts);
    teardown. *Pass:* chosen memory = the
    smallest meeting max Max Memory Used under 80 % over 3 runs, and the GB-s row recomputed with it;
    no run killed by timeout; no lease lapse; the idle run's extrapolated monthly cost within ±25 % of
@@ -1567,11 +1733,14 @@ small task with its own review.
    clicks within 1 s on a cold function (none throttled); Resume then Pause on one address (Pause
    wins); a post held more than 5 times (held, received again, still at the head of its group, not
    dead-lettered); two render requests for one card within 5 minutes (the card shows the latest state;
-   one Slack call when the item didn't change); an edit queued before the first post lands (held, then
-   applied); a 429 while 5 card edits are queued in one channel (one held call, not 5); an update while
+   one Slack call when the item didn't change); an edit queued before the first post lands (dropped,
+   and the first post's re-read queues the edit); a 429 while 5 card edits are queued in one channel (one held call, not 5); an update while
    a post in the same channel is held; a form submission refused by `ecf-worker` (the form shows the
-   error section); an org-wide Grid install refused, and the team and enterprise payload paths
-   recorded; a Cancel during a hold whose `response_url` post was skipped (`ecf-worker` posts the result
+   error section, with the person's inputs kept) and which of `external_id` and `view.id` the
+   update used; a refusal after the person closed the view (sent as an ephemeral); an org-wide Grid
+   install refused, and the `auth.test` fields and the team and enterprise payload paths recorded; a
+   Cancel during a rollback hold (told the rollback answer); the answer table's identity and budget
+   rows; a legacy v1 click between the switch and the "moved" edit (refused); a Cancel during a hold whose `response_url` post was skipped (`ecf-worker` posts the result
    before its hold check, within 5 s); click to card edit; the dead-man message at cutover; teardown. *Pass:* max `$context.responseLatency` under 2.5 s
    cold and 0 `expired_trigger_id`; the real form within 5 s p95 cold; the non-approver sees nothing
    and can't cancel; replay and double click each one decision; every Cancel is answered with its true
@@ -1612,19 +1781,24 @@ small task with its own review.
     steps 2 and 10; one dev address seeded with a Bedrock run and one whose latest gate run used another
     set version; a Cancel and a Reject clicked between the rollback request and the rollback export; a
     queued alert email at the rollback. The set comes from the dedicated checkout (a `--eval-set-from`
-    build), and the local install is 1b's dev service, so its addresses pass through 1b's run (their
-    count listed, more than 0). *Pass:* open-approval count equal, each with exactly one fresh grant with no
+    build). The local side is a throwaway real install (`ecf init` under its own name, a test Slack app
+    and a test mailbox, as M8 Step 10), whose gate rows come from a `--fraud-only` C run on it with Step
+    12's code (go-ahead); the count of addresses passing locally (more than 0) and the digest are
+    listed. *Pass:* open-approval count equal, each with exactly one fresh grant with no
     attempt record; all N messages pre-checked on the first AWS check; a secret write with only one of
     attestation and step-up refused; audit rows after run, rollback and re-migrate equal the sum of the
-    sources by `uid`, 0 collisions; a rollback started with one action `executing` sends it exactly once;
+    sources by `uid`, 0 collisions; a rollback started with one action `executing` sends it exactly once,
+    and one started with a `delayed` send whose delay ends during the rollback sends nothing (paused,
+    OD-658) and arrives locally as `awaiting_approval`;
     Bedrock gate rows and gate-eligible Bedrock runs 0 on AWS; the private part uploaded and verified
     before the AWS hold lifts; cursor and gate-row counts equal; at most one new card per open item, old cards
     edited (`conversations.history`); the local unit doesn't return after a reboot; `gate.synthetic`
     passes on AWS for every address that passed locally; abort restores local checking; rollback leaves
     AWS held and local restored with a bumped generation; the fraud-off notice posted and the gap's mail
     pre-checked on the first AWS check; `migrate plan` lists the mismatched address; the rollback's
-    Cancel and Reject told "moving back" if after the hold (set with `moving_back` in one write), else
-    applied and arriving locally `cancelled` and `rejected`; the queued alert email sent locally after
+    Cancel and Reject told the rollback answer if clicked after the hold (and arriving locally as
+    `awaiting_approval`), else applied and arriving locally `cancelled` and `rejected`; a Cancel that
+    commits just after the hold is set is found by the rollback's Scan and applied; the queued alert email sent locally after
     the rollback; abort after step 7 restores local checking, returns the Cognito identity to pending,
     keeps the aborted run's audit rows, and a re-run links and imports cleanly at a generation above any
     seen; the stamp rule holds (migrated runs count only on equal source set versions); the runbook
@@ -1642,8 +1816,10 @@ small task with its own review.
     (caught by the OD-215 member check), IAM's limits on DynamoDB (attribute names and key prefixes,
     not values; no condition key can require a `ConditionExpression`), a role removed between a Cancel's
     read and its commit (authority is judged at commit), Slack posts held past 1,000 receives
-    (about 3.4 days) dead-lettered, a delayed send moved to `executing` during a rollback's grace
-    arriving locally as `failed_unknown`, org-wide Slack installs unsupported, TTL deletes during an
+    (about 3.4 days) dead-lettered, a Cancel or Reject during a rollback or merge refused (nothing is
+    sent until approved again), a rollback can't be cancelled once requested, a compromised
+    `ecf-slack-in` overwriting its own `AUDIT#SLACKIN#` rows before a flush, org-wide Slack installs
+    unsupported, TTL deletes during an
     export, rows imported before M1 carrying the importer's audit `uid`, fraud flagging off during
     migrate, a stale private eval clone accepted, the laptop's public eval set pinned to the installed
     release, lease stuck up to its bound after a kill), §12.4, §13, §14 `max_per_check` cap, §15, §16.3 Bedrock figures, §17), the
@@ -1818,7 +1994,31 @@ merges; rollback alert email; abort after step 7; generations; stop-time by tran
 and AWS counts; non-inferiority to 1b at Step 11; the set source for Steps 8 and 12; the custom-metric
 cost; step owners; stale lines.
 
-Draft 9 gets a delta review on Opus (OD-577).
+**Round 9** (draft 9, d6c48a4, eight Opus reviewers, delta, plain Agent calls): about 85 findings, six
+high (X1-X6 in the findings file), most again from draft 9's own fixes; no reviewer found a send after a
+Cancel committed while `delayed`. Applying the operator's rule, the operator chose to simplify the
+rollback (OD-658, pause first, no cancel) and the audit IDs (OD-659, random), and to finish AWS key
+rotation (OD-660); every other recommendation was accepted, 2026-11-05.
+
+| # | Round-9 finding | Landed |
+|---|---|---|
+| X1 | the holder's own lease deadlocks the hold | OD-658 (`MAINT` names the holder); Step 8 |
+| X2 | stop search is a full Scan; PITR rollback and merges miss stops | OD-658 (pause first; Scan path for rollbacks and merges; scheduled exports don't search) |
+| X3 | audit `uid` prefixes | OD-659 (random) |
+| X4 | Step 1b and Step 12 on `ecf-server dev` | Steps 1b (`--install m1ref`) and 12 (a throwaway real install) |
+| X5 | renderer misses escalation and answer cards | After round 9, Slack; Step 2 |
+| X6 | `ecf-jobs` could revive voided grants | OD-658 (delete only) |
+
+Mediums folded in ("After round 9"): resolve edges exempt; `ecf cancel` and `ecf reject` as applied;
+answer rows and v1 wording; holder lease and bounded pages; upgrade grace; both conflict error forms;
+`ecf-slack-in` reads `MAINT` without a transaction check; edits dropped before a first post; 300 s by
+receive count; `views.update` target and kept inputs; refusals after close; legacy cards at cutover;
+Grid detection; relink's one nonce and the verify order; attestation body never stored; OS issuer;
+identity merges; the module list; the `MAINT` IAM pattern; key attribute names and `ITEM#` records;
+CloudFormation events; kind-dependent reader allow-list; the transition marker; the generation's home;
+one function each for the clean check and the counts; 1b's checks; the alarm count; stale lines.
+
+Draft 10 gets a delta review on Opus (OD-577).
 
 ## Open questions
 
