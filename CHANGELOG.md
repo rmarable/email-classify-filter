@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the one injection test email that stays public is recognised by its exact contents, and the check that moving the private test emails changed nothing is measured on the released code first (OD-654).
 - Decided: when the private test emails are merged with the public ones for a run, ecf copies them safely so editing a card can never change a run in progress, and the go-live check also requires the private set to be committed and pushed (OD-647, OD-648).
 - Decided: the go-live check accepts a test run only when it used the full test set, public and private parts together, as proved by the set's version; older runs on the full set still count (OD-643).
 - Roadmap (Later): a request for a password, sign-in code, gift-card codes or a crypto payment placed past the part of an email the model reads (the first 4,000 characters) isn't caught by any rule today; deciding whether it should be is on the roadmap (OD-631).
