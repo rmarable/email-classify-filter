@@ -247,7 +247,10 @@ def test_an_interrupted_call_kills_the_tool_before_it_can_write(
 ) -> None:
     """Ctrl-C reaches ecf, not the tool (its own session): the tool is killed, so no answer
     file appears after the caller's clean-up."""
-    script = ("import os, pathlib, time; pathlib.Path('pid').write_text(str(os.getpid()));"
+    # The pid is written to a temporary name and renamed, so the wait below never reads an
+    # empty file (write_text creates it before writing; CI run 41969713777 caught that gap).
+    script = ("import os, pathlib, time; pathlib.Path('pid.tmp').write_text(str(os.getpid()));"
+              " os.replace('pid.tmp', 'pid');"
               " time.sleep(1.5); pathlib.Path('out.json').write_text('{}')")  # fmt: skip
     real = cast(Callable[..., tuple[bytes, bytes]], subprocess.Popen.communicate)  # pyright: ignore[reportUnknownMemberType]
 
@@ -256,7 +259,10 @@ def test_an_interrupted_call_kills_the_tool_before_it_can_write(
     ) -> tuple[bytes, bytes]:
         if "timeout" not in kwargs:  # the clean-up's wait
             return real(self, *args, **kwargs)
+        deadline = time.monotonic() + 15  # fail, don't hang, if the tool never starts
         while not (tmp_path / "pid").exists():
+            if self.poll() is not None or time.monotonic() > deadline:
+                raise AssertionError("the tool exited or never wrote its pid")
             time.sleep(0.01)
         raise KeyboardInterrupt
 
