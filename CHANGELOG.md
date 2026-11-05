@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: a draft eval run lost to a restart is resumed as before, with ecf first refreshing its test set at startup; and the daily GitHub check for prompt-injection test emails skips the old, already-public ones on release tags, which can't change, while checking the main branch in full (OD-677).
 - Decided: the fixed list of old, already-public injection test emails is pinned so it can't grow, the main branch is always checked in full, and a lost draft eval run that is waiting for the test set says exactly which folder to rebuild (OD-676).
 - Decided: the GitHub check for prompt-injection test emails skips only a fixed list of old test emails that are already public, so a new one pushed straight to the main branch is caught too; and a lost draft eval run that can't be resumed no longer holds up the others (OD-639).
 - Decided: the GitHub check for prompt-injection test emails also runs once a day from the main branch, so a push that skips its checks is still caught; and a draft eval run lost to a service restart is resumed at the next restart only when the test set is ready, otherwise left untouched with a note to rebuild and restart (OD-638).
