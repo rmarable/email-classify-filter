@@ -1,10 +1,10 @@
 ---
 id: fraud-past-truncation
 title: Bank change placed after a long friendly preamble
-threat: fraud text beyond the model's excerpt
-control: triggers scan the whole text, not the model's 1,500-character excerpt
-why: attackers push the payload past what the model reads
-failure_looks_like: no fraud trigger because the model never saw the request
+threat: bank change buried under a long friendly preamble, inside the default model window
+control: fraud trigger 1 on the whole text (bank keywords with change wording or an unconfirmed sender), not on what the model reads
+why: a friendly preamble can distract the model; the id dates from the 1,500 window, and the ask sat inside it even then
+failure_looks_like: no fraud trigger, or the model misses a bank change buried under friendly text
 from: "Vendor F Relations <relations@vendor-f.example>"
 subject: "Quarterly partnership update"
 date: 2026-10-02T15:20:00Z
