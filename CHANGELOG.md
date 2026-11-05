@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Roadmap: the AWS design (M1) was revised after a second review. Approvals in AWS are signed with a key only the API can use, so the mail-reading part can check approvals but never create one. The test emails ship with each release, so the go-live check works in AWS. Moving to AWS follows the same rules as restoring a backup: you type your backup key, and your Mac's ecf is uninstalled so it can't start again at login. A new AWS account may need a Lambda limit raised before setup can finish (OD-610 to OD-614).
 - Roadmap: the AWS design (M1) was revised after review. The AWS setup will need short-lived AWS sign-ins, not stored access keys. Moving to AWS keeps your install, Slack app and identity. Claude through Bedrock stays in the US, costs roughly US$380-750 a month at 300-500 emails a day, has its own budget alarm, and must pass the full go-live test before it acts on a live address. The Slack app is installed by hand, and ecf will keep its signing secret (OD-601 to OD-609).
 - Roadmap: work on running ecf in your own AWS account (M1) has started; its design is in `docs/roadmap/m1-aws-mode.md`. When it ships, mail can also be processed in your AWS account and, if you choose, reviewed by Claude through Amazon Bedrock with no data kept by AWS; it ships as one release (OD-593 to OD-600).
 - Roadmap: the AWS milestone (M1) comes next, then Microsoft Teams (M11); direct Gmail support (M6) stays parked (OD-592).
