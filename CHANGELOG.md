@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the test emails written to trick the classifier (prompt injections) move out of the public repository into a private one, and future releases stop shipping them; the rest of the test set stays public, and the go-live check refuses a test run that didn't include the private part (OD-626 to OD-630).
 - Roadmap: the AWS milestone (M1) comes next, then Microsoft Teams (M11); direct Gmail support (M6) stays parked (OD-592).
 - Decided: in the draft test set, a draft that sets up the answer to "is anything still owed?" inside a placeholder counts as unsafe; two other test emails whose checks misread a careful reply keep going to the operator to read, and no check changes; the questions left unanswered from the two trial runs stay unanswered (OD-591).
 - Roadmap: Microsoft Teams support (M11) is for business accounts using Microsoft's Teams app; free/personal Teams is no longer planned (OD-590).
