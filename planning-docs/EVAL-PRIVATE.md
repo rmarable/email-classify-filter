@@ -1,13 +1,14 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 5, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 6, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
 gate guard (amends OD-629). Draft 3 (f63822c) went through a second Opus check; every fix was accepted
 and decisions W1-W2 made (OD-647, OD-648, operator 2026-11-05). Draft 4 (4ff2eea) went through a
 third Opus check (one high: the `starter-injection` pin); every fix was accepted (operator
-2026-11-05) and is folded in here, with OD-654. Findings: `state-archive/eval-private/review-findings.md`. Code
+2026-11-05) and is folded in, with OD-654. Draft 5 (43c1b2a) went through a fourth Opus check (no
+highs); every fix was accepted (operator, 2026-11-05) and is folded in here. Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
 ## Why
@@ -70,17 +71,22 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
 - **Two standalone sets per name:** the public one (`tests/eval/<set>`) and the private one
   (`eval/private/<set>`), each a full set layout of its own: `cases/`, `eml/`, `.build/`,
   `labels.jsonl`, `fixed_labels.jsonl`, `reviews.jsonl`, and for drafts `checks.yaml`. Every tool that
-  writes (label, confirm, review, settle, agree, expect, `fixed_labels`, `generate`, `new-case`, build)
-  writes to the set that owns the card: a single-ID command finds the owning set itself, and never
-  returns the merged folder. Whole-set modes (`ecf eval label` with no ID and `--status`, `review
-  --add`'s globs, `settle`, `agree`, `expect`) cover both sets, each change written to the card's
-  owning set. One guard, `writable_root()`, runs inside every writer (`build_all`, `labels.write`,
+  writes (label, confirm, review, `fixed_labels`, `generate`, `new-case`, build) writes to the set that
+  owns the card: a single-ID command finds the owning set itself, and never returns the merged folder.
+  Whole-set modes (`ecf eval label` with no ID and `--status`, `ecf eval label --review` with `--add`
+  and its `--cases` globs, `_matching`, `cli.py:993`) cover both sets, each change written to the card's
+  owning set. `ecf eval label --import-fixed` (one item's answers for many case IDs, through
+  `fixed_labels.record`) splits its answers by owning set and logs each part in that set's
+  `reviews.jsonl`. `settle`, `agree` and `expect` need a generated set's `manifest.json` (`gen.verify`,
+  `settle.py:138`, `agree.py:128`, `expect.py:222`), which none of these sets has, so they keep refusing
+  them and get no both-sets mode. One guard, `writable_root()`, runs inside every writer (`build_all`, `labels.write`,
   `fixed_labels`, `review.*`, `append_log`, `new-case` at `cli.py:931`, `generate`): it refuses a root
   whose resolved path or any ancestor is the merged folder or holds `merge.json`. A test searches
-  `src/ecf/eval` and `src/ecf/cli*.py` for file writes, with a named allow-list of writes that never
-  touch a set (`settle.export`, `mix.write_default`, `grade.py:165`, `generate.py:123` and `:802`,
-  `tools.py`, `codex_tool.py`, `corpus_labels.py`, `cli_evalgen._write_private`), so a new writer can't
-  skip the guard. `append_log` appends in place, which is safe: the merged `reviews.jsonl` is rebuilt,
+  `src/ecf/eval`, `src/ecf/cli.py`, `cli_evalgen.py` and `cli_card_review.py` for file writes, with a
+  named allow-list: writes outside any set (`settle.export`, `mix.write_default`, `tools.py`,
+  `codex_tool.py`, `corpus_labels.py`, `cli_evalgen._write_private`) and writes into a generated set's
+  root only, guarded at entry by `generate`'s own check or `gen.verify` (`grade.py:165`,
+  `generate.py:123`, `:802` and `:803`), so a new writer can't skip the guard. `append_log` appends in place, which is safe: the merged `reviews.jsonl` is rebuilt,
   never linked.
 - **Atomic writes (W1, OD-647):** every set writer writes through one helper (temporary file, then
   `os.replace`). Today `builder.py:160`, `review.py:175` and `:325` and `generate.py:592` write in
@@ -93,14 +99,24 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
   says so ("public set only").
 - **The merged set (W1, OD-647):** `refresh_merged(set)` writes `eval/private/.merged/<set>/` (gitignored
   by the private repository), once at the end of each CLI command that wrote a set (in a `finally`, so
-  Ctrl-C still refreshes; `ecf eval review` refreshes after each changed card) and in `ecf eval build`
-  (which builds both sets, then refreshes), under an exclusive lock on
-  `eval/private/.merged/<set>.lock`, with `merge.json` written last. One function, `merge_sources()`
+  Ctrl-C still refreshes; `ecf eval label --review` refreshes after each changed card) and in `ecf
+  eval build` (which builds both sets, then refreshes), under an exclusive lock on
+  `eval/private/.merged/<set>.lock`, with `merge.json` written last. A run (`ecf eval run`,
+  `/ecf-eval`) holds a shared lock on the same file for its lifetime; a refresh takes the exclusive lock
+  without blocking and, while a run holds the shared one, says "a run is reading this set; refreshed
+  when it ends" and defers. The service and the resolver never wait on this lock. One function, `merge_sources()`
   in `ecf.eval`, computes the merged label, fixed-label and `checks.yaml` content for both
-  `refresh_merged` and the gate (a test: its output equals the merged files' bytes). `cases/` and
-  `eml/` are plain copies (small), made read-only; `.build/` files are links to the sources (large):
-  an APFS clone (`clonefile`) where available, else a hard link, else a copy. A hard-linked `.build/`
-  file is writable by design: an in-place write through the merged folder would change the private
+  `refresh_merged` and the gate (a test: its output equals the merged files' bytes). It refuses any
+  row or key whose ID isn't a card in that same source (`labels.jsonl`, `fixed_labels.jsonl`,
+  `reviews.jsonl`, `checks.yaml`), and duplicate keys in `checks.yaml` (loaded so duplicates raise),
+  so a private card's expected replies can't sit in a public file unnoticed; CI also runs this
+  ownership check on the public sets alone. `cases/` and `eml/` are plain copies (small; a full copy
+  measured 105 ms), made read-only; `.build/` files are links to the sources (large): an APFS clone
+  where available (`clonefile` from `libSystem` through `ctypes`, since Python has none; cloned to a
+  temporary name, then renamed, since `clonefile` refuses an existing destination; a non-zero return
+  falls back), else a hard link, else a copy. The manifest records each merged file's own inode (a
+  clone gets a new one) and reuses the previous sha256 when size, modification time and inode are
+  unchanged. A hard-linked `.build/` file (the fallback) is writable by design: an in-place write through the merged folder would change the private
   source, which the sha256 check then refuses (fails closed); a writer's temporary-file-and-rename
   breaks the link instead. `labels.jsonl` and `fixed_labels.jsonl` merged by ID; `checks.yaml` merged by
   key; `reviews.jsonl` concatenated. The copy is incremental (only changed files rewritten, orphans
@@ -120,18 +136,26 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
   `labels.jsonl` check moves after resolving). Freshness is judged by size, modification time and
   inode, with a sha256 check only on a mismatch (hashing the whole set takes about 27 ms warm; stat
   about 1 ms). Every `--root` reader goes through it: `ecf eval run`, `/ecf-eval`, `rescore`,
-  `compare`, `rules test`, `confirm-set`, `null-drafts`, `judge-drafts`, `routes` (`cli.py:1640`),
+  `compare`, `rules test`, `confirm-set`, `null-drafts`, `judge-drafts`, `routes` (`cli.py:1640`,
+  which sends a `sets` list, each entry resolved),
   `status` and `show` (and `status`'s `--root` hints), the gate and the local-only tests. **Stored drafts
   roots:** `draftruns.Registration.root`, the `root` in `Registration.options` (`claude_eval.py:689`,
   read on resume at `:696`), the null run's side file (`draftjudging.py:372`) and the calibration side
   file (`draftcalibration.py:144`); their readers (`draftjudging.root_of`, `draftjudging.py:64`, used by
-  judge-drafts, calibration and settle-drafts, and `claude_eval.py:2243`'s status hint) go through the
-  resolver, so runs from before the move keep working. The gate's fingerprint uses a path-only mode
-  (no hashing, no `git`); the gate re-checks freshness inside `inputs()`, and `GATE_VERSION` is bumped
-  so cached results from before the change are recomputed.
-- **The stored root:** `EVAL_ROOT` stores the logical absolute `<repo top>/tests/eval/<set>` path,
-  which is what `remember_root` already stores (`str(root.resolve())`, `evalrun.py:765`), so no stored
-  value needs migrating; `remember_root`,
+  judge-drafts, calibration and settle-drafts; `draftjudging.py:101`, which reads `calib["root"]`
+  directly; and `claude_eval.py:2243`'s status hint) go through the resolver, so runs from before the
+  move keep working. The gate's fingerprint uses a path-only mode (no hashing, no `git`); the gate
+  re-checks freshness inside `inputs()` by stat only (any hashing stays in the gate's compute,
+  `gate.py:124`), and `GATE_VERSION` is bumped so cached results from before the change are
+  recomputed.
+- **The stored root:** `EVAL_ROOT` stores the logical absolute `<repo top>/tests/eval/<set>` path.
+  Today `remember_root` stores `str(root.resolve())` of the root it is given (`evalrun.py:765`), and the
+  null and calibration side files do the same, so once the API resolves the path they would store the
+  merged folder instead. So `Options` carries both `logical_root` and `resolved_root`; `remember_root`,
+  the side files and `Registration` store the logical one, and the resolver refuses any path inside a
+  folder holding `merge.json` (rather than reading it as a public-only set); a test passes a merged
+  path as `--root` and to the gate. Stored values from before the change are already logical, so none
+  needs migrating; `remember_root`,
   `_check_root` (`src/ecf_server/claude_eval.py:819-829`), the gate's version check and its fingerprint
   resolve it through the resolver, so the first gate run after the move is accepted and the public
   `labels.jsonl` is never touched.
@@ -156,18 +180,30 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
   `load(merged, fraud_only=...)` on the current verified merged set, never with the run's own numbers.
 - **Runs from before the guard** (such as `ce3be1df`): accepted only when their `set_version` equals
   the current verified merged version.
-- **Dirty or stale clone:** a for-gate run checks, live at its start and again whenever the gate's
-  compute reruns, that neither `eval/private` nor `tests/eval/<set>` has uncommitted changes and that
+- **Dirty or stale clone:** a for-gate run (a gate-eligible backend, not `null`, with `for_gate` true;
+  `Options.for_gate` defaults to true, `evalrun.py:184`, so the backend matters) checks, live at its
+  start and again whenever the gate's compute reruns, that neither `eval/private` nor `tests/eval/<set>` has uncommitted changes and that
   the private HEAD is contained in its remote-tracking branch (`git branch -r --contains`, no
   network); the run records the private commit and the merged version in its own metrics, and the
-  gate's detail shows them. `git` runs in the service (the gate computes there, `gate.py:181-206`) as
-  `<git> -C <absolute repo top> --no-optional-locks -c core.fsmonitor=false -c
-  core.hooksPath=/dev/null` with `GIT_OPTIONAL_LOCKS=0`, the binary's absolute path found once and
-  stored, a timeout of a few seconds, an argv test; any `git` error, timeout or missing binary counts
-  as not clean, with its message. So that a commit or push is noticed without a subprocess per tick,
-  the fingerprint stats `.git/HEAD`, the branch ref (or `packed-refs`), `refs/remotes` and `.git/index`
-  in both repositories. The set-level part of the check (merge, load, `git`) runs once per request and
-  is cached by (`merge.json` stat, private HEAD, label-file stats), not once per address. A
+  gate's detail shows them. `git` runs in the service (the gate computes there, `gate.py:124`) as
+  `/usr/bin/git -C <absolute repo top> --no-optional-locks -c core.fsmonitor=false -c
+  core.hooksPath=/dev/null -c core.attributesFile=/dev/null` with `GIT_OPTIONAL_LOCKS=0`,
+  `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, `status --ignore-submodules`, a timeout of
+  a few seconds and an argv test (the `/usr/bin/git` shim adds about 3-4 ms a call over the Command
+  Line Tools binary, measured, and survives Xcode switches); the repository's own config is trusted as
+  the operator's. Any `git` error, timeout or missing binary counts as not clean, with its message, and
+  is not cached: the gate leaves its seen fingerprint unset so the next tick retries. So that a commit,
+  a push or a new file is noticed without a subprocess per tick, the fingerprint stats, in both
+  repositories: the HEAD file, the loose branch ref and `packed-refs` (both), every file under
+  `refs/remotes/` (a push renames `refs/remotes/<remote>/<branch>` and leaves `refs/remotes` itself
+  unchanged, measured 2026-11-05), the index, and the `cases/` and `eml/` folders; a missing file is
+  a value, not an error. In a worktree, where `.git` is a file, the paths come from its `gitdir:` line
+  and `commondir`, read without `git`. Accepted limit: a plain `git status` (an editor, a shell prompt)
+  rewrites the public index, costing one recompute per tick for addresses that haven't passed. The
+  set-level part of the check (merge, load, `git`) is cached by that whole fingerprint plus `merge.json`
+  and the label-file stats, and shared by the tick (`stages.tick`, `stages.py:270-287`), `stages.status`
+  and `address_gate` (`api.py:743`), so it runs once, not once per address; "private HEAD" means reading
+  the HEAD and ref files, never `git rev-parse`. A
   clone behind its origin is an accepted limit (SPEC §16); the code merge gate checks the commit is
   pushed.
 - The gate's fingerprint stats `merge.json` and both sources' label files (hashing only inside the
@@ -182,8 +218,12 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
   differs from the shipped `injection` template (`case_templates.py:39-57`): it has `author: claude`,
   `rule: fraud_guard` and `must_escalate: true`, added in 8a4f0f2 (OD-252) while the template wasn't, so
   a pin to the template would refuse today's card. One constant (ID and sha256) shared by the builder,
-  the sdist test and a CI marker scan of `tests/eval/**/cases` on every push; a test checks the card
-  equals the template's output plus exactly those keys.
+  the sdist test and a marker scan of `tests/eval/**/cases`, run in the pre-commit hygiene check, the
+  macOS merge gate and CI on every push (so a marked card is caught before it is published); a test
+  checks the card equals the template's output with `author` changed to `claude` (the template has
+  `author: hand`, `case_templates.py:6`) and `rule: fraud_guard` and `must_escalate: true` added. The
+  pin depends on LF line endings, so a new public `.gitattributes` marks `tests/eval/**/cases/*.md
+  -text`.
 - `ecf eval new-case --template injection` writes to the private set, or refuses without one.
 - An `eml/` or `.build/` file with no card in its set fails the build.
 
@@ -232,8 +272,8 @@ Current set versions (2026-11-05): `synthetic` `a6642d21bfd5eaaf` (SPEC §16.2's
 Each write, commit and push needs the operator's OK.
 
 1. **Inventory:** done (above).
-2. **Phase R:** done on draft 1 (Fable), drafts 2, 3 and 4 (Opus delta). Draft 5 gets an Opus check of
-   its changes (OD-577).
+2. **Phase R:** done on draft 1 (Fable), drafts 2, 3, 4 and 5 (Opus delta). Draft 6 gets an Opus check
+   of its changes (OD-577).
 3. **Code** on a branch (Steps 3, 5 and 6 share it; the private repository's commit is pushed before
    Step 7): the atomic-write helper in every writer, `writable_root()`, `refresh_merged` with its lock,
    the resolver in `ecf.eval`, `merge.json` and the in-memory recomputation, the stored-root and draft
@@ -244,13 +284,20 @@ Each write, commit and push needs the operator's OK.
    listing the exact cards to move, `merge_sources()`, the drafts roots, `routes` and the whole-set
    modes, the per-request gate cache. Tests build public and private sets in temporary folders, so CI
    never needs the private repository. *Pass:* a property test splits a built set at several cut points
-   (first row, last row, interleaved, neither source with `fixed_labels.jsonl`, only the public one with
-   it (synthetic's real shape), an empty public or private set) and the merged bytes equal the unsplit
-   files, with no merged `fixed_labels.jsonl` when no source has one; a corrupted `.eml` is repaired by
-   a rebuild; a source writer replacing a hard-linked `.build/` file while the merged copy is held open
-   leaves the open copy's bytes unchanged; `git` failing or timing out makes a for-gate run refuse;
-   a commit in the private repository changes the gate's fingerprint; a status call over several
-   addresses runs the set-level check once (its time recorded); the move script's real list applied to
+   (first row, last row, interleaved, neither source with `fixed_labels.jsonl`, only one with it, both
+   with it (synthetic's real shape after the move: 29 of the 49 moving cards have `fixed_labels` rows,
+   which the move script moves with them), an empty public or private set) and the merged bytes equal
+   the unsplit files, with no merged `fixed_labels.jsonl` when no source has one; a row or
+   `checks.yaml` key naming another source's card, or a duplicate key, is refused; a corrupted `.eml`
+   is repaired by a rebuild; a source writer replacing a linked `.build/` file while the merged copy is
+   held open leaves the open copy's bytes unchanged; with the hard-link path forced, an in-place write
+   through the merged folder makes the loader report the sha256 mismatch and a for-gate run refuse;
+   `git` failing or timing out makes a for-gate run refuse and is retried on the next tick; a commit, a
+   push to a local bare remote, and an untracked new card each change the gate's fingerprint, in a
+   normal clone and in a worktree; a detached HEAD contained in the remote branch passes the for-gate
+   check and one not contained fails; a merged path given as `--root` or stored as the root is refused;
+   a refresh during a run defers until the run ends; a status call over several addresses, and a tick,
+   run the set-level check once (time recorded, not gated); the move script's real list applied to
    copies of all three real sets in a temporary folder gives merged label bytes equal to today's,
    `checks.yaml` parsing equal, and versions equal; a consistent hand edit of the merged files and
    `merge.json` is refused; a made-up run from before the guard is accepted only when its version
@@ -259,18 +306,23 @@ Each write, commit and push needs the operator's OK.
    a public-only for-gate run is refused; full suite green.
 4. **Private repository:** the operator creates it (private, GitHub); cloned into `eval/private/`;
    first commit as above. *Pass:* `git check-ignore eval/private` true; `.gitattributes` present.
-5. **Move:** first, on main's installed code (before the branch is installed, and before Step 4
-   creates any `eval/private/<set>`), record **P**, per set and read-only: for `synthetic`,
+5. **Move:** first, on main's installed code (before the branch is installed, and before the first
+   moved file lands), record **P**, per set and read-only: for `synthetic`,
    `set_version` and a `null` run's case, confirmed and fraud-guard counts; for `drafts`, `set_version`,
    `evalrun.load`'s case count, every `card_digest` and the draft registry's `set_digest`; for
    `heldout3` (cards and labels only, no `.eml` or `.build/`), `set_version` and its 30 rows. Not
    `null-drafts`: its run ID is `sha256("null|" + version)`, so a before and after run would share a
    file. **R** is `evalrun.latest` for the current digest if it passes the gate on main, else there is
-   no R; its gate check, `rescore --synthetic` and `compare` results are taken then too (as of
+   no R (read from the gate's synthetic detail, which names its run ID); its gate check, `rescore
+   --synthetic` and `compare` results are taken then too, and the `rescore` output file is copied aside
+   (it is named by run ID and set version, `evalrun.py:1614`, so the after-rescore would overwrite it)
+   (as of
    2026-11-05: `synthetic` `a6642d21bfd5eaaf`, `drafts` `ae1111e7bc117b23`, `heldout3`
    `07625d6cafa4b278`, 396/396/164, R = `ce3be1df`; cards added before the move change all of these,
-   which is expected). Then `git rm` the listed cards and every file naming them from the public
-   repository and add them to the private one. *Pass:*
+   which is expected). Then `git rm` the listed cards and every file naming them (their
+   `fixed_labels` rows included) from the public repository, add them to the private one, commit both
+   and push the private repository; every after-check runs only then, since the live dirty-and-pushed
+   check would otherwise refuse for a reason the move didn't cause. *Pass:*
    - no moved ID is a path under `cases/`, `eml/` or `.build/`, nor a row or key in the public
      `labels.jsonl`, `fixed_labels.jsonl`, `reviews.jsonl` or `checks.yaml` (a parsed check); `git grep
      -lF -f <ids>` finds them only in these names-only files: SPEC.md, `docs/adr/0026*`,
@@ -280,18 +332,23 @@ Each write, commit and push needs the operator's OK.
      a moved ID;
    - a fresh clone of the private repository: every row's sha256 matches its file (built rows after
      `ecf eval build`); `git ls-files --eol` shows CRLF for `.eml`;
-   - merged versions equal P; the real-set copy check (Step 3) is one-off and local only; the draft
-     registry's confirmed `set_digest` unchanged; the merged
+   - merged versions equal P; the real-set copy check (Step 3) is one-off and local only; the merged
+     drafts `set_version` equals the draft registry's confirmed `set_digest` (as `draftruns.py:219`
+     checks); the merged
      `checks.yaml`, parsed, equal to the public one before the move; a drafts load with unchanged
      `card_digest`s;
    - no row's file missing; a `synthetic` `null` run after the move (without `--subset`) equals the
-     before-run on the keys both runs have, apart from run IDs, timings and the membership keys;
+     before-run on a named list of keys: case count, confirmed, fraud-guard cases, unsafe,
+     `fraud_guard_missed`, and each case's scored fields (not `created_at`, `wall_s`, `environment`,
+     `power`, `measurements`, `classifier_ms`, `wait_ms`, run IDs or the membership keys);
      `public_cases + private_cases` equals the before-run's cases and `private_cases` equals the move
-     script's count; the null run's stored root (the draft null-floor side file) resolves to the
-     merged set;
-   - if R exists: its gate check, `rescore --synthetic` (excluding timings and the recomputed
-     measurements) and `compare` (R against the before-run and R against the after-run) give the same
-     results before and after; if not, the gate's synthetic detail is the same before and after (and the gate's evidence
+     script's count; every existing null-floor (`.null.json`) and calibration side file from before the
+     move resolves, through `draftjudging.root_of` and the resolver, to the merged drafts set, and
+     `EVAL_ROOT` written by the after-run resolves to the merged `synthetic` set;
+   - if R exists: its gate check gives the same pass or fail and the same synthetic figures (apart from
+     the fields the change adds: the private commit and merged version, and `GATE_VERSION`), and
+     `rescore --synthetic` (compared with the copy set aside, excluding timings) and `compare` (R
+     against the before-run and R against the after-run) give the same results; if not, the gate's synthetic detail is the same before and after (and the gate's evidence
      needs a fresh C run after the move, with the operator's go-ahead); a public-only for-gate run is
      refused.
 6. **Docs:** `.claude/rules/eval-synthetic.md`, `planning-docs/GENERATE-FAKE-TESTING-EMAILS.md`, SPEC
@@ -302,7 +359,10 @@ Each write, commit and push needs the operator's OK.
 
 `set_version` 0.7 ms today, 1.6-3.2 ms merged; `load_cards` 381 ms; hygiene scan 275 ms; building the
 394 small cards 164 ms, `scanned-invoice-17mb` 2.8 s; `evalrun.load` 34 ms; sha256 of every file in the
-set about 27 ms warm, stat about 1 ms (round 3). Round 4: merging the label files 1.5 ms,
+set about 27 ms warm, stat about 1 ms (round 3). Round 5 (warm, medians): `synthetic` has 795 files,
+2 of them `.build` (28.8 MB); stat of every file 0.7 ms; sha256 of the small files 9.5 ms and of the
+two `.build` files 10.3 ms; a full copy of `cases/` and `eml/` 105 ms; `clonefile` 0.06-0.08 ms per
+file; a per-card refresh estimated at 30-50 ms. Round 4: merging the label files 1.5 ms,
 `checks.yaml` parse 23 ms, `git status` and `git branch -r --contains` about 10 ms each. The merged set
 costs about 4.4 MB of copies across the three sets (`synthetic` cases 1.5 MB and `eml` 1.7 MB,
 `drafts` 0.57 and 0.54 MB, `heldout3` 0.12 MB) plus linked `.build/`; Step 3 records the measured
