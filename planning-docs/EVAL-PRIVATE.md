@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 14, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 15, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -30,7 +30,11 @@ backstop didn't exist; and draft 12's recovery after the socket bind let a new r
 attempt); every fix is folded in with OD-637, which also amends OD-643. Draft 13 (42060ef) went through a
 twelfth Opus check (three highs: draft 13's recovery retries still closed attempts and lost restart
 counts, and the card-scan workflow could be skipped); the operator accepted two simplifications (X7,
-X8 below, 2026-11-05), and every other fix is folded in here with OD-638.
+X8 below, 2026-11-05), and every other fix is folded in with OD-638. Draft 14 (301f856) went through a
+thirteenth Opus
+check (two highs, both in draft 14's own rules: skipping blobs already in `origin/main`'s history
+scanned nothing on a push to main, and X7's all-or-nothing recovery jammed for good on a lost run whose
+folder is gone); every fix is folded in here with OD-639.
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -140,20 +144,37 @@ on and keeps future releases clean. Rewriting history is not proposed.
     - `push` to any ref, tags included: the commits in `before..after`; for a new ref, or a `before`
       missing after a force-push, `after --not origin/main`; a deleted ref passes;
     - `pull_request`: `base..head`;
-    - `schedule`, daily: main's copy of the workflow, which no commit message (`[skip ci]`) and no
-      branch (one cut before the workflow existed, or one that edits it) can skip; every remote
-      branch's and tag's tip tree, and every commit not on main.
+        - `schedule`, daily: main's copy of the workflow, which no commit message (`[skip ci]`) and no
+      branch (one cut before the workflow existed, or one that edits it) can skip; main's tip tree,
+      every remote branch's and tag's tip tree, and every commit not on main.
   - **One entry point** for the hook and the workflow, `scripts/check_card_injection.py --range
     <from> <to>`: per commit, `git diff-tree -r -m --root --no-renames --diff-filter=d` (merge commits
     included, deleted files skipped, each blob with its own path), then the tip tree (`ls-tree -r`:
     the path checks, such as an `eml/` or `.build/` file with no card, and a build of the blobs the
-    range didn't cover, deduped across refs). A blob already in `origin/main`'s history is skipped
-    in the range and tip passes: those bytes are public already (today's history holds 45 blobs
-    trigger 10 flags, the injection cards' past versions, and branches cut before the move hold 13
-    such cards), and moving cards doesn't unpublish them; the merge gate and the sdist test scan
-    their whole tree with no skip, so such a card can never come back into main or a release.
-  - A test reads the workflow file and checks its triggers. Stated limit: a push that skips its
-    own run is found by the next daily run, up to a day after it is public.
+    range didn't cover, deduped across refs). Every blob is scanned except those on one committed list,
+    `tests/eval/known-public-injection-blobs.txt`: the blob IDs, nothing else, of every card and
+    `.eml` blob trigger 10 flags in main's history before the move (45 of 1,513 card and `.eml` blobs on
+    2026-11-05, all of which build with today's code; the injection cards' past and present versions;
+    the 13 cards on branches cut before the move are among them).
+    Those bytes are public already, and moving cards doesn't unpublish them; without the list,
+    branches cut before the move would fail every run. The move commit writes it (the script's
+    `--list-known` over main's history at the move's parent), and it never grows: a test checks every
+    listed ID is reachable from that parent and flagged, and that the file has no other change after
+    the move commit. Draft 14's rule (skip anything in `origin/main`'s history) is withdrawn: on a
+    push to main, `origin/main` is the pushed commit, so it skipped everything (round 14). The merge
+    gate and the sdist test scan their whole tree and skip nothing, so a listed blob can't come back
+    into main's tip or a release.
+    - A test reads the workflow file and checks its triggers. Stated limits: a push that skips its
+    own run is found by the next daily run (which scans main's tip tree and every branch's and tag's),
+    up to a day after it is public; GitHub may delay a scheduled run and disables schedules after 60
+    days without repository activity (unverified, as GitHub documents it); the scan covers cards and
+    `.eml` files under `tests/eval/` only, not label, review or `checks.yaml` rows, fixtures or docs
+    (no card text is ever quoted there, `eval-synthetic.md`).
+  - **Card-only merges get the scan too.** A merge that changes only `.md` files counts as docs only
+    and skips the macOS gate (`docs/agents/testing-and-merge.md:29-30`), and `ci.yml:11` skips
+    `**/*.md`; so any merge that touches `tests/eval/` runs the script on its tree first, and
+    `testing-and-merge.md` says so (Step 6). The workflow setup also pins `UV_VERSION`, as `ci.yml:24`
+    does.
 - **X6, Step 5 runs on fresh dev services, not a copy of the install.** With no R (the expected
   case, Step 5), nothing in P needs the install's live state: the `null` runs run on fresh `ecf-server
   dev` homes (memory secrets, no addresses, no `gh` poll), with the installed release's binary for P
@@ -168,9 +189,10 @@ on and keeps future releases clean. Rewriting history is not proposed.
   (`RecoverLater`) is withdrawn: recover() is unchanged except for one check before it touches any
   record (Design, "The merged set").
 - **X8, the card scan also runs daily from main.** A scheduled run uses main's copy of the workflow,
-  which no commit message and no branch can skip (Releases and CI).
+  which no commit message and no branch can skip (X5, "The card-scan workflow"). Amended in draft
+  15 (OD-639): already-public blobs are a fixed committed list, not "anything in main's history".
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -269,16 +291,25 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   checks the merged version still equals its `set_version`; a service restart drops the locks
   (accepted). Lost draft runs are recovered inside `_open_state`
   (`service.py:600`), before the socket is bound (`:705`), so no request can take the slot first. X7
-  makes it all or nothing: before touching any record, recovery tries the shared lock once (never
-  waiting) and asks the resolver whether each lost run's set is fresh. If either fails, it leaves every
-  record exactly as it is (no journal event, no `_finish`, no record update, so restart counts and
-  attempts don't change), logs why, and holds no lock; while such a record exists, `ecf eval status`
-  and the refusals of a new draft run in its slot (`draftruns.py:229`, `claude_eval.py:724-728`) say
-  "a lost draft run is waiting: run `ecf eval build`, then `ecf service restart`" (other causes keep
-  today's wording). Otherwise recovery runs exactly as today, holding the shared lock until it ends
-  (each resumed run then takes its own in `start()`). There is no retry on the tick and no new
-  exception; today's handlers (`claude_eval.py:2022-2033`, `:2052-2056`, `:2079-2088`) are unchanged.
-  A lost run waits at most until the next restart, and runs are lost only by a restart.
+  (amended in draft 15, OD-639) decides per record, before touching any: for every record recovery
+  would visit (open, expired, or lost and not yet resumed, `claude_eval.py:2018-2020`) it resolves the
+  record's root. A root that no longer exists (a removed worktree) or isn't a set takes today's path
+  for that record alone (`_restored` fails and the attempt closes, `:2052-2056`), so one dead record
+  can't hold the others. A record whose set exists but whose merged set is stale, or whose set's lock
+  is busy, is deferred: left exactly as it is (no journal event, no `_finish`, no record update, so
+  restart counts and attempts don't change). The other records are recovered as today, with their
+  sets' shared locks held (one per distinct set, each tried once, never waited for) in a `try/finally`
+  that releases them on every exit, and with each resolution the pre-check made (merged folder and
+  version) passed to `_restored` and to the resume, so a source changed meanwhile (a `git pull`, a
+  label write) can't make a second freshness check refuse and close the attempt. A deferred record's
+  run ID goes into an in-memory set; while it is non-empty, `ecf eval status` and the refusal of a new
+  draft run (`claude_eval.py:724-728`, `draftruns.py:229`) say "a lost draft run is waiting: run `ecf
+  eval build`, then `ecf service restart`; if its set changed since it started, it will close on
+  resume" (the resume refuses a changed set, `:736-738`); a 5B-14 write-error record keeps today's
+  wording. There is no retry on the tick and no new exception; today's handlers
+  (`claude_eval.py:2022-2033`, `:2052-2056`, `:2079-2088`) are unchanged. A second record for a busy
+  slot is refused and closed as today. A deferred run waits at most until the next restart after a
+  build.
   Nothing waits on this lock: the service, the resolver and the recovery only try it. One function,
   `merge_sources()`
   in `ecf.eval`, computes the merged content by kind (`merge_sources(kinds=…)`): `refresh_merged` asks
@@ -471,7 +502,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   ecf.privateRemote <host>/<owner>/<repo>` in the private clone), compared as host, owner and
   repository name, so the SSH and HTTPS forms of one URL match and a fork or a new remote is refused),
   by the
-  macOS merge gate, and by CI on every push. A push from
+    macOS merge gate, and by the card-scan workflow. A push from
   a checkout without the hook (or with `--no-verify`) is caught only by the card-scan workflow, after
   it is published (stated limit: by then it is public); the workflow checks each pushed commit, so a
   card added and removed within one push is still reported. The hook builds with the working tree's
@@ -592,13 +623,18 @@ Each write, commit and push needs the operator's OK.
    `ecf eval run` starts; the same for a Claude run whose `remember_root` or spawn fails; a Claude run
    stopped while preparing releases its lock once, and one stopped between registering and its
    spawn is finished once, with a newer run's slot left alone; a recovery at service start that finds
-   the lock busy or a set stale leaves every record byte for byte unchanged (registry and journals),
-   the service still binds at once, the next start recovers as today with the same restart count,
-   and a new draft run refused meanwhile says to build and restart; the card-scan workflow's
+   one record's lock busy or set stale leaves that record byte for byte unchanged (registry and
+   journals) and recovers the others, a record whose root is gone is closed alone as today, an
+   expired record is covered by the pre-check, the locks are released after an exception escapes
+   recovery, a source edited between the pre-check and the load doesn't close an attempt, the service
+   still binds at once, the next start recovers the deferred record with the same restart count, and
+   a new draft run refused meanwhile says to build and restart (a 5B-14 record keeps its wording); the
+   card-scan workflow's
    triggers have no path filter and cover tags, `pull_request` and `schedule`; on a local bare
    remote, the `--range` entry point catches a card commit, a card added and removed, a card added by
-   a merge commit, a new branch and a pushed `.eml`, passes a card deletion and a blob already on
-   main, and the merge-gate scan still refuses that blob in the tree; the private repository's hook
+   a merge commit, a new branch and a pushed `.eml`, passes a card deletion and a listed known blob,
+   refuses a new flagged card pushed straight to main (the CI side, with `origin/main` at the pushed
+   commit) and a listed blob in the merge-gate tree scan; the private repository's hook
    allows its recorded remote by its SSH
    and its HTTPS
    URL and refuses the public one and a fork; the pre-push hook checks a new branch's commits, and an
@@ -608,10 +644,11 @@ Each write, commit and push needs the operator's OK.
    thread start is
    excluded by the lock; a
    `cases/.DS_Store` leaves the clone clean; a refused refresh in a writer's `finally` doesn't mask the
-   writer's error; full suite green. Three guards would refuse today's public injection cards, so they
-   are switched on in Step 5's move commit, not before: the builder's refusal of a marked public card,
-   the sdist test's marker assertion, and the merge gate's tree scan; until then Step 3's tests run
-   them on fixture sets built in the test.
+   writer's error; full suite green. Three guards would refuse today's public injection cards, so the
+   move commit adds them, with no flag or setting that could leave one off: the builder's refusal of
+   a marked public card (its call in `build_all`), the sdist test's marker assertion, and the merge
+   gate's tree scan (its line in `testing-and-merge.md`). Until then Step 3's tests run them on fixture
+   sets built in the test; Step 5's after-checks show each is on.
 4. **Private repository:** the operator creates it (private, GitHub); cloned into the branch
    worktree's `eval/private/` for Steps 5-7, and into the main checkout's after the merge; first
    commit as above; `ecf.privateRemote` recorded in each clone. *Pass:* `git check-ignore
@@ -700,13 +737,17 @@ Each write, commit and push needs the operator's OK.
       `ae1111e7bc117b23`, `heldout3` `07625d6cafa4b278`.
    3. **The move:** `git rm` the listed cards and their `.eml` and `.build/` files, remove their rows
       and keys from the public label, fixed-label, review and `checks.yaml` files, add them to the
-      private repository; run `uv run --no-sync --offline ecf eval build --root
+      private repository; run `uv run --project <worktree> --no-sync --offline ecf eval build --root
       <worktree>/tests/eval/<set>` for each of the three sets, so all three merged sets are fresh and
       any file the build rewrites is in the commit; commit both, require `git status` clean in both,
       push the private repository.
-   4. **After**, with the branch: `uv run --no-sync --offline ecf-server dev --home <scratch>/after`
-      in the background, the same `null` run with `ECF_SOCKET=<scratch>/after/dev/run/ecf.sock`, and the
-      same scripts with `uv run --no-sync --offline`, `gate.synthetic` with the digest computed again
+   4. **After**, with the branch: `uv run --project <worktree> --no-sync --offline ecf-server dev --home
+   <scratch>/after`
+      in the background, the same `null` run with the branch's client (`uv run --project <worktree>
+      --no-sync --offline ecf
+      eval run`) and `ECF_SOCKET=<scratch>/after/dev/run/ecf.sock`, and the
+      same scripts with `uv run --project <worktree> --no-sync --offline`, `gate.synthetic` with the
+      digest computed again
       under the branch's code (if it differs from P's, stop); every after-check runs only now, since the
       live
       dirty-and-pushed check would otherwise refuse for a reason the move didn't cause.
@@ -741,12 +782,17 @@ Each write, commit and push needs the operator's OK.
      `draftjudging.root_of` and the resolver, to the merged drafts set, and the stored `EVAL_ROOT`
      (written by the last for-gate run; a `null` run never writes it, `claude_eval.py:644`) resolves to
      the merged `synthetic` set;
-         - `gate.synthetic` on a second throwaway copy of the backup, in which `ce3be1df`'s
-           `set_version` is
-     set to the after merged version, no longer says "older version" or "isn't where the last run
-     found it": that shows the branch's gate resolved the stored root to the merged set and compared
-     its version, which the unchanged message can't (any root other than `a6642d21` gives "older
-     version", `gate.py:255-270`);
+   - `gate.synthetic` on a second throwaway copy of `<scratch>/db/ecf.db`, made after G4's rewrite and
+     scan, in which `ce3be1df`'s `set_version` is set to the after merged version: the version
+     comparison then passes (the gate reads `set_version` from that row, `evalrun.py:1486-1490`, and
+     the root from `EVAL_ROOT`), the pre-guard rule accepts the run, and the references guard refuses
+     it, since it recorded 164 fraud-guard cases and the merged set has 166 (SPEC §16.2; `long-091`
+     and `long-092` added since). The message must match the references refusal's text exactly
+     (Step 3 fixes it). It shows the branch's gate resolved the stored root to the merged set: the
+     worktree's public-only set has another version, which gives "older version" instead;
+   - the three guards are on: `test_sdist_contents` and the merge-gate tree scan pass on the real
+     tree after the move; in a throwaway copy of the worktree, one moved card put back under public
+     `cases/` is refused by the builder, by the tree scan and by the sdist test;
    - `gate.synthetic` on the database copy, with the same digest, gives the same refusal message as
      in P, starting "the latest run (ce3be1df" (apart from the
      fields the change adds: the private commit and merged version, and `GATE_VERSION`), never
