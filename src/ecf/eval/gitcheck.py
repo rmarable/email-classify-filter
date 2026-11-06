@@ -10,6 +10,7 @@ and M1's upload."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -79,29 +80,68 @@ def _ok(top: Path, *args: str) -> str:
     return r.stdout
 
 
+def set_files(root: Path) -> dict[str, Path]:
+    """Every file of a set folder, by its path relative to the folder, found by walking it (no
+    `git`, no ignore rules), except `.build/` (built, ignored by design), `*.tmp` and `.DS_Store`
+    (a crashed atomic write, Finder). Symbolic links are listed, not followed. The one list both
+    the clean check and the fingerprint read (review round 4, B3). Plain strings, one join per
+    file: it runs on every gate pass."""
+    out: dict[str, Path] = {}
+    base = os.fspath(root)
+    cut = len(base) + 1
+    for d, dirs, files in os.walk(base):
+        if d == base:
+            dirs[:] = [x for x in dirs if x != ".build"]
+        links = [x for x in dirs if os.path.islink(os.path.join(d, x))]
+        rel = d[cut:]
+        for name in (*files, *links):
+            if name.endswith(".tmp") or name in IGNORED_NAMES:
+                continue
+            key = f"{rel}/{name}" if rel else name
+            out[key] = Path(d, name)
+    return out
+
+
+def _blob_id(p: Path, algo: str) -> str:
+    """The id git gives the file's content: a link's target text, or the file's bytes."""
+    data = os.fsencode(os.readlink(p)) if p.is_symlink() else p.read_bytes()
+    h = hashlib.new(algo)
+    h.update(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
 def dirty(top: Path, pathspec: str) -> list[str]:
-    """The uncommitted paths under `pathspec`: modified, staged, untracked, and ignored ones (an
-    uncommitted ignore rule could hide a card or a label file that sets the version), except
-    `.build/` (built, ignored by design), `*.tmp` and `.DS_Store` (a crashed atomic write,
-    Finder)."""
-    out = _ok(top, "status", "--porcelain", "-z", "--ignore-submodules", "--ignored=matching",
-              "--", pathspec)  # fmt: skip
-    found: list[str] = []
-    entries = iter(out.split("\0"))
-    for entry in entries:  # NUL-separated: paths exactly as stored, never quoted
-        if not entry:
-            continue
-        code, path = entry[:2], entry[3:]
-        if code[0] in "RC":
-            next(entries, None)  # a rename's or copy's old path follows
-        name = path.rstrip("/").rsplit("/", 1)[-1]
-        if code in ("??", "!!") and (name.endswith(".tmp") or name in IGNORED_NAMES):
-            continue
-        rel = path[len(pathspec) :].lstrip("/") if path.startswith(pathspec) else path
-        if code == "!!" and (rel == ".build/" or rel.startswith(".build/")):
-            continue
-        found.append(path)
-    return found
+    """The paths under `pathspec` whose content differs from the commit HEAD names: a file
+    missing, added (untracked or ignored alike) or changed. Each file is hashed as git would and
+    compared with HEAD's tree, so neither the index (an assume-unchanged or skip-worktree flag,
+    a stale stat), `status` options nor ignore rules can make an edit look committed (review
+    round 4, B3, B4). Raises GitFailed when HEAD can't be read."""
+    head = read_head(top)
+    if head is None:
+        raise GitFailed(f"{top.name}'s HEAD can't be read from its ref files")
+    algo = "sha256" if len(head) == 64 else "sha1"
+    want: dict[str, str] = {}
+    for entry in _ok(top, "ls-tree", "-r", "-z", head, "--", pathspec).split("\0"):
+        if entry:
+            meta, path = entry.split("\t", 1)
+            want[path] = meta.split()[2]  # a submodule's commit id never equals a file's blob id
+    have = {f"{pathspec}/{rel}": p for rel, p in set_files(top / pathspec).items()}
+    return sorted(
+        {
+            *(want.keys() ^ have.keys()),
+            *(n for n in want.keys() & have.keys() if _differs(have[n], want[n], algo)),
+        }
+    )
+
+
+def _differs(p: Path, blob: str, algo: str) -> bool:
+    """Whether the file isn't that blob; a file that can't be read (removed mid-check, say)
+    can't be shown to be it."""
+    try:
+        return _blob_id(p, algo) != blob
+    except OSError:
+        return True
 
 
 def git_dir(top: Path) -> tuple[Path, Path] | None:
@@ -245,24 +285,21 @@ def _repo_stats(top: Path) -> tuple[Any, ...]:
 
 
 def _set_stats(root: Path) -> tuple[Any, ...]:
+    """Name, size, mtime and inode of every file `set_files` lists (the clean check's own list)."""
     out: list[Any] = []
-    for d in ("cases", "eml"):
-        try:  # one scandir per folder; its entries carry their stat
-            entries = sorted(os.scandir(root / d), key=lambda e: e.name)
-        except (FileNotFoundError, NotADirectoryError):
+    for rel, p in sorted(set_files(root).items()):
+        try:
+            st = p.lstat()
+        except OSError:
             continue
-        for e in entries:
-            st = e.stat(follow_symlinks=False)
-            out.append((e.name, (st.st_size, st.st_mtime_ns, st.st_ino)))
-    for f in ("labels.jsonl", "fixed_labels.jsonl"):
-        out.append((f, _stat(root / f)))
+        out.append((rel, (st.st_size, st.st_mtime_ns, st.st_ino)))
     return tuple(out)
 
 
 def fingerprint(top: Path, set_name: str) -> tuple[Any, ...]:
     """What a commit, a push, a new card or an in-place edit changes, in both repositories: the
-    HEAD, config, branch ref, packed-refs, remote-tracking refs and index files, and every card,
-    email and label file's name, size, mtime and inode. No `git`."""
+    HEAD, config, branch ref, packed-refs, remote-tracking refs and index files, and every set
+    file's name, size, mtime and inode (`set_files`). No `git`."""
     priv = top / "eval" / "private"
     return (_repo_stats(top), _set_stats(top / "tests" / "eval" / set_name),
             _repo_stats(priv) if priv.is_dir() else None,

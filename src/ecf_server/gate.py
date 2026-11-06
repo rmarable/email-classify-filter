@@ -287,7 +287,7 @@ class _Pass:
     transient: dict[str, SetState]
 
 
-_STATE: dict[tuple[Any, ...], SetState] = {}
+_STATE: dict[tuple[Any, ...], tuple[SetState, tuple[tuple[Path, str], ...]]] = {}
 _PASS: contextvars.ContextVar[_Pass | None] = contextvars.ContextVar("gate_pass", default=None)
 
 
@@ -336,16 +336,28 @@ def set_state(root: Path, *, fresh: bool = False) -> SetState:
     if not fresh and p is not None and str(root) in p.transient:
         return p.transient[str(root)]
     key = _set_key(root)
-    if not fresh and key in _STATE:
-        return _STATE[key]
+    hit = None if fresh else _STATE.get(key)
+    if hit is not None and all(merged.sha256_of(f) == sha for f, sha in hit[1]):
+        return hit[0]
+    racy = _racy(root)  # before the read: a write after this changes a stat or a hash
     got = _read_state(root, fresh=fresh)
     if got.transient:  # never cached: shared by this pass only, retried at the next
         if p is not None:
             p.transient[str(root)] = got
         return got
     _STATE.clear()  # one entry: the current state
-    _STATE[key] = got
+    _STATE[key] = (got, racy)
     return got
+
+
+def _racy(root: Path) -> tuple[tuple[Path, str], ...]:
+    """The set's files written within merged.RACY_NS, with their sha256: their stat can't vouch
+    for their content (a same-size rewrite in one timestamp tick), so a cached state counts only
+    while these hashes hold (review round 4, B6). Usually none."""
+    sp = merged.paths(root)
+    halves = [sp.public] + ([sp.private, sp.merged] if sp.private and sp.merged else [])
+    return tuple((s[0], merged.sha256_of(s[0])) for h in halves
+                 for s in merged.file_stats(h).values() if merged.is_racy(s[2]))  # fmt: skip
 
 
 def _read_state(root: Path, *, fresh: bool = False) -> SetState:

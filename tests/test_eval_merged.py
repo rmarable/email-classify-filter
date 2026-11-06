@@ -366,7 +366,7 @@ def _honest(sp: mg.SetPaths) -> bool:
 
 @pytest.mark.parametrize("how", WRITERS)
 @pytest.mark.parametrize("step", STEPS)
-def test_a_writer_at_any_step_of_a_refresh_never_leaves_a_stale_view_called_fresh(
+def test_a_writer_at_any_step_of_a_refresh_never_leaves_a_stale_view_called_fresh(  # noqa: PLR0915 - one writer per step, inline
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str, step: str
 ) -> None:
     from tests.test_move_private import mv  # noqa: PLC0415 - the move script splits rows and keys

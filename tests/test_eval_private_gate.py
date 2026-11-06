@@ -162,8 +162,9 @@ def test_a_stale_merged_set_is_a_failed_check_not_an_error(
 
 
 def test_the_fingerprint_follows_both_halves_and_merge_json(
-    conn: sqlite3.Connection, clock: FakeClock, split: Path
+    conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(mg, "RACY_NS", 0)  # files as if written long ago (the racy case: B6 tests)
     _run(conn, clock, split, _counts(split))
     before = gate.inputs(conn, "ap", DIGEST)
     priv = mg.paths(split).private or split

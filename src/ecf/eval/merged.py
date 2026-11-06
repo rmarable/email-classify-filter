@@ -181,11 +181,42 @@ def _jsonl_rows(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _owned(rows: list[tuple[str, str]], ids: set[str], where: str, file: str) -> None:
-    stray = sorted({i for i, _ in rows if i not in ids})
-    if stray:
-        raise InvalidInputError(f"{where} {file}: rows for cards not in that set:"
-                                f" {', '.join(stray[:10])}")  # fmt: skip
+def stray(kind: str, ids: list[str] | set[str], own: set[str], other: set[str]) -> list[str]:
+    """The IDs one half's `kind` file may not name (the rule above, by kind): in a label file or
+    `checks.yaml` any ID that isn't a card of that half; in `reviews.jsonl` only a card of the
+    other half. The build and the card scan both ask this one function (review round 4, B1)."""
+    if kind == REVIEWS:
+        return sorted({i for i in ids if i in other})
+    return sorted({i for i in ids if i not in own})
+
+
+def ids_in(kind: str, text: str, source: str) -> list[str]:
+    """The ID each row of a `.jsonl` file or each top-level key of `checks.yaml` names, parsed
+    as the merge reads them (`checks.yaml` through `ecf.yamlio`, which refuses duplicate keys;
+    review round 4, B2). Raises InvalidInputError when the file doesn't parse."""
+    if kind == CHECKS:
+        try:
+            data: object = load_yaml(text, source=source) or {}
+        except Exception as exc:  # a YAML error of any kind: the file is refused
+            raise InvalidInputError(f"{source}: doesn't parse ({exc})") from exc
+        if not isinstance(data, dict):
+            raise InvalidInputError(f"{source}: must be a mapping of card IDs")
+        return [str(k) for k in cast("dict[Any, Any]", data)]
+    out: list[str] = []
+    for n, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            try:
+                out.append(str(json.loads(line)["id"]))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise InvalidInputError(f"{source}: line {n} doesn't parse") from exc
+    return out
+
+
+def _owned(kind: str, ids: list[str], own: set[str], other: set[str], where: str) -> None:
+    bad = stray(kind, ids, own, other)
+    if bad:
+        what = "the other set's cards" if kind == REVIEWS else "cards not in that set"
+        raise InvalidInputError(f"{where} {kind}: rows for {what}: {', '.join(bad[:10])}")
 
 
 def _checks(path: Path) -> tuple[str, dict[str, Any]]:
@@ -203,8 +234,8 @@ def _merged_checks(public: Path, private: Path, pub_ids: set[str], priv_ids: set
     """checks.yaml merged: the public file, then the private one's keys (its header dropped)."""
     if validate:
         (ta, da), (tb, db) = _checks(public / CHECKS), _checks(private / CHECKS)
-        _owned([(k, "") for k in da], pub_ids, "public", CHECKS)
-        _owned([(k, "") for k in db], priv_ids, "private", CHECKS)
+        _owned(CHECKS, list(da), pub_ids, priv_ids, "public")
+        _owned(CHECKS, list(db), priv_ids, pub_ids, "private")
     else:
         ta, tb = _text(public / CHECKS), _text(private / CHECKS)
     if not ta and not tb:
@@ -241,8 +272,8 @@ def merge_sources(public: Path, private: Path, kinds: tuple[str, ...] = FILES, *
     for kind in kinds:
         if kind in LABEL_FILES:
             a, b = _jsonl_rows(public / kind), _jsonl_rows(private / kind)
-            _owned(a, pub_ids, "public", kind)
-            _owned(b, priv_ids, "private", kind)
+            _owned(kind, [i for i, _ in a], pub_ids, priv_ids, "public")
+            _owned(kind, [i for i, _ in b], priv_ids, pub_ids, "private")
             if not (public / kind).is_file() and not (private / kind).is_file():
                 out[kind] = None
                 continue
@@ -253,11 +284,8 @@ def merge_sources(public: Path, private: Path, kinds: tuple[str, ...] = FILES, *
         elif kind == REVIEWS:
             pa, pb = public / kind, private / kind
             a, b = _jsonl_rows(pa), _jsonl_rows(pb)
-            for rows, other, where in ((a, priv_ids, "public"), (b, pub_ids, "private")):
-                stray = sorted({i for i, _ in rows if i in other})
-                if stray:
-                    raise InvalidInputError(f"{where} {kind}: rows for the other set's cards:"
-                                            f" {', '.join(stray[:10])}")  # fmt: skip
+            _owned(kind, [i for i, _ in a], pub_ids, priv_ids, "public")
+            _owned(kind, [i for i, _ in b], priv_ids, pub_ids, "private")
             if not pa.is_file() and not pb.is_file():
                 out[kind] = None
                 continue
@@ -284,14 +312,38 @@ def _sha(p: Path) -> str:
     return h.hexdigest()
 
 
+# A stat taken within RACY_NS of now can't vouch for the content: a same-size write in the same
+# timestamp tick leaves it unchanged (git's "racy" case; coarse clocks on some file systems). Such
+# an entry is recorded with mtime RACY, which no stat equals, so it is hashed again next time
+# (review round 4, B6).
+RACY_NS = 2_000_000_000
+RACY = -1
+
+
+def sha256_of(p: Path) -> str:
+    """A file's sha256, or "" when it can't be read (a key part, never an error)."""
+    try:
+        return _sha(p)
+    except OSError:
+        return ""
+
+
+def is_racy(mtime_ns: int) -> bool:
+    return mtime_ns >= time.time_ns() - RACY_NS
+
+
+def _entry(size: int, mtime: int, ino: int, sha: str) -> list[Any]:
+    return [size, RACY if is_racy(mtime) else mtime, ino, sha]
+
+
 def _manifest(root: Path, prev: dict[str, list[Any]]) -> dict[str, list[Any]]:
     """Each file's [size, mtime, inode, sha256], from one scandir per folder; a file whose stat
     matches its previous entry keeps that entry's sha256 unhashed."""
     out: dict[str, list[Any]] = {}
     for rel, (p, size, mtime, ino) in _stats(root).items():
         old = prev.get(rel)
-        out[rel] = old if old is not None and old[:3] == [size, mtime, ino] else [
-            size, mtime, ino, _sha(p)]  # fmt: skip
+        out[rel] = old if old is not None and old[:3] == [size, mtime, ino] else _entry(
+            size, mtime, ino, _sha(p))  # fmt: skip
     return out
 
 
@@ -541,7 +593,7 @@ def _restat(sp: SetPaths, restat: list[tuple[str, str, str]]) -> None:
                 continue
         except OSError:
             continue
-        man[side][rel] = [size, mtime, ino, sha]
+        man[side][rel] = _entry(size, mtime, ino, sha)
     tmp = _tmp(sp.merged / MERGE_FILE)
     tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, sp.merged / MERGE_FILE)

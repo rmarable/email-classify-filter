@@ -126,3 +126,22 @@ def test_a_respelled_root_cant_pass_the_gate_without_the_private_set(
     check = gate.synthetic(conn, DIGEST)
     assert not check.ok
     claude_eval.reset()
+
+
+@pytest.mark.macos  # APFS is case-insensitive; CI (Linux) deselects macos tests
+def test_a_respelled_path_is_canonical_when_f_getpath_fails(
+    split: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 4, B7: without F_GETPATH each name's stored case comes from its folder's
+    listing, so a respelled set is still its checkout's set, private half and all."""
+    from ecf.eval import setio  # noqa: PLC0415
+
+    want = canonical(split)
+
+    def no_getpath(_p: Path) -> None:
+        return None
+
+    monkeypatch.setattr(setio, "_getpath", no_getpath)
+    typed = Path(str(split).replace("tests/eval", "Tests/EVAL"))
+    assert canonical(typed) == want
+    assert mg.paths(typed).private is not None

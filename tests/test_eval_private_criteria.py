@@ -38,12 +38,19 @@ def _table() -> dict[str, list[dict[str, Any]]]:
 
 
 def _always_skipped(fn: ast.FunctionDef) -> bool:
-    """`@pytest.mark.skip` (unconditional) on the test."""
+    """`@pytest.mark.skip` (unconditional) on the test, or a body that skips before anything
+    else (`pytest.skip(...)` as its first statement after the docstring; round 3, L10). Tests
+    marked `macos` or `private` count: the macOS merge gate runs them with 0 skipped."""
     for d in fn.decorator_list:
         target = d.func if isinstance(d, ast.Call) else d
         if isinstance(target, ast.Attribute) and target.attr == "skip":
             return True
-    return False
+    body = fn.body[1:] if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(
+        fn.body[0].value, ast.Constant) else fn.body  # fmt: skip
+    first = body[0] if body else None
+    call = first.value if isinstance(first, ast.Expr) else None
+    return (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "skip")  # fmt: skip
 
 
 @cache
@@ -90,3 +97,11 @@ def test_every_entry_names_real_tests_or_says_where_it_lands() -> None:
             path, name = ref.split("::", 1)
             assert (ROOT / path).is_file(), (row["id"], path)
             assert name.split("[", 1)[0] in _tests(path), (row["id"], ref)
+
+
+def test_a_test_that_skips_in_its_body_doesnt_count() -> None:
+    """Round 3, L10: a body that skips first is never run, so it can't back a criterion."""
+    tree = ast.parse('def test_a():\n    """d"""\n    pytest.skip("x")\n\n'
+                     "def test_b():\n    assert True\n")  # fmt: skip
+    a, b = (n for n in tree.body if isinstance(n, ast.FunctionDef))
+    assert _always_skipped(a) and not _always_skipped(b)

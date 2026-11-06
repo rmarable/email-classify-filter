@@ -28,9 +28,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ecf.eval import markers
+from ecf.errors import InvalidInputError
+from ecf.eval import markers, merged
 from ecf.eval.builder import build_bytes, scan_card
 from ecf.eval.cards import Card, parse_card
+from ecf.yamlio import load_yaml
 from ecf_server.triggers import card_injection, text_injection
 
 TOP = Path(__file__).resolve().parents[1]
@@ -128,15 +130,17 @@ def changed(revs: list[str], top: Path = TOP,
 
 
 def tree(treeish: str, top: Path = TOP) -> list[tuple[str, str]]:
-    """Every blob under tests/eval/ in a tree (`ls-tree -z`: paths never quoted)."""
-    out = git("ls-tree", "-r", "-z", treeish, "--", "tests/eval", top=top)
+    """Every blob under tests/eval/ in a tree, in any letter case (`ls-tree -z`: paths never
+    quoted; no pathspec, which git matches case-sensitively, so `under_eval` picks; review
+    round 4, B5)."""
+    out = git("ls-tree", "-r", "-z", treeish, top=top)
     found: list[tuple[str, str]] = []
     for entry in out.split("\0"):
         if not entry:
             continue
         meta, path = entry.split("\t", 1)
         kind, blob = meta.split()[1:3]
-        if kind == "blob":
+        if kind == "blob" and under_eval(path):
             found.append((blob, path))
     return found
 
@@ -285,20 +289,22 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     items = changed(revs, top)
     old = anchor_history(top) if old is None else old  # the hook reads it once per push
     listed = known(top) & old  # `exempt`, with the history read once
+    found = tree(tip, top) if tip else []
+    # main's tip is checked whole, X1 on, nothing skipped: a marked card restored onto main (a
+    # revert of the move) is refused at its push (review round 3, M2). That scan is stricter
+    # than the range's, so the range skips the blobs it covers (round 4, performance B3).
+    whole = bool(tip) and tip_build and is_main(ref)
+    in_tip: set[tuple[str, str]] = set(found) if whole else set()
     # `published`: blobs main's history already has (the hook only): main's own runs checked them
-    v = scan(items, skip=listed | published, x1_old=old, top=top)
+    v = scan([i for i in items if i not in in_tip], skip=listed | published, x1_old=old, top=top)
     refused, warned = list(v.refused), list(v.warned)
     if tip:
-        found = tree(tip, top)
         refused += [f"{p}: no card for it in its set" for p in orphans(found)]
         refused += unowned(found, top)
         if tip_build:
             covered = {b for b, _ in items}
-            main = is_main(ref)
-            # main's tip is checked whole, X1 on, nothing skipped: a marked card restored onto
-            # main (a revert of the move) is refused at its push (review round 3, M2)
-            rest = found if main else [(b, p) for b, p in found if b not in covered]
-            t = scan(rest, skip=set() if main else listed, x1_old=None if main else old, top=top)
+            rest = found if whole else [(b, p) for b, p in found if b not in covered]
+            t = scan(rest, skip=set() if whole else listed, x1_old=None if whole else old, top=top)
             refused += t.refused
             warned += t.warned
     return Verdict(refused, warned)
@@ -312,9 +318,12 @@ def run_tree(treeish: str, *, no_skip: bool, top: Path = TOP) -> Verdict:
 
 
 def unowned(found: list[tuple[str, str]], top: Path = TOP) -> list[str]:
-    """Every row or key of a set file (labels, fixed labels, reviews, checks.yaml) that names no
-    card of its own set in this tree: a private card's row or expected replies left in a public
-    file (review round 3, M3). Read from the tree, so it holds for what is pushed."""
+    """Every set file (labels, fixed labels, reviews, checks.yaml) in this tree that doesn't
+    parse as the merge reads it, names an ID the merge's own rule refuses for one half
+    (`merged.stray`: a label row or `checks.yaml` key with no card of its set; reviews are
+    append-only history, so a removed card's rows stay, and moved IDs there are the moved-ID
+    guard's), or holds text trigger 10's text check flags in any value (review round 3, M3;
+    round 4, B1, B2). Read from the tree, so it holds for what is pushed."""
     cards: dict[str, set[str]] = {}
     for _b, path in found:
         if CARD.match(path):
@@ -323,19 +332,23 @@ def unowned(found: list[tuple[str, str]], top: Path = TOP) -> list[str]:
     data = cat(sorted({b for b, _ in files}), top)
     out: list[str] = []
     for b, path in files:
-        own = cards.get(path.split("/")[2], set())
+        kind = path.rsplit("/", 1)[1]
+        where = f"{path} ({b[:12]})"
         text = data[b].decode("utf-8", "replace")
-        if path.endswith(".yaml"):
-            ids = re.findall(r"^([A-Za-z0-9][A-Za-z0-9_-]*):", text, re.M)
-        else:
-            ids: list[str] = []
-            for line in text.splitlines():
-                try:
-                    ids.append(str(json.loads(line)["id"]) if line.strip() else "")
-                except (ValueError, KeyError, TypeError):
-                    out.append(f"{path} ({b[:12]}): a row that doesn't parse")
-        out += [f"{path} ({b[:12]}): names {i}, which has no card in its set"
-                for i in sorted({i for i in ids if i} - own)]  # fmt: skip
+        try:
+            ids = merged.ids_in(kind, text, where)
+            rows = [ln for ln in text.splitlines() if ln.strip()]
+            values: list[Any] = ([load_yaml(text, source=where)] if kind == merged.CHECKS
+                                 else [json.loads(ln) for ln in rows])  # fmt: skip
+        except InvalidInputError as exc:
+            out.append(str(exc))
+            continue
+        own = cards.get(path.split("/")[2], set())
+        out += [f"{where}: names {i}, which has no card in its set"
+                for i in merged.stray(kind, ids, own, set())]  # fmt: skip
+        flagged = sorted({h for v in values for s in strings(v) for h in text_injection(s)})
+        if flagged:
+            out.append(f"{where}: trigger 10's text check flags it ({', '.join(flagged[:5])})")
     return out
 
 

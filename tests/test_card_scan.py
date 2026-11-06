@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -46,7 +47,8 @@ def test_the_scripts_imports_are_the_pinned_set() -> None:
     tree = __import__("ast").parse(SCRIPT.read_text())
     mods = sorted({n.module for n in tree.body if n.__class__.__name__ == "ImportFrom"
                    and n.module and n.module.startswith("ecf")})  # fmt: skip
-    assert mods == ["ecf.eval", "ecf.eval.builder", "ecf.eval.cards", "ecf_server.triggers"]
+    assert mods == ["ecf.errors", "ecf.eval", "ecf.eval.builder", "ecf.eval.cards", "ecf.yamlio",
+                    "ecf_server.triggers"]  # fmt: skip
 
 
 def test_the_starter_pins_match_the_committed_files() -> None:
@@ -867,6 +869,8 @@ def test_a_card_under_another_letter_case_of_tests_eval_is_refused(repo: Path) -
         f"100644,{blob},tests/Eval/synthetic/cases/cased.md")  # fmt: skip
     git(repo, "commit", "-q", "-m", "a respelled folder")
     assert any("tests/Eval/" in r and "not a recognised" in r for r in _range(repo))
+    # the whole-tree scans too (the merge gate, the daily run, main's tip; round 4, B5)
+    assert any("tests/Eval/" in r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused)
 
 
 def test_a_marked_card_restored_onto_main_is_refused_at_its_push(
@@ -895,3 +899,43 @@ def test_a_set_file_naming_a_card_not_in_its_set_is_refused(repo: Path) -> None:
     assert any(
         "names a-private-card" in r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused
     )
+
+
+# Review round 4: the set-file scan applies the merge's own rule (B1, B2) and scans values.
+
+
+def test_a_removed_cards_review_history_passes(repo: Path) -> None:
+    """B1: reviews.jsonl is append-only history; a removed card's rows don't refuse."""
+    reviews = repo / "tests" / "eval" / "synthetic" / "reviews.jsonl"
+    reviews.write_text('{"id": "plain"}\n{"id": "gone-card"}\n')
+    commit(repo, "history of a removed card")
+    assert not [r for r in _range(repo, tip_build=False) if "reviews.jsonl" in r]
+    assert not [r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused
+                if "reviews.jsonl" in r]  # fmt: skip
+
+
+@pytest.mark.parametrize("text", ['"b-1":\n  expect: secret\n', "? c-2\n: y\n"])
+def test_a_checks_key_in_any_yaml_spelling_is_read_as_the_merge_reads_it(
+    repo: Path, text: str
+) -> None:
+    """B2: keys come from the YAML parse, so a quoted or explicit key can't hide."""
+    (repo / "tests" / "eval" / "synthetic" / "checks.yaml").write_text(text)
+    commit(repo, "a key for a card this tree hasn't")
+    got = _range(repo, tip_build=False)
+    assert any("checks.yaml" in r and "which has no card" in r for r in got)
+
+
+@pytest.mark.parametrize("text", ["{d-3: z\n", "a: 1\na: 2\n", "- a list\n"])
+def test_a_checks_file_the_merge_would_refuse_is_refused(repo: Path, text: str) -> None:
+    """B2: invalid YAML, a duplicate key or a non-mapping is refused, as the merge refuses it."""
+    (repo / "tests" / "eval" / "synthetic" / "checks.yaml").write_text(text)
+    commit(repo, "a checks file that doesn't parse")
+    assert any("checks.yaml" in r for r in _range(repo, tip_build=False))
+
+
+def test_injection_text_in_a_set_files_value_is_refused(repo: Path) -> None:
+    """M3 (round 3), first half: values are scanned with trigger 10's text check."""
+    reviews = repo / "tests" / "eval" / "synthetic" / "reviews.jsonl"
+    reviews.write_text(json.dumps({"id": "plain", "note": INJ}) + "\n")
+    commit(repo, "a review note with an injection phrase")
+    assert any("reviews.jsonl" in r and "flags it" in r for r in _range(repo, tip_build=False))

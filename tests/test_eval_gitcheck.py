@@ -245,3 +245,40 @@ def test_the_private_head_is_read_from_the_ref_files(top: Path, packed: bool) ->
     gitcheck.reset_backoff()
     got = gitcheck.clean_and_pushed(top, "heldout3")
     assert got.ok and got.private_commit == gitcheck.read_head(p)
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_an_edit_hidden_by_an_index_flag_is_dirty(top: Path, flag: str) -> None:
+    """Review round 4, B3: the content is compared with HEAD's tree, so an index flag that
+    makes `git status` skip a file can't make its edit look committed."""
+    p = _priv(top)
+    card = sorted((p / "heldout3" / "cases").glob("*.md"))[0]
+    git(p, "update-index", flag, f"heldout3/cases/{card.name}")
+    card.write_text(card.read_text() + "edited\n")
+    assert subprocess.run(["git", "-C", str(p), "status", "--porcelain"], capture_output=True,
+                          text=True, check=True).stdout == ""  # fmt: skip
+    gitcheck.reset_backoff()
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and card.name in got.detail
+
+
+def test_the_repositorys_status_options_dont_change_the_check(top: Path) -> None:
+    """Review round 4, B4: no `git status`, so `status.showUntrackedFiles=no` neither breaks
+    the check nor hides a new card."""
+    p = _priv(top)
+    git(p, "config", "status.showUntrackedFiles", "no")
+    assert gitcheck.clean_and_pushed(top, "heldout3").ok
+    (p / "heldout3" / "cases" / "new.md").write_text("x")
+    gitcheck.reset_backoff()
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and "new.md" in got.detail
+
+
+@pytest.mark.parametrize("name", ["checks.yaml", "reviews.jsonl", "notes.md"])
+def test_the_fingerprint_follows_every_set_file(top: Path, name: str) -> None:
+    """Review round 4, B3: the fingerprint lists the clean check's own files, so an edit to
+    any of them makes the gate check again."""
+    seen = gitcheck.fingerprint(top, "heldout3")
+    f = _priv(top) / "heldout3" / name
+    f.write_text((f.read_text() if f.is_file() else "") + "x\n")
+    assert gitcheck.fingerprint(top, "heldout3") != seen

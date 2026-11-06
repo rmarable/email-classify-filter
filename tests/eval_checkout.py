@@ -5,8 +5,11 @@ that needs a run for the gate builds its set here."""
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import subprocess
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -41,6 +44,25 @@ def checkout_set(top: Path, public: tuple[str, ...], private: tuple[str, ...],
     every private one must carry an injection marker) split into a checkout's two halves,
     built, `confirm` confirmed in its card's own half, merged, committed and pushed. Returns the
     public half. `INJ_TEST` is a private card made from `starter-injection` under its own ID."""
+    key = (public, private, confirm, name, tuple(sorted((texts or {}).items())))
+    tmpl = _TEMPLATES.get(key)
+    if tmpl is None:  # built once per worker, then copied (round 4, performance B1)
+        tmpl = Path(tempfile.mkdtemp(prefix="ecf-checkout-"))
+        atexit.register(shutil.rmtree, tmpl, True)
+        _build(tmpl, public, private, confirm, name, texts)
+        _TEMPLATES[key] = tmpl
+    shutil.copytree(tmpl, top, symlinks=True, dirs_exist_ok=True)
+    git(top / "eval" / "private", "remote", "set-url", "origin", str(top / "remote.git"))
+    pub = top / "tests" / "eval" / name
+    mg.refresh_merged(pub)  # the copies' new inodes recorded: no hashing on every check
+    return pub
+
+
+_TEMPLATES: dict[tuple[object, ...], Path] = {}
+
+
+def _build(top: Path, public: tuple[str, ...], private: tuple[str, ...],
+           confirm: tuple[str, ...], name: str, texts: dict[str, str] | None) -> Path:  # fmt: skip
     texts = {INJ_TEST: _inj_test()} | (texts or {})
     pub = top / "tests" / "eval" / name
     priv = top / "eval" / "private" / name

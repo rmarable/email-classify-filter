@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from ecf.eval import gitcheck
+from ecf.eval import merged as mg
 from ecf_server import claude_pins, evalrun, gate, slack_admin
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -25,7 +26,7 @@ PLACES = ["canonical", "respelled", "symlink", "outside", "private path", "merge
 HALVES = ["both", "public only"]
 FRESH = ["fresh", "stale"]
 RUNS = ["counts", "no counts", "private 0", "no proof", "old version"]
-GITS = ["clean", "dirty", "unpushed"]
+GITS = ["clean", "dirty", "unpushed", "hidden edit"]
 
 
 def oracle(place: str, halves: str, fresh: str, run: str, git_state: str) -> bool:
@@ -52,12 +53,18 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def _set_up(top: Path, halves: str, fresh: str, git_state: str) -> None:
     priv = top / "eval" / "private"
     card = priv / "synthetic" / "cases" / "starter-injection.md"
+    if git_state == "hidden edit":  # round 4, B3: an edit `git status` can't see, merged in
+        rel = "tests/eval/synthetic/cases/starter-bec.md"  # first, so "stale" below still holds
+        git(top, "update-index", "--assume-unchanged", rel)
+        (top / rel).write_text((top / rel).read_text() + "hidden\n")
+        mg.refresh_merged(top / "tests" / "eval" / "synthetic")
     if fresh == "stale":  # a source changed, committed and pushed, the view not rebuilt
         card.write_text(card.read_text() + "\n")
         git(priv, "commit", "-qam", "edit")
         git(priv, "push", "-q")
     if git_state == "dirty":  # an untracked file in the set: no card, so the view stays fresh
         (priv / "synthetic" / "notes.txt").write_text("x")
+
     elif git_state == "unpushed":
         git(priv, "commit", "-q", "--allow-empty", "-m", "local only")
     if halves == "public only":
@@ -113,31 +120,23 @@ def _record(conn: sqlite3.Connection, clock: FakeClock, root: Path, top: Path, r
 
 
 def _cases() -> list[object]:
+    """One case per set state; each records every kind of run against it in turn (round 4,
+    performance B2: the state is built once, not once per run)."""
     out: list[object] = []
     for place in PLACES:
         for halves in HALVES:
             for fresh in FRESH:
-                for run in RUNS:
-                    for g in GITS:
-                        marks = [pytest.mark.macos] if place == "respelled" else []  # APFS
-                        out.append(
-                            pytest.param(
-                                place,
-                                halves,
-                                fresh,
-                                run,
-                                g,
-                                marks=marks,
-                                id=f"{place}|{halves}|{fresh}|{run}|{g}",
-                            )
-                        )
+                for g in GITS:
+                    marks = [pytest.mark.macos] if place == "respelled" else []  # APFS
+                    out.append(pytest.param(place, halves, fresh, g, marks=marks,
+                                            id=f"{place}|{halves}|{fresh}|{g}"))  # fmt: skip
     return out
 
 
-@pytest.mark.parametrize(("place", "halves", "fresh", "run", "git_state"), _cases())
-def test_the_gate_passes_exactly_when_the_promise_holds(  # noqa: PLR0913, PLR0917 - the inputs
+@pytest.mark.parametrize(("place", "halves", "fresh", "git_state"), _cases())
+def test_the_gate_passes_exactly_when_the_promise_holds(
     conn: sqlite3.Connection, clock: FakeClock, template: Path, tmp_path: Path,
-    place: str, halves: str, fresh: str, run: str, git_state: str,
+    place: str, halves: str, fresh: str, git_state: str,
 ) -> None:  # fmt: skip
     if place == "respelled":
         assert sys.platform == "darwin", "respelled paths need a case-insensitive file system"
@@ -148,8 +147,14 @@ def test_the_gate_passes_exactly_when_the_promise_holds(  # noqa: PLR0913, PLR09
     git(priv, "fetch", "-q", "origin")
     _set_up(top, halves, fresh, git_state)
     root = _root(top, tmp_path, place)
-    gate.reset_cache()
-    gitcheck.reset_backoff()
-    _record(conn, clock, root, top, run)
-    got = gate.synthetic(conn, DIGEST)
-    assert got.ok == oracle(place, halves, fresh, run, git_state), got.detail
+    wrong: list[str] = []
+    for run in RUNS:
+        with write_tx(conn):
+            conn.execute("DELETE FROM eval_runs")
+        gate.reset_cache()
+        gitcheck.reset_backoff()
+        _record(conn, clock, root, top, run)
+        got = gate.synthetic(conn, DIGEST)
+        if got.ok != oracle(place, halves, fresh, run, git_state):
+            wrong.append(f"{run}: ok={got.ok} ({got.detail})")
+    assert not wrong, wrong

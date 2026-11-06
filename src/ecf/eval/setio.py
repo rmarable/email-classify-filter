@@ -33,21 +33,45 @@ def canonical(path: Path) -> Path:
         p = p.parent
     real = Path(os.path.realpath(p))
     if _GETPATH is not None:
-        try:
-            # O_NONBLOCK: a FIFO can't hang it; O_EVTONLY (macOS): no read access asked for, so a
-            # cloud-only (dataless) folder isn't downloaded just to learn its name's case
-            fd = os.open(real, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_EVTONLY", 0))
-        except OSError:
-            pass
-        else:
-            try:
-                got = fcntl.fcntl(fd, _GETPATH, bytes(1024))
-                real = Path(os.fsdecode(bytes(got).split(b"\0", 1)[0]))
-            except OSError:
-                pass
-            finally:
-                os.close(fd)
+        got = _getpath(real)
+        # F_GETPATH failed (no permission to open it, say): each name's stored case from its
+        # folder's listing, so a respelled path is never kept as typed (review round 4, B7)
+        real = got if got is not None else _listed_case(real)
     return real.joinpath(*rest)
+
+
+def _getpath(real: Path) -> Path | None:
+    if _GETPATH is None:
+        return None
+    try:
+        # O_NONBLOCK: a FIFO can't hang it; O_EVTONLY (macOS): no read access asked for, so a
+        # cloud-only (dataless) folder isn't downloaded just to learn its name's case
+        fd = os.open(real, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_EVTONLY", 0))
+    except OSError:
+        return None
+    try:
+        got: bytes = fcntl.fcntl(fd, _GETPATH, bytes(1024))
+        return Path(os.fsdecode(got.split(b"\0", 1)[0]))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _listed_case(real: Path) -> Path:
+    """`real` (an existing, symlink-free absolute path) with each name as its folder lists it:
+    the one entry equal to it ignoring case. A folder that can't be listed keeps the rest as
+    typed."""
+    out = Path(real.anchor)
+    for i, name in enumerate(real.parts[1:], 1):
+        try:
+            names = os.listdir(out)
+        except OSError:
+            return out.joinpath(*real.parts[i:])
+        exact = name in names
+        folded = [n for n in names if n.casefold() == name.casefold()]
+        out = out / (name if exact or len(folded) != 1 else folded[0])
+    return out
 
 
 def tmp_path(path: Path) -> Path:
