@@ -105,6 +105,37 @@ def card_ids(root: Path) -> list[str]:
     return sorted(p.stem for p in d.glob("*.md")) if d.is_dir() else []
 
 
+def halves(root: Path) -> list[Path]:
+    """The set's halves for a writer: the public set, then the private one when present."""
+    sp = paths(root)
+    return [sp.public] + ([sp.private] if sp.private is not None else [])
+
+
+def owners(root: Path) -> dict[str, Path]:
+    """Which half owns each card, by its file (a card in both halves fails the merge)."""
+    return {i: h for h in halves(root) for i in card_ids(h)}
+
+
+def owner(root: Path, case_id: str) -> Path:
+    """The half that owns `case_id`: a single-ID command writes there, never the merged view."""
+    found = owners(root).get(case_id)
+    if found is None:
+        raise InvalidInputError(f"{case_id}: no card for it in {root} or its private set")
+    return found
+
+
+def refresh_after_write(root: Path) -> str | None:
+    """A CLI writer's refresh at its end, in a `finally`: None when done (or no private half),
+    else the refusal, which the caller prints as a note after its own result."""
+    if paths(root).private is None:
+        return None
+    try:
+        refresh_merged(root)
+    except InvalidInputError as exc:
+        return f"note: the merged set wasn't refreshed: {exc}"
+    return None
+
+
 def membership(root: Path) -> tuple[frozenset[str], frozenset[str]] | None:
     """Each half's card IDs, from its label file (no card is read), for a logical set root with a
     private half; None without one (EVAL-PRIVATE.md, "The gate guard": counts by membership)."""

@@ -925,9 +925,19 @@ def eval_new_case(
         raise typer.BadParameter(f"one of {', '.join(TEMPLATES)}", param_hint="--template")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", case_id):
         raise typer.BadParameter("lowercase letters, digits and hyphens", param_hint="CASE_ID")
-    target = root / "cases" / f"{case_id}.md"
-    if target.exists():
-        raise typer.BadParameter(f"{target} already exists", param_hint="CASE_ID")
+    from ecf.eval import merged  # noqa: PLC0415
+
+    home = root
+    if template == "injection":  # an injection card belongs in the private set (EVAL-PRIVATE.md)
+        priv = merged.paths(root).private
+        if priv is None:
+            raise typer.BadParameter("an injection card goes in the private set"
+                                     f" (eval/private/{root.name}), which this checkout"
+                                     " doesn't have", param_hint="--template")  # fmt: skip
+        home = priv
+    if any((h / "cases" / f"{case_id}.md").exists() for h in merged.halves(root)):
+        raise typer.BadParameter(f"{case_id} already exists", param_hint="CASE_ID")
+    target = home / "cases" / f"{case_id}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(writable_root(target), TEMPLATES[template].format(id=case_id))
     typer.echo(f"wrote {target}")
@@ -938,31 +948,46 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
     """Hygiene-scan every card, then build the .eml files and labels.jsonl. On a generated set
     a finding prints its field and kind only: its value is generated text (`ecf eval generate
     --dev --show-findings` shows values)."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
+    from ecf.eval import merged  # noqa: PLC0415
+    from ecf.eval.builder import build_all, marker_refusals  # noqa: PLC0415
     from ecf.eval.cards import load_cards  # noqa: PLC0415
     from ecf.eval.genset import AUTHOR, is_generated  # noqa: PLC0415
     from ecf.text import escaped  # noqa: PLC0415
 
-    report = build_all(root)
-    if report.findings:
-        # a generated set, or its cards copied elsewhere
-        generated = is_generated(root) or any(
-            c.author == AUTHOR for c in load_cards(root / "cases")
-        )
-        for f in report.findings:
-            value = "" if generated else f": {escaped(f.value)}"
-            typer.echo(f"FAIL  {f.where}: {f.kind}{value}", err=True)
-        typer.echo(
-            f"hygiene scan failed: {len(report.findings)} finding(s); nothing built", err=True
-        )
-        raise typer.Exit(1)
-    typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
-    if report.placed:
-        from ecf.eval.results import placement_line  # noqa: PLC0415
+    halves = merged.halves(root)  # both halves, then the merged view (EVAL-PRIVATE.md)
+    for half in halves:
+        private = merged.is_private_root(half)
+        if len(halves) > 1:
+            typer.echo(f"[{'private' if private else 'public'} set]")
+        if private and (unmarked := marker_refusals(half, private=True)):
+            for line in unmarked:
+                typer.echo(f"FAIL  {line}", err=True)
+            typer.echo("a private card must carry an injection marker (X1); nothing built",
+                       err=True)  # fmt: skip
+            raise typer.Exit(1)
+        report = build_all(half)
+        if report.findings:
+            # a generated set, or its cards copied elsewhere
+            generated = is_generated(half) or any(
+                c.author == AUTHOR for c in load_cards(half / "cases")
+            )
+            for f in report.findings:
+                value = "" if generated else f": {escaped(f.value)}"
+                typer.echo(f"FAIL  {f.where}: {f.kind}{value}", err=True)
+            typer.echo(
+                f"hygiene scan failed: {len(report.findings)} finding(s); nothing built", err=True
+            )
+            raise typer.Exit(1)
+        typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
+        if report.placed:
+            from ecf.eval.results import placement_line  # noqa: PLC0415
 
-        typer.echo("where the cards' phrases start (window tuning):")
-        for placed in report.placed:
-            typer.echo("  " + placement_line(*placed))
+            typer.echo("where the cards' phrases start (window tuning):")
+            for placed in report.placed:
+                typer.echo("  " + placement_line(*placed))
+    if len(halves) > 1:
+        merged.refresh_merged(root)
+        typer.echo(f"commit tests/eval/{root.name} and eval/private/{root.name}")
 
 
 def _out(text: str) -> None:
@@ -1008,6 +1033,34 @@ def _refuse_judged(root: Path, ids: set[str] | None = None) -> None:
 
 
 def _import_fixed(root: Path, path: Path) -> None:
+    """One page's answers, split by the half that owns each card: every ID and answer of both
+    parts is checked before either part is written (EVAL-PRIVATE.md, "The overlay")."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    halves = merged.halves(root)
+    if len(halves) == 1:
+        _import_fixed_half(root, path, None)
+        return
+    try:
+        doc: Any = json.loads(path.read_text(encoding="utf-8"))
+        answers = cast(dict[str, Any], doc["answers"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
+    owners = merged.owners(root)
+    unknown = sorted(set(answers) - set(owners))
+    if unknown:
+        raise InvalidInputError(f"no card in either half for: {', '.join(unknown[:5])}")
+    parts = {h: {k: v for k, v in answers.items() if owners[k] == h} for h in halves}
+    for half, part in parts.items():
+        if part:
+            _import_fixed_half(half, path, part, check_only=True)
+    for half, part in parts.items():
+        if part:
+            _import_fixed_half(half, path, part)
+
+
+def _import_fixed_half(root: Path, path: Path, part: dict[str, Any] | None, *,
+                       check_only: bool = False) -> None:  # fmt: skip
     from datetime import date  # noqa: PLC0415
 
     from ecf.eval import fixed_labels  # noqa: PLC0415
@@ -1020,6 +1073,8 @@ def _import_fixed(root: Path, path: Path) -> None:
         raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
     if not isinstance(answers, dict):
         raise InvalidInputError(f"{path}: answers must map case ids to answers")
+    if part is not None:
+        answers = part
     _refuse_judged(root, set(cast(dict[str, Any], answers)))
     given = cast(dict[str, Any], answers)
     bad = [k for k, a in given.items() if not isinstance(a, dict)]
@@ -1028,6 +1083,12 @@ def _import_fixed(root: Path, path: Path) -> None:
                                 f" (not: {', '.join(map(str, bad[:5]))})")  # fmt: skip
     from ecf.eval import review  # noqa: PLC0415
 
+    if check_only:
+        if item in review.CARD_FIELDS:
+            review.validate_page(root, item, given)
+        else:
+            fixed_labels.validate(root, item, given)
+        return
     if item in review.CARD_FIELDS:  # a card field: written into the cards (S3b, OD-500)
         from ecf.cli_card_review import rebuild  # noqa: PLC0415
 
@@ -1069,7 +1130,7 @@ def _label_corpus(corpus: Path | None, again: frozenset[int], marked: bool) -> N
 
 
 @eval_app.command("label")
-def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; three modes
+def eval_label(  # noqa: PLR0912, PLR0913, PLR0917 - typer options; three modes
     case_id: Annotated[
         str | None, typer.Argument(help="One case (default: every pending one).")
     ] = None,
@@ -1151,15 +1212,46 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - typer options; thr
         _label_corpus(corpus, frozenset(again or ()), marked)
         return
     if import_fixed is not None:
-        _import_fixed(root, import_fixed)
+        from ecf.eval import merged  # noqa: PLC0415
+
+        try:
+            _import_fixed(root, import_fixed)
+        finally:
+            if note := merged.refresh_after_write(root):
+                typer.echo(note)
         return
     if review is not None or add or cases or redo or recheck:
         if case_id or show_flags or results or status_only:
             raise InvalidInputError(
                 "--review takes no case id, --show-flags, --results or --status"
             )
-        _review_cards(root, review, add=add, cases=cases, redo=redo, recheck=recheck)
+        from ecf.eval import merged  # noqa: PLC0415
+
+        try:
+            for half in merged.halves(root):  # each change written to the card's own half
+                _review_cards(half, review, add=add, cases=cases, redo=redo, recheck=recheck)
+        finally:
+            if note := merged.refresh_after_write(root):
+                typer.echo(note)
         return
+    from ecf.eval import merged  # noqa: PLC0415
+
+    # one ID: its owning half; otherwise each half in turn (EVAL-PRIVATE.md, "The overlay")
+    targets = [merged.owner(root, case_id)] if case_id else merged.halves(root)
+    try:
+        for half in targets:
+            if len(targets) > 1:
+                typer.echo(f"[{'private' if merged.is_private_root(half) else 'public'} set]")
+            _label_half(half, case_id, status_only=status_only, show_flags=show_flags,
+                        results=results)  # fmt: skip
+    finally:
+        if note := merged.refresh_after_write(root):
+            typer.echo(note)
+
+
+def _label_half(root: Path, case_id: str | None, *, status_only: bool,  # noqa: PLR0912, PLR0915 - the label loop
+                show_flags: bool, results: Path | None) -> None:  # fmt: skip
+    """`ecf eval label` on one half of a set: confirm each pending case's expected labels."""
     from datetime import UTC, datetime  # noqa: PLC0415
 
     from ecf.eval import labels  # noqa: PLC0415

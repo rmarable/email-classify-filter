@@ -234,16 +234,11 @@ def kept_items(field: str, old: dict[str, Any], new: dict[str, Any]) -> dict[str
     }
 
 
-def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
-                rebuild: Callable[[Path], None]) -> dict[str, Any]:  # fmt: skip
-    """Write a card review page's answers for one card field (`{case id: {"label": value, "how":
-    "single" | "bulk"}}`) into each card's `labels:` line, with the fixed items a replaced
-    removed value implied (`kept_items`); rebuild the set once (`rebuild(root)`); log each
-    answer in `reviews.jsonl` (kind `page`, with how); and confirm again, as the operator's,
-    each card that was confirmed before (the answers are the operator's own; the rest of its
-    expected values were confirmed already). A card that wasn't confirmed stays pending: its
-    rule, safety and other labels need `ecf eval label <id>`. Every id must be a case and every
-    value one of the field's values in the shipped schema; nothing is written otherwise."""
+def validate_page(
+    root: Path, field: str, answers: dict[str, Any]
+) -> tuple[dict[str, dict[str, Any]], dict[str, Path]]:
+    """`record_page`'s checks, writing nothing (an import across a set's two halves checks both
+    parts before it writes either, EVAL-PRIVATE.md). Returns the rows and card files by ID."""
     spec = load_schema().fields.get(field)
     if field not in CARD_FIELDS or spec is None:
         raise InvalidInputError(f"{field!r} isn't a card field a page sets"
@@ -263,6 +258,20 @@ def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
     missing = sorted(set(answers) - set(paths))
     if missing:
         raise InvalidInputError(f"no card file for: {', '.join(missing[:5])}")
+    return rows, paths
+
+
+def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
+                rebuild: Callable[[Path], None]) -> dict[str, Any]:  # fmt: skip
+    """Write a card review page's answers for one card field (`{case id: {"label": value, "how":
+    "single" | "bulk"}}`) into each card's `labels:` line, with the fixed items a replaced
+    removed value implied (`kept_items`); rebuild the set once (`rebuild(root)`); log each
+    answer in `reviews.jsonl` (kind `page`, with how); and confirm again, as the operator's,
+    each card that was confirmed before (the answers are the operator's own; the rest of its
+    expected values were confirmed already). A card that wasn't confirmed stays pending: its
+    rule, safety and other labels need `ecf eval label <id>`. Every id must be a case and every
+    value one of the field's values in the shipped schema; nothing is written otherwise."""
+    rows, paths = validate_page(root, field, answers)
     was_confirmed = {i for i in answers if label_file.is_confirmed(rows[i])}
     log: list[dict[str, Any]] = []
     changed: list[str] = []
