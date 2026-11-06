@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 27, 2026-11-06. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 28, 2026-11-06. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -65,7 +65,8 @@ mediums again came from the previous draft's own additions; the operator stopped
 (2026-11-06), and draft 26 cuts the card scan's guards back to their core (X12) and replaces the
 start-up retry loop with plain lock waits (X13), with OD-695. Draft 26 (6d84350) went through a
 twenty-fifth Opus check, scoped to the core, with no highs; it confirmed the underlying problem is
-fixed, and its text fixes are folded in with OD-696 (operator, 2026-11-06).
+fixed, and its text fixes are folded in with OD-696 (operator, 2026-11-06). A delta check of draft 27
+(8cb51a5) found it ready to build once one Step 3 test bound was corrected, done here with OD-697.
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -363,7 +364,7 @@ on and keeps future releases clean. Rewriting history is not proposed.
   limit, and refreshes under the exclusive lock only if the set is still stale (Design, "The merged
   set").
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695), OD-697 (draft 28: the Step 3 lock test's refresh bound; amends OD-696). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -473,7 +474,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   (whose caller already catches every exception, `service.py:599-603`, so the service binds whatever
   happens), one set at a time. For each distinct set that a record recovery would visit names (open,
   expired, or lost and not yet resumed, `claude_eval.py:2018-2020`) and whose private set exists:
-    1. Wait for the set's shared lock and resolve it; a missing lock file (only `refresh_merged`
+  1. Wait for the set's shared lock and resolve it; a missing lock file (only `refresh_merged`
      creates it) counts as stale. Fresh: go to step 3.
   2. Stale: release it and call `refresh_merged(set, wait=<the set's remaining wait>)`, which opens
      or creates the lock file, waits for the exclusive lock itself and refreshes only if the set is
@@ -497,12 +498,13 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
      This is the one change to today's handlers; an open run's scored cases are lost in this case
      (stated limit).
 
-    A wait is a 20 ms non-blocking poll, never a blocking `flock` in a thread (a timed-out thread
+  A wait is a 20 ms non-blocking poll, never a blocking `flock` in a thread (a timed-out thread
   can't be cancelled and took the lock later in 23-38 of 144 runs, round 26). Each set has 5 s of
   waiting in all, counted across steps 1-2's waits only (not its own resolves and refresh), and it is
   not shared out between sets, since a shorter share closed sets with no hold of their own (round
   26). The start bound is 5 s of waiting per stale set plus each set's resolves and refresh: today's
-  three sets started within 8.8-16.4 s in round 26's real-`flock` runs (refreshes up to 3 s),
+  three sets' worst start was 8.8-9.3 s with refreshes of 1 s or less and 16.4 s at 3 s (round 26,
+  real `flock`; the fastest about 1.3 s),
   inside the 30 s and 60 s start limits (`cli_init.py:37`, `src/ecf/upgrade_run.py:54`). Six stale
   sets would reach about 30 s, where `ecf init` stops waiting and exits 3 (`cli_init.py:216-222`)
   though the service still binds (stated limit). Every holder's critical section is a resolve or a
@@ -793,7 +795,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
 Each write, commit and push needs the operator's OK.
 
 1. **Inventory:** done (above).
-2. **Phase R:** done on draft 1 (Fable), drafts 2 to 26 (Opus delta). Draft 27 gets an Opus check
+2. **Phase R:** done on draft 1 (Fable), drafts 2 to 27 (Opus delta). Draft 28 gets an Opus check
    of its changes (OD-577).
 3. **Code** on a branch (Steps 3, 5 and 6 share it; the private repository's commit is pushed before
    Step 7): the atomic-write helper in every writer, `writable_root()`, `refresh_merged` with its lock,
@@ -849,8 +851,10 @@ Each write, commit and push needs the operator's OK.
    spawn is finished once, with a newer run's slot left alone; a lost run whose set went stale
    (a `git pull` without a build) has its results saved after the start-up refresh, its resume
    refused (new merged version) and its attempt over; a fresh set isn't refreshed; two and three
-   services starting on one stale set at offsets from 0 to 1 s, with 0.03-0.5 s resolves and a 1-3 s
-   refresh, all end with the set fresh and recover, and exactly one refreshes; a long `ecf eval
+   services starting on one stale set at offsets from 0 to 1 s, with 0.03-0.5 s resolves and a 1-2 s
+   refresh (a real refresh takes 1 s or less), all end with the set fresh and recover, and exactly one
+   refreshes; at a 3 s refresh with three installs a set may close, as round 27 measured (3 of 6
+   runs), and the test records that rate rather than requiring 0; a long `ecf eval
    build` holds no lock until its refresh; with another install's run holding the shared lock, the
    record closes after the 5 s limit with X13's exact end detail and the other sets recover; an open
    run past 48 hours still has its result saved; a
@@ -1069,12 +1073,11 @@ Each write, commit and push needs the operator's OK.
      and trigger 10 over `<freeze base>..HEAD^1` find no marked or flagged card; the freeze base,
      read from `state-archive/eval-private/`, is an ancestor of `HEAD^1`. Any difference stops for
      the operator (an edit on main the freeze missed).
-      Then push, and watch CI. The branch worktree, which holds a private clone, is removed only with
+   Then push, and watch CI. The branch worktree, which holds a private clone, is removed only with
    the operator's OK and only after that clone passes `clean_and_pushed`, `git status --porcelain`
    on the whole clone is empty, and `git log --all --not --remotes` and `git stash list` list
    nothing: `git worktree remove` deletes an ignored nested repository, unpushed commits and all,
    without a warning (round 23).
-
 
 ## Measured costs (performance reviewer, 2026-11-05)
 
