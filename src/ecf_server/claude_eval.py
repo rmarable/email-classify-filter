@@ -73,7 +73,7 @@ from ecf.errors import (
     NotFoundError,
     ServiceUnavailableError,
 )
-from ecf.eval import drafts, genset
+from ecf.eval import drafts, genset, merged
 from ecf.eval.drafts import DraftCase
 from ecf.eval.results import (
     CaseResult,
@@ -1042,7 +1042,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  
                                                 gate_eligible=run.pinned and not frozen,
                                                 for_gate=run.opts.for_gate,
                                                 schema=run.schema,
-                                                fraud_only=run.opts.fraud_only)  # fmt: skip
+                                                fraud_only=run.opts.fraud_only,
+                                                membership=merged.membership(
+                                                    run.opts.root))  # fmt: skip
     if frozen:  # what the classifier was asked, and with: the source run's
         summary.update(run.source)
         summary["classifier_source"] = {"run_id": run.source_run,

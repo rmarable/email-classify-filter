@@ -104,6 +104,17 @@ def card_ids(root: Path) -> list[str]:
     return sorted(p.stem for p in d.glob("*.md")) if d.is_dir() else []
 
 
+def membership(root: Path) -> tuple[frozenset[str], frozenset[str]] | None:
+    """Each half's card IDs, from its label file (no card is read), for a logical set root with a
+    private half; None without one (EVAL-PRIVATE.md, "The gate guard": counts by membership)."""
+    sp = paths(root)
+    if sp.private is None:
+        return None
+    pub = frozenset(i for i, _ in _jsonl_rows(sp.public / LABELS))
+    priv = frozenset(i for i, _ in _jsonl_rows(sp.private / LABELS))
+    return pub, priv
+
+
 # Merging the label and check files. Label files hold current state, so a row naming a card that
 # isn't in its own half is refused; reviews.jsonl is append-only history, so only a row naming the
 # other half's card is refused (a card removed later keeps its own history).

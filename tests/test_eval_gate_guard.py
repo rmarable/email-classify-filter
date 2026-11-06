@@ -99,6 +99,7 @@ def test_an_ecf_eval_run_on_a_generated_set_is_never_for_the_gate(
     assert not _remembered(conn)
 
 
+@pytest.mark.usefixtures("fake_gate_counts")
 def test_the_gate_refuses_a_generated_sets_folder(
     conn: sqlite3.Connection, clock: FakeClock, root: Path
 ) -> None:

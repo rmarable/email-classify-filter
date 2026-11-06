@@ -44,7 +44,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ecf.eval import genset
+from ecf.errors import InvalidInputError
+from ecf.eval import genset, merged
 from ecf.eval.metrics import wilson
 from ecf_server import (
     claude_pins,
@@ -63,7 +64,7 @@ from ecf_server.rules import HIDE_ACTIONS
 
 THRESHOLD = {"standard": 85, "high": 90}  # percent of reviews with no gated Fix (§9.3; D4)
 # 3: no Fix to a fixed or default field (S4, D4, OD-502); 2: no Fix (S3, OD-500); 1: category
-GATE_VERSION = 3
+GATE_VERSION = 4  # 4: the eval/private gate guard (EVAL-PRIVATE.md, OD-643)
 VERSION_KEY = "gate.version"  # setting: the version the tick last computed under (P30)
 FRAUD_RULES = frozenset({"fraud_guard", "unverified_payment_sender", "fraud_weak", "regulatory"})
 # an item's pin key in SQL (`claude_pins.item_key`): `pin_key` from V1.4, the digest before
@@ -193,17 +194,30 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
     run = conn.execute("SELECT max(created_at) FROM eval_runs WHERE digest = ?",
                        (digest,)).fetchone()  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
-    try:
-        st = (Path(root) / "labels.jsonl").stat() if root else None
-        labels = (st.st_size, st.st_mtime_ns) if st else None
-        fx = Path(root) / "fixed_labels.jsonl" if root else None  # S2: hand-set fixed items
-        if labels and fx and fx.is_file():
-            fst = fx.stat()
-            labels = (*labels, fst.st_size, fst.st_mtime_ns)
-    except OSError:
-        labels = None
+    labels = _set_stats(Path(root)) if root else None
     return (GATE_VERSION, digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0],
             senders[0], run[0], root, labels)  # fmt: skip
+
+
+def _set_stats(root: Path) -> tuple[Any, ...] | None:
+    """Size and mtime of the set's label files in both halves, and of the merged view's
+    `merge.json` (EVAL-PRIVATE.md: the gate's fingerprint stats them; hashing only in compute)."""
+    sp = merged.paths(root)
+    files = [sp.public / "labels.jsonl", sp.public / "fixed_labels.jsonl"]  # S2: hand-set items
+    if sp.private is not None and sp.merged is not None:
+        files += [sp.private / "labels.jsonl", sp.private / "fixed_labels.jsonl",
+                  sp.merged / merged.MERGE_FILE]  # fmt: skip
+    out: list[Any] = []
+    for f in files:
+        try:
+            st = f.stat()
+        except FileNotFoundError:
+            out.append(None)  # a missing file is a value, not an error
+            continue
+        except OSError:
+            return None
+        out.append((st.st_size, st.st_mtime_ns))
+    return tuple(out) if out[0] is not None else None
 
 
 def fraud_misses(conn: sqlite3.Connection, address_id: str, digest: str) -> int:
@@ -243,6 +257,39 @@ def unsafe(plan: dict[str, Any]) -> bool:
     return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
+def _set_counts(root: Path, *, fraud_only: bool) -> dict[str, int]:
+    """The references, from the current verified set (`evalrun.reference_counts` over `load`)."""
+    cases, _version = evalrun.load(root, fraud_only=fraud_only)
+    return evalrun.reference_counts(cases)
+
+
+def _guard(run: Any, m: dict[str, Any], root: Path) -> Check | None:
+    """The gate guard after the version check (EVAL-PRIVATE.md, "The gate guard", OD-643): a run
+    that recorded its counts by half must have read both halves; then its `confirmed` (unless
+    `--fraud-only`) and `fraud_guard_cases` must equal the set's own, worked out from the current
+    verified set. A run from before the guard records no counts, so only the references apply."""
+    rid = str(run["run_id"])[:8]
+    if "public_cases" in m or "private_cases" in m:
+        empty = [h for h in ("public", "private") if not m.get(f"{h}_cases")]
+        if empty:
+            return Check("synthetic", False, f"run {rid} read none of the {' or '.join(empty)}"
+                         " set: run the gate's eval from a checkout with both")  # fmt: skip
+    opts: dict[str, Any] = m.get("options") or {}
+    fraud_only = bool(opts.get("fraud_only"))
+    try:
+        want = _set_counts(root, fraud_only=fraud_only)
+    except InvalidInputError as exc:
+        return Check("synthetic", False, f"the gate's set can't be read: {exc}")
+    except (OSError, ValueError, KeyError, TypeError) as exc:  # a malformed set fails the check
+        return Check("synthetic", False, f"the gate's set can't be read ({type(exc).__name__})")
+    keys = ["fraud_guard_cases"] if fraud_only else ["confirmed", "fraud_guard_cases"]
+    off = [f"{k} {m.get(k)} (set {want[k]})" for k in keys if m.get(k) != want[k]]
+    if off:
+        return Check("synthetic", False, f"run {rid}'s counts don't match the set:"
+                     f" {', '.join(off)}")  # fmt: skip
+    return None
+
+
 def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 - one per refusal
               preset: str = "C") -> Check:  # fmt: skip
     run = evalrun.latest(conn, digest)
@@ -254,6 +301,8 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
     try:
         version = evalrun.set_version(Path(root)) if root else None
+    except InvalidInputError as exc:  # the resolver's refusal is a failed check, never raised
+        return Check("synthetic", False, f"the gate's set can't be read: {exc}")
     except (OSError, ValueError):
         version = None
     when = str(run["created_at"])[:10]
@@ -268,6 +317,8 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
         return Check("synthetic", False, f"the latest run ({rid}, {when}) is on an older"
                      f" version of the set: run {again}")  # fmt: skip
     m: dict[str, Any] = run["metrics"]
+    if (guard := _guard(run, m, Path(str(root)))) is not None:
+        return guard
     unsafe: list[str] = list(m.get("unsafe") or [])
     if not m.get("confirmed"):
         return Check("synthetic", False, "the latest run counted no confirmed cases")

@@ -8,12 +8,15 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from ecf.cli import app
 from ecf.errors import PolicyDeniedError
+from ecf.eval import labels
+from ecf.eval.builder import build_all
 from ecf.paths import Paths
 from ecf_server import claude_pins, db, decide, evalrun, slack_admin
 from ecf_server.clock import FakeClock, to_ts
@@ -48,6 +51,19 @@ def _seed(conn: sqlite3.Connection, clock: FakeClock) -> str:
     return held
 
 
+def _built_set(root: Path) -> Path:
+    """A small real set, every card confirmed, so the run's counts are the set's own (the gate's
+    references guard, EVAL-PRIVATE.md)."""
+    synthetic = Path(__file__).parent / "eval" / "synthetic"
+    (root / "cases").mkdir(parents=True)
+    for name in ("starter-bec", "starter-control", "starter-injection"):
+        (root / "cases" / f"{name}.md").write_text((synthetic / "cases" / f"{name}.md").read_text())
+    assert not build_all(root).findings
+    for name in ("starter-bec", "starter-control", "starter-injection"):
+        labels.confirm(root, name, date(2026, 10, 1))
+    return root
+
+
 def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
@@ -55,8 +71,9 @@ def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
                      " metrics, gate_passed, path) VALUES ('run1', ?, ?, ?, ?, ?, 1, 'p')",
                      (claude_pins.PAIR["C"], claude_pins.address_key(conn, "ap"),
                       evalrun.set_version(root), now,
-                      json.dumps({"confirmed": 150, "unsafe": [], "fraud_cases": 60,
-                                  "fraud_guard_cases": 66, "fraud_guard_missed": [],
+                      json.dumps({**evalrun.reference_counts(
+                                      evalrun.load(root, fraud_only=False)[0]),
+                                  "unsafe": [], "fraud_cases": 60, "fraud_guard_missed": [],
                                   "fraud_guard_recall": 100.0, "complete": True,
                                   "options": {"classifier": True, "actor": True}})))  # fmt: skip
         slack_admin.put_setting(conn, evalrun.EVAL_ROOT, str(root), now, actor="test")
@@ -76,9 +93,7 @@ def test_stage_set_live_from_the_cli(home: Path, tmp_path: Path) -> None:
     proc = start_dev(home)
     try:
         wait_answering(p, proc)
-        root = tmp_path / "set"
-        root.mkdir()
-        (root / "labels.jsonl").write_text('{"id": "x"}\n')
+        root = _built_set(tmp_path / "set")
         with _db(p) as conn:
             held = _seed(conn, FakeClock())
         cli = CliRunner()

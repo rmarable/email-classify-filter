@@ -191,3 +191,17 @@ def running(home: Path) -> Iterator[Paths]:
         yield p
     finally:
         stop(proc)
+
+
+@pytest.fixture
+def fake_gate_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For gate tests that store made-up run figures (150 confirmed, 66 fraud-guard cases) over a
+    placeholder set: the references guard reads those same figures as the set's own. The guard
+    itself is tested on real split sets (tests/test_eval_private_gate.py)."""
+    from ecf_server import gate  # noqa: PLC0415
+
+    def counts(root: Path, *, fraud_only: bool) -> dict[str, int]:
+        del root, fraud_only
+        return {"confirmed": 150, "fraud_guard_cases": 66}
+
+    monkeypatch.setattr(gate, "_set_counts", counts)
