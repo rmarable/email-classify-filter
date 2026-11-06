@@ -1073,6 +1073,7 @@ Each write, commit and push needs the operator's OK.
      and trigger 10 over `<freeze base>..HEAD^1` find no marked or flagged card; the freeze base,
      read from `state-archive/eval-private/`, is an ancestor of `HEAD^1`. Any difference stops for
      the operator (an edit on main the freeze missed).
+
    Then push, and watch CI. The branch worktree, which holds a private clone, is removed only with
    the operator's OK and only after that clone passes `clean_and_pushed`, `git status --porcelain`
    on the whole clone is empty, and `git log --all --not --remotes` and `git stash list` list
