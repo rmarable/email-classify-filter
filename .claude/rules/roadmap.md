@@ -31,3 +31,5 @@ Shared with Codex: `AGENTS.md` points here.
     matches the runner's latest output; no superseded model file is named outside the history
     sections; every F-rule, invariant and OD the text cites exists. Fix what it finds before the
     round starts; the milestone's tests take the script over when it is built.
+  - Run the models' suite in parallel on all cores (cores minus 2 by default) under a memory budget
+    sized by each job's measured peak, so the biggest scopes never overlap, rather than one at a time (operator 2026-11-06).
