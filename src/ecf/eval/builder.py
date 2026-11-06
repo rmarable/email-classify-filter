@@ -222,6 +222,7 @@ def build_all(root: Path) -> BuildReport:
                 "expected": card.expected.model_dump(mode="json"),
             }
         )
+    labels.sort(key=lambda r: str(r["id"]))  # one key: rows in ID order (EVAL-PRIVATE.md)
     # your confirmations stay while the case is unchanged (ecf eval label; OD-241)
     label_file.write(
         root,

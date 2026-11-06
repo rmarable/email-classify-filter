@@ -109,6 +109,10 @@ ALLOWED = {
     ("cli_evalgen.py", "_write_private"),
     ("eval/generate.py", "Work.append"),
     ("eval/generate.py", "write_manifest"),
+    # refresh_merged, the one writer of the merged folder (EVAL-PRIVATE.md, "The merged set")
+    ("eval/merged.py", "_place_copy"),
+    ("eval/merged.py", "_place_link"),
+    ("eval/merged.py", "_build"),
 }
 _PATH_WRITES = {"write_text", "write_bytes", "rename", "link", "copy", "copy2", "copyfile",
                 "copytree", "clonefile", "atomic_write"}  # fmt: skip
