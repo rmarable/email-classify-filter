@@ -17,7 +17,9 @@ from email.utils import format_datetime, parseaddr
 from pathlib import Path
 from typing import cast
 
+from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
+from ecf.eval import markers
 from ecf.eval.cards import Card, load_cards
 from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
 from ecf.eval.setio import atomic_write, writable_root
@@ -154,10 +156,40 @@ def _same(path: Path, data: bytes, digest: str) -> bool:
         return False
 
 
+def marker_refusals(root: Path, *, private: bool) -> list[str]:
+    """X1 (EVAL-PRIVATE.md, "Builder refusal"): in a public set, every card its front matter
+    marks as an injection card except the pinned `starter-injection`; in a private set, every card
+    it doesn't mark. `build_all` calls it from the move commit on; tests call it on fixtures."""
+    out: list[str] = []
+    for p in sorted((root / "cases").glob("*.md")):
+        data = p.read_bytes()
+        why = markers.reasons(markers.front_matter(data.decode("utf-8"), source=p.name))
+        if private and not why:
+            out.append(f"{p.stem}: private card without an injection marker")
+        elif not private and why and not markers.is_pinned_starter(p.stem, data):
+            out.append(f"{p.stem}: marked card in a public set ({', '.join(why)})")
+    return out
+
+
+def _check_ids(root: Path, cards: list[Card]) -> None:
+    """One key: each card's ID is its file stem, and every `eml/` or `.build/` file has a card."""
+    stems = sorted(p.stem for p in (root / "cases").glob("*.md"))
+    ids = [c.id for c in cards]
+    if ids != stems:
+        bad = sorted(set(ids) ^ set(stems))
+        raise InvalidInputError(f"card IDs must equal their file names: {', '.join(bad[:10])}")
+    orphans = sorted(f"{d}/{p.name}" for d in ("eml", ".build")
+                     for p in (root / d).glob("*.eml") if p.stem not in set(ids))  # fmt: skip
+    if orphans:
+        raise InvalidInputError(f"no card for {', '.join(orphans[:10])} (remove the file or restore"
+                                " its card)")  # fmt: skip
+
+
 def build_all(root: Path) -> BuildReport:
     """Build every card under `root/cases`. Stops before writing anything if hygiene fails."""
     writable_root(root)
     cards = load_cards(root / "cases")
+    _check_ids(root, cards)
     findings = [f for c in cards for f in scan_card(c, f"{c.id}.md")]
     if findings:
         return BuildReport([], [], findings)

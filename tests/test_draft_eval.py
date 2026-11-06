@@ -529,7 +529,9 @@ def test_forced_draft_needs_the_draft_set(
 ) -> None:
     r = tmp_path / "plain"
     (r / "cases").mkdir(parents=True)
-    (r / "cases" / "c.md").write_text((SYNTHETIC / "cases" / "bug-export-fails.md").read_text())
+    (r / "cases" / "bug-export-fails.md").write_text(
+        (SYNTHETIC / "cases" / "bug-export-fails.md").read_text()
+    )
     assert not build_all(r).findings
     with pytest.raises(InvalidInputError, match="--forced-draft is for the draft set"):
         start(db_path, clock, r, forced_draft=True)

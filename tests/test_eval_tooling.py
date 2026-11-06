@@ -123,8 +123,8 @@ def test_freemail_template_parses_builds_and_passes_hygiene(tmp_path: Path) -> N
 def test_labels_carry_a_profile_only_when_not_org(tmp_path: Path) -> None:
     """So the committed set's version (a hash of labels.jsonl) is unchanged by OD-443."""
     (tmp_path / "cases").mkdir()
-    (tmp_path / "cases" / "a.md").write_text(card())
-    (tmp_path / "cases" / "b.md").write_text(card("profile: freemail\n").replace("t-1", "t-2"))
+    (tmp_path / "cases" / "t-1.md").write_text(card())
+    (tmp_path / "cases" / "t-2.md").write_text(card("profile: freemail\n").replace("t-1", "t-2"))
     assert not build_all(tmp_path).findings
     rows = [json.loads(x) for x in (tmp_path / "labels.jsonl").read_text().splitlines()]
     assert [r.get("profile") for r in rows] == [None, "freemail"]
@@ -237,7 +237,7 @@ def test_hygiene_allows(text: str) -> None:
 
 def test_failed_hygiene_writes_nothing(tmp_path: Path) -> None:
     (tmp_path / "cases").mkdir()
-    (tmp_path / "cases" / "bad.md").write_text(
+    (tmp_path / "cases" / "t-1.md").write_text(
         card().replace("a@vendor-a.example", "a@realcorp.com")
     )
     report = build_all(tmp_path)
