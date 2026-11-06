@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the plan's extra safeguards around the GitHub check for prompt-injection test emails (operator approval lines, a separate merge working copy and its lock) are withdrawn in favour of the check itself plus normal review, and at startup ecf now simply waits a few seconds for a test set's lock instead of retrying (OD-695; replaces OD-688 and OD-689 where they conflict).
 - Decided: only one session at a time uses the separate working copy for main-branch merges, and the merge that is pushed must be the one that was checked; the daily check for prompt-injection test emails warns, rather than fails, on another branch's test email that the main branch can't read yet (OD-689).
 - Decided: merges and direct changes to the main branch are made in one long-lived separate working copy rather than the shared one, and the GitHub check for prompt-injection test emails is simplified: the operator approves a change to it at merge, recorded in the merge message (OD-688).
 - Decided: merges to the main branch are checked on a separate branch before they are pushed, old test emails that a stricter format no longer reads are listed rather than blocking the change, and at startup each eval test set gets a few seconds of its own when several installs start together (OD-687).
