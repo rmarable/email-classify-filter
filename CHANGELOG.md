@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the GitHub check for prompt-injection test emails runs each branch's own copy, a daily run from the main branch catches a branch that weakens it, and a change to the check needs the operator's approval at merge (OD-684).
 - Decided: while the private test emails are being moved, the main branch takes no edits to the test emails that are moving, and the GitHub check for prompt-injection test emails always uses the main branch's own copy of its rules (OD-679).
 - Decided: the GitHub check for prompt-injection test emails also checks the injection markers on new test emails, and at startup ecf refreshes a lost draft run's test set only when it has changed, without ever stopping the service from starting (OD-678).
 - Decided: a draft eval run lost to a restart is resumed as before, with ecf first refreshing its test set at startup; and the daily GitHub check for prompt-injection test emails skips the old, already-public ones on release tags, which can't change, while checking the main branch in full (OD-677).
