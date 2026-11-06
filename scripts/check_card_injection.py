@@ -22,6 +22,7 @@ import hashlib
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ LIST = "tests/eval/known-public-injection-blobs.txt"
 X1_ANCHOR = "8b26fd6ae4a5d74c650e2b6fc775809332655496"
 STARTER_EML_SHA256 = "2cfe1cf857be1b02621ef36e22ca3d8eb358f4a058cd1e551b0b3e997cb7ed9f"
 CARD = re.compile(r"^tests/eval/[^/]+/cases/[^/]+\.md$")
+PRIVATE_CARD = re.compile(r"^[^/]+/cases/[^/]+\.md$")  # in the private repository: <set>/cases/
 EML = re.compile(r"^tests/eval/[^/]+/(eml|\.build)/[^/]+\.eml$")
 
 
@@ -79,9 +81,11 @@ def wanted(path: str) -> bool:
     return CARD.match(path) is not None or EML.match(path) is not None
 
 
-def changed(revs: list[str], top: Path = TOP) -> list[tuple[str, str]]:
-    """(blob, path) for every card and email file each commit in `revs` added or changed, merge
-    commits included and deleted files skipped, through one batched `git diff-tree --stdin`."""
+def changed(revs: list[str], top: Path = TOP,
+            want: Callable[[str], bool] = wanted) -> list[tuple[str, str]]:  # fmt: skip
+    """(blob, path) for every card and email file (`want`) each commit in `revs` added or
+    changed, merge commits included and deleted files skipped, through one batched
+    `git diff-tree --stdin`."""
     commits = git("rev-list", *revs, top=top)
     if not commits.strip():
         return []
@@ -93,7 +97,7 @@ def changed(revs: list[str], top: Path = TOP) -> list[tuple[str, str]]:
             continue
         meta, path = line.split("\t", 1)
         blob = meta.split()[3]
-        if wanted(path):
+        if want(path):
             seen[(blob, path)] = None
     return list(seen)
 
@@ -229,13 +233,21 @@ def anchor_history(top: Path = TOP) -> set[str]:
     return {b for b, _ in changed([X1_ANCHOR], top)} if r.returncode == 0 else set()
 
 
+def exempt(top: Path = TOP) -> set[str]:
+    """The listed blobs that are public already: on the list and in main's history at the anchor.
+    The list is read from the tree being checked, so an entry is trusted only if main's history
+    has the blob (a push can't exempt its own new card by listing it)."""
+    return known(top) & anchor_history(top)
+
+
 def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
               top: Path = TOP) -> Verdict:  # fmt: skip
     """A pushed range: every changed blob (listed blobs skipped; X1 only on blobs new since the
     anchor), then the tip's path checks and, except in the hook, a build of the tip's other
     blobs: unskipped with X1 on main, with the list elsewhere."""
     items = changed(revs, top)
-    listed, old = known(top), anchor_history(top)
+    old = anchor_history(top)
+    listed = known(top) & old  # `exempt`, with the history read once
     v = scan(items, skip=listed, x1_old=old, top=top)
     refused, warned = list(v.refused), list(v.warned)
     if tip:
@@ -253,7 +265,7 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
 
 def run_tree(treeish: str, *, no_skip: bool, top: Path = TOP) -> Verdict:
     found = tree(treeish, top)
-    v = scan(found, skip=set() if no_skip else known(top), x1_old=None, top=top)
+    v = scan(found, skip=set() if no_skip else exempt(top), x1_old=None, top=top)
     return Verdict([*v.refused, *(f"{p}: no card for it in its set" for p in orphans(found))],
                    v.warned)  # fmt: skip
 
@@ -316,19 +328,12 @@ def peels_to_commit(sha: str, top: Path = TOP) -> bool:
     return r.returncode == 0 and r.stdout.strip() == "commit"
 
 
-def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
-    """The pre-push hook: each pushed (local ref, local sha, remote ref, remote sha). In the
-    private repository, only a push to its recorded remote; in the public one, refuses deleting
-    main and a ref that isn't a commit, and scans each pushed range (the pushed blobs only)."""
-    here = Path(git("rev-parse", "--show-toplevel", top=cwd).strip())
-    if here.resolve() == (TOP / "eval" / "private").resolve():
-        want = git("config", "--default", "", "ecf.privateRemote", top=here).strip()
-        if not want or remote_id(url) != remote_id(want):
-            return Verdict([f"eval/private pushes only to its recorded remote ({want or 'none'})"
-                            f", not {url}"], [])  # fmt: skip
-        return Verdict([], [])
+def pushed(remote: str, lines: list[str], cwd: Path,
+           ) -> tuple[list[str], list[tuple[str, str, list[str]]]]:  # fmt: skip
+    """git's pre-push input as (refusals, [(remote ref, pushed sha, revs)]): deleting main and a
+    ref that isn't a commit are refused; each range is the pushed commits only."""
     refused: list[str] = []
-    warned: list[str] = []
+    ranges: list[tuple[str, str, list[str]]] = []
     for line in lines:
         parts = line.split()
         if len(parts) != 4:
@@ -346,8 +351,47 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
             capture_output=True, check=False).returncode == 0  # fmt: skip
         theirs = [r for r in git("for-each-ref", "--format=%(refname)",
                                  f"refs/remotes/{remote}", top=cwd).split()]  # fmt: skip
+        if not theirs and peels_to_commit("refs/remotes/origin/main", cwd):
+            theirs = ["refs/remotes/origin/main"]
+        # nothing the remote is known to have: every commit is checked (a first push)
         revs = ([f"{rsha}..{lsha}"] if known_rsha
-                else [lsha, "--not", *(theirs or ["refs/remotes/origin/main"])])  # fmt: skip
+                else [lsha, "--not", *theirs] if theirs else [lsha])  # fmt: skip
+        ranges.append((rref, lsha, revs))
+    return refused, ranges
+
+
+def check_private(blob: str, path: str, data: bytes) -> list[str]:
+    """A private card: it must parse and pass the hygiene scan (fake data only). Its markers and
+    trigger 10 are expected there (every private card is an injection card)."""
+    try:
+        card = parse_card(data.decode("utf-8"), source=path)
+    except Exception as exc:
+        return [f"{path} ({blob[:12]}): doesn't parse ({type(exc).__name__})"]
+    return [f"{path} ({blob[:12]}): hygiene: {f.where} {f.kind}"
+            for f in scan_card(card, Path(path).name)]  # fmt: skip
+
+
+def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
+    """The pre-push hook: each pushed (local ref, local sha, remote ref, remote sha). Both
+    repositories refuse deleting main and a ref that isn't a commit and check each pushed range
+    (the pushed blobs only): the private one only to its recorded remote, with the hygiene scan
+    on its cards; the public one with the full card scan."""
+    here = Path(git("rev-parse", "--show-toplevel", top=cwd).strip())
+    private = here.resolve() == (TOP / "eval" / "private").resolve()
+    if private:
+        want = git("config", "--default", "", "ecf.privateRemote", top=here).strip()
+        if not want or remote_id(url) != remote_id(want):
+            return Verdict([f"eval/private pushes only to its recorded remote ({want or 'none'})"
+                            f", not {url}"], [])  # fmt: skip
+    refused, ranges = pushed(remote, lines, cwd)
+    warned: list[str] = []
+    for rref, lsha, revs in ranges:
+        if private:
+            items = changed(revs, cwd, want=lambda p: PRIVATE_CARD.match(p) is not None)
+            data = cat(sorted({b for b, _ in items}), cwd)
+            for b, p in dict.fromkeys(items):
+                refused += check_private(b, p, data[b])
+            continue
         main_ref = "refs/heads/main" if rref == "refs/heads/main" else rref
         v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd)
         refused += v.refused

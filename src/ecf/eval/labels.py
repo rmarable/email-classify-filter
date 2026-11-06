@@ -166,10 +166,16 @@ def set_version(root: Path) -> str:
     use it (J12 Phase R P3)."""
     from ecf.eval import fixed_labels  # noqa: PLC0415 - fixed_labels imports this module
 
-    h = hashlib.sha256((root / "labels.jsonl").read_bytes())
     fixed = root / fixed_labels.FILE
-    if fixed.is_file():
-        h.update(b"\0" + fixed.read_bytes())
+    return version_of((root / "labels.jsonl").read_bytes(),
+                      fixed.read_bytes() if fixed.is_file() else None)  # fmt: skip
+
+
+def version_of(labels: bytes, fixed: bytes | None) -> str:
+    """`set_version` from bytes the caller has read (a reader that reads each file once)."""
+    h = hashlib.sha256(labels)
+    if fixed is not None:
+        h.update(b"\0" + fixed)
     return h.hexdigest()[:16]
 
 

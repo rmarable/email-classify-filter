@@ -278,6 +278,7 @@ class Run:
     source_key: str | None = None  # the source run's `eval_runs.digest`
     private_commit: str | None = None  # a for-gate run's private HEAD at its start (EVAL-PRIVATE)
     set_lock: merged.SetLock | None = None  # the set's shared lock, held until the run ends
+    problems: tuple[tuple[str, str], ...] = ()  # the set's rows that couldn't run (read_set)
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -595,7 +596,8 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
     # (eval plan P1; window tuning: a for-gate run counts whatever its size; M8 plan AF5)
     if genset.is_generated(opts.root) or window or opts.cases or opts.forced_draft:
         opts = replace(opts, for_gate=False)
-    cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
+    read = evalrun.read_set(opts.root)
+    cases, version = read.selected(fraud_only=opts.fraud_only), read.version
     specs = _draft_specs(cases)
     draft = any(specs.values())
     if draft:  # the draft set is run --not-for-gate (M8 plan §4 "Set")
@@ -631,6 +633,10 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
     clean: gitcheck.Clean | None = None
     try:
         if opts.for_gate:
+            if read.problems:  # every card must run as read (EVAL-PRIVATE.md, "Fail closed")
+                raise InvalidInputError(f"a run for the gate needs every card of the set, and"
+                                        f" these can't run: {read.problem_text()}. Run `ecf"
+                                        " eval build`")  # fmt: skip
             _check_root(conn, opts.root)
             clean = _check_clean(opts.root)
         schema = config.current_schema(conn)
@@ -669,6 +675,7 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
         run = Run(run_id, opts, models, pinned, key, version, clock.now(), works,
                   starter, policy.labels(schema, starter), data_dir, schema, source_run,
                   source, source_key)  # fmt: skip
+        run.problems = read.problems
         if rec is not None:
             run.journal, run.clock = draftruns.journal_path(data_dir, run_id), clock
             run.slot, run.attempt, run.expires_at = rec.slot, rec.attempt, rec.expires_at
@@ -694,7 +701,11 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
             log.error("claude_eval.prepare_failed", error_type=type(exc).__name__)
             with run.lock:
                 run.state = "failed"
-                run.detail = f"preparing the cases failed ({type(exc).__name__})"
+                run.detail = (
+                    str(exc)
+                    if isinstance(exc, evalrun.CaseChanged)
+                    else f"preparing the cases failed ({type(exc).__name__})"
+                )
                 _end_record(clock, run, "failed", run.detail, complete=False)
             run.release_set()
 
@@ -912,7 +923,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         for w in run.works:
             if run.stop.is_set():
                 return
-            raw = w.case.path.read_bytes()
+            raw = evalrun.case_bytes(w.case)  # re-checked against its hash ("Torn reads")
             # as `ecf eval run`: the card's expected facts applied (Q1), so runs score alike
             facts, (cls_text, act_text), measured = evalrun.case_inputs_full(
                 w.case, scratch, triggers.redact_injection, limit=run.opts.classifier_window
@@ -1114,7 +1125,8 @@ def _finish_run(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Ru
                                                 schema=run.schema,
                                                 fraud_only=run.opts.fraud_only,
                                                 membership=merged.membership(
-                                                    run.opts.root))  # fmt: skip
+                                                    run.opts.root),
+                                                problems=run.problems)  # fmt: skip
     # a for-gate run on a set with a private half: what it read (EVAL-PRIVATE.md, gate guard)
     summary |= {} if run.private_commit is None else {
         "private_commit": run.private_commit, "merged_version": run.version}  # fmt: skip

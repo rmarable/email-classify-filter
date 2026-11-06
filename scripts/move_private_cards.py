@@ -13,6 +13,7 @@ and pinned by its count per set and its sha256, so no moved ID is written in a p
     --public-check         refuse a public card, file, row or key whose ID was moved (by the
                            hashed list `tests/eval/moved-ids.sha256`, or the `d-inj-`/`h3-inj-`
                            prefixes); CI runs it from the move commit on
+    --dry-run              what --apply would move, checked, with nothing written
     --write-hashes         write `tests/eval/moved-ids.sha256` from the list (plus `long-093`)
     --top DIR              the checkout (default: this script's)
 
@@ -127,16 +128,44 @@ class Moved:
     rows: dict[str, int] = field(default_factory=dict[str, int])
 
 
-def apply(top: Path, name: str, ids: list[str]) -> Moved:
-    """Move one set's listed cards to its private half and check the split."""
+def plan_move(top: Path, name: str, ids: list[str]) -> Moved:
+    """What `apply` would move for one set, checked before anything is written: every card is
+    public, nothing it moves is in the private half already (no card, file, row or key)."""
     pub, priv = _public(top, name), _private(top, name)
     want = set(ids)
     missing = sorted(i for i in want if not (pub / "cases" / f"{i}.md").is_file())
     if missing:
         raise InvalidInputError(f"{name}: no public card for {', '.join(missing)}")
-    there = sorted(i for i in want if (priv / "cases" / f"{i}.md").exists())
+    out = Moved(cards=len(ids))
+    for d in ("cases", "eml", ".build"):
+        src = pub / d
+        if src.is_dir():
+            out.files += [f"{d}/{q.name}" for q in sorted(src.iterdir())
+                          if q.name.split(".", 1)[0] in want]  # fmt: skip
+    there = sorted(f for f in out.files if (priv / f).exists())
+    there += sorted(f"{k}: {i}" for k in (LABELS, FIXED, REVIEWS)
+                    for i, _ in _rows(priv / k) if i in want)  # fmt: skip
+    if (priv / CHECKS).is_file():
+        there += sorted(f"{CHECKS}: {k}" for k, _ in _blocks(
+            (priv / CHECKS).read_text(encoding="utf-8"))[1] if k in want)  # fmt: skip
     if there:
-        raise InvalidInputError(f"{name}: already in the private set: {', '.join(there)}")
+        raise InvalidInputError(f"{name}: already in the private set: {', '.join(there[:10])}")
+    for k in (LABELS, FIXED, REVIEWS):
+        if n := sum(1 for i, _ in _rows(pub / k) if i in want):
+            out.rows[k] = n
+    if (pub / CHECKS).is_file():
+        _head, blocks = _blocks((pub / CHECKS).read_text(encoding="utf-8"))
+        if n := sum(1 for k, _ in blocks if k in want):
+            out.rows[CHECKS] = n
+    return out
+
+
+def apply(top: Path, name: str, ids: list[str]) -> Moved:
+    """Move one set's listed cards to its private half (after `plan_move`'s checks) and check
+    the split."""
+    plan_move(top, name, ids)
+    pub, priv = _public(top, name), _private(top, name)
+    want = set(ids)
     before = {k: (pub / k).read_bytes() for k in (LABELS, FIXED) if (pub / k).is_file()}
     checks_before = (pub / CHECKS).read_text(encoding="utf-8") if (pub / CHECKS).is_file() else ""
     out = Moved(cards=len(ids))
@@ -247,7 +276,7 @@ def public_check(top: Path, known: set[str] | None = None) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="The eval/private move and its guard.")
     mode = ap.add_mutually_exclusive_group(required=True)
-    for flag in ("--list", "--check", "--apply", "--public-check", "--write-hashes"):
+    for flag in ("--list", "--check", "--apply", "--dry-run", "--public-check", "--write-hashes"):
         mode.add_argument(flag, action="store_true")
     ap.add_argument("--top", type=Path, default=TOP)
     a = ap.parse_args(argv)
@@ -274,10 +303,23 @@ def main(argv: list[str] | None = None) -> int:
     if a.write_hashes:
         print(f"wrote {write_hashes(top, listed)} hashes to {HASHES}")
         return 0
+    return _move(top, listed, dry_run=a.dry_run)
+
+
+def _move(top: Path, listed: dict[str, list[str]], *, dry_run: bool) -> int:
+    plans = {s: plan_move(top, s, ids) for s, ids in listed.items()}  # every set, before writing
+    if dry_run:
+        for s, m in plans.items():
+            print(f"{s}: would move {m.cards} cards, {len(m.files)} files, rows {m.rows}")
+            for f in m.files:
+                print(f"  {f}")
+        return 0
     for s, ids in listed.items():
         m = apply(top, s, ids)
         print(f"{s}: moved {m.cards} cards, {len(m.files)} files, rows {m.rows}")
-    print("now `ecf eval build --root tests/eval/<set>` for each set, then commit both")
+    print("now `ecf eval build --root tests/eval/<set>` for each set, then commit both. To undo"
+          " before committing: `git checkout -- tests/eval && git clean -fd tests/eval` here and"
+          " `rm -rf` the new files in eval/private")  # fmt: skip
     return 0
 
 

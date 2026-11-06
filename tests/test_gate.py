@@ -12,6 +12,7 @@ import pytest
 
 from ecf import cli_admin
 from ecf.errors import InvalidInputError, PolicyDeniedError, StepupRequiredError
+from ecf.eval.builder import build_all
 from ecf_server import claude_pins, db, decide, evalrun, gate, review, slack_admin, stages, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
@@ -21,6 +22,7 @@ from tests.test_decide import KNOWN_BULK, MARKETING, make_classified
 from tests.test_decide import make_address as _address
 
 pytestmark = pytest.mark.usefixtures("fake_gate_counts")
+SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 
 
 def _c_key() -> str:
@@ -51,7 +53,11 @@ def make_address(conn: sqlite3.Connection, clock: FakeClock, stage: str) -> None
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    (tmp_path / "labels.jsonl").write_text('{"id": "x"}\n')
+    """A one-card set, built (the gate reads every row's file)."""
+    (tmp_path / "cases").mkdir()
+    name = "starter-control.md"
+    (tmp_path / "cases" / name).write_bytes((SYNTHETIC / "cases" / name).read_bytes())
+    assert not build_all(tmp_path).findings
     return tmp_path
 
 

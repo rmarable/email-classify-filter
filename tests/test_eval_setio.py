@@ -113,6 +113,7 @@ ALLOWED = {
     ("eval/merged.py", "_place_copy"),
     ("eval/merged.py", "_place_link"),
     ("eval/merged.py", "_build"),
+    ("eval/merged.py", "_restat"),  # merge.json's stats, under refresh_merged's lock
 }
 _PATH_WRITES = {"write_text", "write_bytes", "rename", "link", "copy", "copy2", "copyfile",
                 "copytree", "clonefile", "atomic_write"}  # fmt: skip

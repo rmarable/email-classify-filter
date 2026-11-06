@@ -17,9 +17,26 @@ from ecf_server import evalrun, ruletest
 EVAL = Path(__file__).resolve().parent / "eval"
 
 
+def complete_copy(name: str, dst: Path) -> Path:
+    """A copy of a committed set without the cards built into `.build/` (untracked, so absent in
+    CI; building them takes seconds): every remaining row's file is present, so the copy is a
+    complete set that reads with no problems."""
+    shutil.copytree(EVAL / name, dst, ignore=shutil.ignore_patterns(".build", ".*.tmp"))
+    rows = (dst / "labels.jsonl").read_text().splitlines()
+    large = {json.loads(r)["id"] for r in rows if json.loads(r)["file"].startswith(".build/")}
+    for f in ("labels.jsonl", "fixed_labels.jsonl", "reviews.jsonl"):
+        if (dst / f).is_file():
+            kept = [
+                r for r in (dst / f).read_text().splitlines() if json.loads(r)["id"] not in large
+            ]
+            (dst / f).write_text("".join(r + "\n" for r in kept))
+    for i in large:
+        (dst / "cases" / f"{i}.md").unlink()
+    return dst
+
+
 def _split_set(tmp_path: Path, name: str = "synthetic", n: int = 12) -> tuple[Path, Path, int]:
-    pub = tmp_path / "tests" / "eval" / name
-    shutil.copytree(EVAL / name, pub, ignore=shutil.ignore_patterns(".build", ".*.tmp"))
+    pub = complete_copy(name, tmp_path / "tests" / "eval" / name)
     total = len(label_file.read(pub))
     ids = set(mg.card_ids(pub)[:n])
     priv = tmp_path / "eval" / "private" / name
@@ -49,7 +66,7 @@ def test_the_loader_and_version_read_the_merged_set(tmp_path: Path) -> None:
     assert len(rows) == total
     cases, version = evalrun.load(pub, fraud_only=False)
     assert version == label_file.set_version(m)
-    assert len(cases) > total - 5  # the two large cards' .build files aren't in this worktree
+    assert len(cases) == total and not evalrun.read_set(pub).problems
     assert {c.path.parent.parent for c in cases} == {m.resolve()}
     assert {c.id for c in cases} >= set(mg.card_ids(mg.paths(pub).private or pub))
     with pytest.raises(InvalidInputError, match="public set's path"):

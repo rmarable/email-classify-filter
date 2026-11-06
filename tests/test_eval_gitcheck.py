@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -145,3 +146,42 @@ def test_the_fingerprint_reads_a_worktrees_git_file(top: Path, tmp_path: Path) -
     seen = gitcheck.fingerprint(wt, "heldout3")
     git(wt, "commit", "-q", "--allow-empty", "-m", "w")
     assert gitcheck.fingerprint(wt, "heldout3") != seen
+
+
+def _changes(top: Path, priv: Path, set_name: str) -> None:
+    """A commit, a push, a new card, an in-place edit and an upstream change in the private
+    clone's config each change the fingerprint of the checkout at `top`."""
+    seen = gitcheck.fingerprint(top, set_name)
+    steps: list[tuple[str, Any]] = [
+        ("commit", lambda: git(priv, "commit", "-q", "--allow-empty", "-m", "c")),
+        ("push", lambda: git(priv, "push", "-q")),
+        ("new card", lambda: (priv / set_name / "cases" / "n.md").write_text("x")),
+        ("in-place edit", lambda: _edit_in_place(top / "tests" / "eval" / set_name)),
+        ("upstream", lambda: git(priv, "config", "branch.main.merge", "refs/heads/other")),
+    ]
+    for name, step in steps:
+        step()
+        now = gitcheck.fingerprint(top, set_name)
+        assert now != seen, name
+        seen = now
+
+
+def _edit_in_place(pub: Path) -> None:
+    card = next((pub / "cases").glob("*.md"))
+    with card.open("r+") as f:  # in place: no folder or index time changes
+        f.write("-")
+
+
+def test_the_fingerprint_follows_every_change_in_a_normal_clone(top: Path) -> None:
+    _changes(top, _priv(top), "heldout3")
+
+
+def test_the_fingerprint_follows_every_change_in_a_worktree(top: Path, tmp_path: Path) -> None:
+    """C7 in a worktree: the public checkout is a `git worktree`, its private set a clone of
+    the private repository with the same upstream."""
+    wt = tmp_path / "wt"
+    git(top, "worktree", "add", "-q", "--detach", str(wt))
+    priv = wt / "eval" / "private"
+    git(top, "clone", "-q", "-b", "main", str(top / "remote.git"), str(priv))
+    assert (priv / "heldout3").is_dir()
+    _changes(wt, priv, "heldout3")

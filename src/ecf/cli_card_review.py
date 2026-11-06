@@ -23,7 +23,7 @@ from typing import Any
 
 from ecf.cli_corpus_label import field_block, parse_answer
 from ecf.errors import InvalidInputError
-from ecf.eval import genset
+from ecf.eval import genset, merged
 from ecf.eval import labels as label_file
 from ecf.eval import review as rv
 from ecf.eval.builder import build_all, build_message
@@ -172,11 +172,14 @@ def _confirm_rest(root: Path, case_id: str, read: Callable[[str], str],
 
 
 def rebuild(root: Path) -> None:
-    """Rebuild the set after a label change; a hygiene finding stops it."""
+    """Rebuild the half after a label change (a hygiene finding stops it), then refresh the
+    merged view, so it is fresh after each changed card (EVAL-PRIVATE.md, "The merged set");
+    a refresh that can't run now is retried, and reported, at the command's end."""
     if findings := build_all(root).findings:
         raise InvalidInputError(
             f"hygiene scan failed after a label change: {findings[0].where}: {findings[0].kind}"
         )
+    merged.refresh_after_write(merged.public_of(root))
 
 
 def _paths(root: Path) -> dict[str, Path]:

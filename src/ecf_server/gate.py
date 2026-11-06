@@ -195,10 +195,8 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
     run = conn.execute("SELECT max(created_at) FROM eval_runs WHERE digest = ?",
                        (digest,)).fetchone()  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
-    labels = _set_stats(Path(root)) if root else None
-    clean = _clean_inputs(Path(root)) if root else None
     return (GATE_VERSION, digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0],
-            senders[0], run[0], root, labels, clean)  # fmt: skip
+            senders[0], run[0], root, _set_key(Path(root)) if root else None)  # fmt: skip
 
 
 def _set_stats(root: Path) -> tuple[Any, ...] | None:
@@ -259,46 +257,83 @@ def unsafe(plan: dict[str, Any]) -> bool:
     return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
-# The clean-and-pushed check is set-level: cached by the repositories' fingerprint and shared by
-# the tick, `stages.status` and `address_gate`; a git failure is kept for one pass only (about a
-# second) and bumps `_RETRY`, an input, so the next tick tries again. `stage set live` and step-up
-# run it fresh.
-_CLEAN: dict[tuple[Any, ...], tuple[gitcheck.Clean, float]] = {}
+# The set's state, read once per pass and shared by the tick, `stages.status` and
+# `address_gate` (EVAL-PRIVATE.md, "The gate guard": the set-level part is cached, not run per
+# address). One entry, keyed by the label files' and merge.json's stats and the repositories'
+# git fingerprint. A transient result (git
+# failing, a refresh holding the lock) is kept for one pass only and bumps `_RETRY`, an input,
+# so the next tick tries again. `stage set live` reads it fresh.
+
+
+@dataclass(frozen=True)
+class SetState:
+    version: str | None  # None: no set where the gate's root points
+    error: str | None  # the set can't be read (the resolver's refusal, a malformed set)
+    problems: tuple[tuple[str, str], ...]
+    problem_text: str
+    counts: dict[bool, dict[str, int]]  # fraud_only -> the references (`reference_counts`)
+    clean: gitcheck.Clean | None  # None: no private half (nothing to check)
+    transient: bool = False
+
+
+_STATE: dict[tuple[Any, ...], tuple[SetState, float]] = {}
 _RETRY = [0]
 PASS_S = 1.0
+_now = time.monotonic  # a seam for tests
 
 
-def _clean(root: Path, *, fresh: bool) -> gitcheck.Clean | None:
+def reset_cache() -> None:
+    """Forget the cached set state (tests; a restart does the same)."""
+    _STATE.clear()
+
+
+def _set_key(root: Path) -> tuple[Any, ...]:
+    """What the set's state depends on: stats and the git fingerprint, no hashing (about 5 ms).
+    Worked out on every call, never remembered, so a change is seen at once."""
     sp = merged.paths(root)
-    if sp.private is None or sp.top is None:
-        return None
-    key = (str(sp.top), sp.name, gitcheck.fingerprint(sp.top, sp.name))
-    hit = _CLEAN.get(key)
-    now = time.monotonic()
-    if hit is not None and not fresh and (not hit[0].error or now - hit[1] < PASS_S):
+    git = (None if sp.private is None or sp.top is None
+           else gitcheck.fingerprint(sp.top, sp.name))  # fmt: skip
+    return (str(root), _set_stats(root), git, _RETRY[0])
+
+
+def set_state(root: Path, *, fresh: bool = False) -> SetState:
+    key = _set_key(root)
+    now = _now()
+    hit = _STATE.get(key)
+    if hit is not None and not fresh and (not hit[0].transient or now - hit[1] < PASS_S):
         return hit[0]
-    got = gitcheck.clean_and_pushed(sp.top, sp.name)
-    if got.error:
-        _RETRY[0] += 1
-    _CLEAN.clear()  # one entry: the current state
-    _CLEAN[key] = (got, now)
+    got = _read_state(root)
+    if got.transient:  # the tick's inputs change, so the next tick tries again; this pass's
+        _RETRY[0] += 1  # other callers share this result under the key they will compute
+        key = (*key[:-1], _RETRY[0])
+    _STATE.clear()  # one entry: the current state
+    _STATE[key] = (got, now)
     return got
 
 
-def _clean_inputs(root: Path) -> tuple[Any, ...] | None:
+def _read_state(root: Path) -> SetState:
+    def failed(why: str, *, transient: bool = False) -> SetState:
+        return SetState(None, why, (), "", {}, None, transient)
+
+    try:
+        read = evalrun.read_set(root)
+    except evalrun.NoSet:
+        return SetState(None, None, (), "", {}, None)
+    except merged.RefreshBusy as exc:
+        return failed(f"the gate's set can't be read: {exc}", transient=True)
+    except InvalidInputError as exc:
+        return failed(f"the gate's set can't be read: {exc}")
+    except (OSError, ValueError, KeyError, TypeError) as exc:  # a malformed set fails the check
+        return failed(f"the gate's set can't be read ({type(exc).__name__})")
+    counts = {f: evalrun.reference_counts(read.selected(fraud_only=f)) for f in (False, True)}
     sp = merged.paths(root)
-    if sp.private is None or sp.top is None:
-        return None
-    return (gitcheck.fingerprint(sp.top, sp.name), _RETRY[0])
+    clean = (None if sp.private is None or sp.top is None
+             else gitcheck.clean_and_pushed(sp.top, sp.name))  # fmt: skip
+    return SetState(read.version, None, read.problems, read.problem_text(), counts, clean,
+                    transient=clean is not None and clean.error)  # fmt: skip
 
 
-def _set_counts(root: Path, *, fraud_only: bool) -> dict[str, int]:
-    """The references, from the current verified set (`evalrun.reference_counts` over `load`)."""
-    cases, _version = evalrun.load(root, fraud_only=fraud_only)
-    return evalrun.reference_counts(cases)
-
-
-def _guard(run: Any, m: dict[str, Any], root: Path) -> Check | None:
+def _guard(run: Any, m: dict[str, Any], state: SetState) -> Check | None:
     """The gate guard after the version check (EVAL-PRIVATE.md, "The gate guard", OD-643): a run
     that recorded its counts by half must have read both halves; then its `confirmed` (unless
     `--fraud-only`) and `fraud_guard_cases` must equal the set's own, worked out from the current
@@ -311,12 +346,7 @@ def _guard(run: Any, m: dict[str, Any], root: Path) -> Check | None:
                          " set: run the gate's eval from a checkout with both")  # fmt: skip
     opts: dict[str, Any] = m.get("options") or {}
     fraud_only = bool(opts.get("fraud_only"))
-    try:
-        want = _set_counts(root, fraud_only=fraud_only)
-    except InvalidInputError as exc:
-        return Check("synthetic", False, f"the gate's set can't be read: {exc}")
-    except (OSError, ValueError, KeyError, TypeError) as exc:  # a malformed set fails the check
-        return Check("synthetic", False, f"the gate's set can't be read ({type(exc).__name__})")
+    want = state.counts[fraud_only]
     keys = ["fraud_guard_cases"] if fraud_only else ["confirmed", "fraud_guard_cases"]
     off = [f"{k} {m.get(k)} (set {want[k]})" for k in keys if m.get(k) != want[k]]
     if off:
@@ -334,12 +364,10 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
         return Check("synthetic", False, f"no synthetic-set result for these models and the"
                      f" actor's instructions yet: run {again} (or a full run)")  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
-    try:
-        version = evalrun.set_version(Path(root)) if root else None
-    except InvalidInputError as exc:  # the resolver's refusal is a failed check, never raised
-        return Check("synthetic", False, f"the gate's set can't be read: {exc}")
-    except (OSError, ValueError):
-        version = None
+    state = set_state(Path(root), fresh=fresh) if root else None
+    if state is not None and state.error is not None:  # a failed check, never raised
+        return Check("synthetic", False, state.error)
+    version = state.version if state is not None else None
     when = str(run["created_at"])[:10]
     if root and genset.is_generated(Path(root)):  # never the gate's evidence (eval plan P1)
         return Check("synthetic", False, f"the gate's set ({root}) is a generated set, which"
@@ -351,10 +379,15 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
         rid = str(run["run_id"])[:8]
         return Check("synthetic", False, f"the latest run ({rid}, {when}) is on an older"
                      f" version of the set: run {again}")  # fmt: skip
+    if state is None:  # unreachable: a version came from it
+        return Check("synthetic", False, "the gate's set can't be read")
+    if state.problems:  # every card must run as read (EVAL-PRIVATE.md, "Fail closed")
+        return Check("synthetic", False, f"the gate's set has cards that can't run as read:"
+                     f" {state.problem_text}. Run `ecf eval build`")  # fmt: skip
     m: dict[str, Any] = run["metrics"]
-    if (guard := _guard(run, m, Path(str(root)))) is not None:
+    if (guard := _guard(run, m, state)) is not None:
         return guard
-    clean = _clean(Path(str(root)), fresh=fresh)
+    clean = state.clean
     if clean is not None and not clean.ok:
         return Check("synthetic", False, f"the gate's set isn't committed and pushed:"
                      f" {clean.detail}")  # fmt: skip

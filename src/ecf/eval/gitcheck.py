@@ -13,12 +13,14 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 GIT = "/usr/bin/git"
-TIMEOUT_S = 5.0
+TIMEOUT_S = 5.0  # for the whole check: every git call in one pass shares it
 BACKOFF = 5  # calls skipped after a timeout
 IGNORED_NAMES = (".DS_Store",)
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
@@ -27,7 +29,9 @@ _FLAGS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooks
 
 _lock = threading.Lock()
 _run_git = subprocess.run  # a seam for tests (a fixed binary, no shell)
+_now = time.monotonic  # likewise
 _backoff = 0
+_deadline: ContextVar[float | None] = ContextVar("gitcheck_deadline", default=None)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ class Clean:
     detail: str
     private_commit: str | None = None
     error: bool = False  # git failed or timed out: not cached across passes
+    no_private: bool = False  # no eval/private/<set>: never "clean" (ok is False)
 
 
 class GitFailed(Exception):
@@ -49,6 +54,11 @@ def argv(top: Path, *args: str) -> list[str]:
 
 
 def _git(top: Path, *args: str, timeout: float = TIMEOUT_S) -> subprocess.CompletedProcess[str]:
+    end = _deadline.get()
+    if end is not None:  # inside a check: what is left of its one timeout
+        timeout = end - _now()
+        if timeout <= 0:
+            raise GitFailed(f"git timed out ({TIMEOUT_S:g} s for the check)", timed_out=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | _ENV
     try:
         return _run_git(argv(top, *args), capture_output=True, text=True, env=env,
@@ -125,7 +135,7 @@ def _check(top: Path, set_name: str) -> Clean:  # noqa: PLR0911 - one return per
         )
     priv = top / "eval" / "private"
     if not (priv / set_name).is_dir():
-        return Clean(True, "public set only")
+        return Clean(False, f"no eval/private/{set_name} (public set only)", no_private=True)
     if _reftable(priv):
         return Clean(False, "eval/private uses reftable, which this check can't read; use files")
     private = dirty(priv, set_name)
@@ -153,6 +163,7 @@ def clean_and_pushed(top: Path, set_name: str) -> Clean:
         if _backoff > 0:
             _backoff -= 1
             return Clean(False, "git timed out recently; the check is retried shortly", error=True)
+    token = _deadline.set(_now() + TIMEOUT_S)
     try:
         return _check(top, set_name)
     except GitFailed as exc:
@@ -160,6 +171,8 @@ def clean_and_pushed(top: Path, set_name: str) -> Clean:
             with _lock:
                 _backoff = BACKOFF
         return Clean(False, f"git: {exc}", error=True)
+    finally:
+        _deadline.reset(token)
 
 
 def reset_backoff() -> None:

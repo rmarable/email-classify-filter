@@ -21,6 +21,11 @@ runner = CliRunner()
 
 @pytest.fixture
 def pub(tmp_path: Path) -> Path:
+    return make_halves(tmp_path)
+
+
+def make_halves(tmp_path: Path) -> Path:
+    """Two starter cards public, a marked card private, unbuilt; returns the public half."""
     p = tmp_path / "tests" / "eval" / "synthetic"
     priv = tmp_path / "eval" / "private" / "synthetic"
     for half, ids in ((p, ("starter-bec", "starter-control")), (priv, ())):
@@ -121,3 +126,74 @@ def test_import_fixed_with_one_bad_part_writes_neither(pub: Path, tmp_path: Path
     priv = mg.paths(pub).private
     assert priv is not None
     assert fixed_labels.read(pub) == [] and fixed_labels.read(priv) == []
+
+
+def test_build_all_itself_refuses_an_unmarked_private_card(pub: Path) -> None:
+    """The refusal is in build_all, so `label --review`'s rebuild and any other caller get it."""
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+    from ecf.eval.builder import build_all  # noqa: PLC0415
+
+    priv = mg.paths(pub).private
+    assert priv is not None
+    (priv / "cases" / "plain.md").write_bytes(
+        (SYN / "cases" / "starter-control.md")
+        .read_bytes()
+        .replace(b"id: starter-control", b"id: plain")
+    )
+    with pytest.raises(InvalidInputError, match="plain: private card without an injection"):
+        build_all(priv)
+
+
+@pytest.mark.parametrize("exc", [KeyError("id"), FileNotFoundError("labels.jsonl")])
+def test_a_failed_refresh_never_masks_the_writers_result(
+    pub: Path, monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    _build(pub)
+
+    def boom(*_a: object, **_k: object) -> str:
+        raise exc
+
+    monkeypatch.setattr(mg, "refresh_merged", boom)
+    assert (mg.refresh_after_write(pub) or "").startswith("note: the merged set wasn't refreshed")
+    r = runner.invoke(app, ["eval", "label", "no-such-card", "--root", str(pub)])
+    assert r.exit_code != 0 and "no-such-card" in str(r.exception)  # the writer's own refusal
+
+
+def test_review_refreshes_after_each_changed_card(
+    pub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`label --review`'s rebuild refreshes the merged view after each changed card (B25)."""
+    from ecf import cli_card_review  # noqa: PLC0415
+
+    _build(pub)
+    priv = mg.paths(pub).private
+    assert priv is not None
+    seen: list[Path] = []
+    real = mg.refresh_after_write
+
+    def spy(root: Path) -> str | None:
+        seen.append(root)
+        return real(root)
+
+    monkeypatch.setattr(mg, "refresh_after_write", spy)
+    for half in (pub, priv):
+        cli_card_review.rebuild(half)
+    assert seen == [pub, pub]  # each half's change refreshes the one logical set
+    assert mg.resolve(pub) == mg.paths(pub).merged
+
+
+def test_review_goes_through_both_halves(pub: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`label --review`, a whole-set mode, reviews each half in turn and writes each change to
+    the card's own half."""
+    from ecf import cli  # noqa: PLC0415
+
+    _build(pub)
+    seen: list[Path] = []
+
+    def review(half: Path, *_a: object, **_k: object) -> None:
+        seen.append(half)
+
+    monkeypatch.setattr(cli, "_review_cards", review)
+    r = runner.invoke(app, ["eval", "label", "--review", "all", "--root", str(pub)])
+    assert r.exit_code == 0, r.output
+    assert seen == mg.halves(pub) and len(seen) == 2

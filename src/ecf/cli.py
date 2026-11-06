@@ -959,7 +959,7 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
         private = merged.is_private_root(half)
         if len(halves) > 1:
             typer.echo(f"[{'private' if private else 'public'} set]")
-        if private and (unmarked := marker_refusals(half, private=True)):
+        if private and (unmarked := marker_refusals(half, private=True)):  # build_all refuses too
             for line in unmarked:
                 typer.echo(f"FAIL  {line}", err=True)
             typer.echo("a private card must carry an injection marker (X1); nothing built",

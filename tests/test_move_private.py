@@ -140,3 +140,28 @@ def test_the_public_check_finds_every_trace(tmp_path: Path) -> None:
     assert all("drafts" not in x or "d-inj-" in x for x in found)  # the prefix
     mv.apply(tmp_path, "synthetic", [ids[0]])
     assert not [x for x in mv.public_check(tmp_path, hashed) if "synthetic" in x]
+
+
+def test_a_dry_run_lists_the_move_and_writes_nothing(tmp_path: Path) -> None:
+    pub = _copy(tmp_path, "synthetic")
+    ids = _pick(pub, "fixed")
+    before = {p: p.read_bytes() for p in pub.rglob("*") if p.is_file()}
+    m = mv.plan_move(tmp_path, "synthetic", ids)
+    assert m.cards == len(ids) and m.rows["labels.jsonl"] == len(ids)
+    assert {f"cases/{i}.md" for i in ids} <= set(m.files)
+    assert {p: p.read_bytes() for p in pub.rglob("*") if p.is_file()} == before
+    assert not (tmp_path / "eval").exists()
+
+
+def test_a_move_is_refused_before_any_write_when_a_private_row_exists(tmp_path: Path) -> None:
+    pub = _copy(tmp_path, "synthetic")
+    ids = _pick(pub, "first")
+    priv = tmp_path / "eval" / "private" / "synthetic"
+    priv.mkdir(parents=True)
+    row = next(x for i, x in mv._rows(pub / "labels.jsonl") if i == ids[0])  # pyright: ignore[reportPrivateUsage]
+    (priv / "labels.jsonl").write_text(row + "\n")
+    before = (pub / "labels.jsonl").read_bytes()
+    with pytest.raises(InvalidInputError, match=r"already in the private set: labels\.jsonl"):
+        mv.apply(tmp_path, "synthetic", ids)
+    assert (pub / "labels.jsonl").read_bytes() == before
+    assert all((pub / "cases" / f"{i}.md").is_file() for i in ids)

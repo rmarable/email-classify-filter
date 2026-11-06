@@ -62,15 +62,17 @@ def is_confirmed(row: Mapping[str, Any], sha256: str | None) -> bool:
 
 
 def current(root: Path, cases: list[dict[str, Any]] | None = None,
+            fixed: list[dict[str, Any]] | None = None,
             ) -> tuple[dict[str, dict[str, bool]], list[str]]:  # fmt: skip
     """Each case's confirmed fixed-item labels, and the ids whose row is stale (the card's
-    message changed since, or the row names no case in `labels.jsonl`). `cases` is
-    `labels.jsonl`'s rows when the caller has read them already (read here otherwise)."""
+    message changed since, or the row names no case in `labels.jsonl`). `cases` and `fixed` are
+    `labels.jsonl`'s and this file's rows when the caller has read them already (read here
+    otherwise)."""
     rows = label_file.read(root) if cases is None else cases
     shas = {r["id"]: r.get("sha256") for r in rows}
     good: dict[str, dict[str, bool]] = {}
     stale: list[str] = []
-    for r in read(root):
+    for r in read(root) if fixed is None else fixed:
         if is_confirmed(r, shas.get(r["id"])):
             good[r["id"]] = dict(r["labels"])
         else:

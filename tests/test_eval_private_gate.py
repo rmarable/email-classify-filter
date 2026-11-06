@@ -168,8 +168,13 @@ def test_the_fingerprint_follows_both_halves_and_merge_json(
     lab = priv / "labels.jsonl"
     lab.write_text(lab.read_text())  # rewritten: a new mtime
     assert gate.inputs(conn, "ap", DIGEST) != before
+    # same bytes: nothing copied, but merge.json records the new stat once, so the file is no
+    # longer hashed on every freshness check
+    assert mg.refresh_merged(split) == "fresh"
+    restat: list[str] = []
+    assert mg.is_fresh(mg.paths(split), restat) and restat == []
     before = gate.inputs(conn, "ap", DIGEST)
-    assert mg.refresh_merged(split) == "fresh"  # same bytes: nothing rewritten
+    assert mg.refresh_merged(split) == "fresh"
     assert gate.inputs(conn, "ap", DIGEST) == before
     card = next((priv / "cases").glob("*.md"))
     card.write_text(card.read_text() + "\n")

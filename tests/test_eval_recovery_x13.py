@@ -11,6 +11,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -31,6 +32,10 @@ def _reset() -> None:
 
 @pytest.fixture
 def pub(tmp_path: Path) -> Path:
+    return make_split_drafts(tmp_path)
+
+
+def make_split_drafts(tmp_path: Path) -> Path:
     """The test draft set split: d-inject in the private half, merged and fresh."""
     p = make_droot(tmp_path / "tests" / "eval")
     priv = tmp_path / "eval" / "private" / "drafts"
@@ -143,3 +148,287 @@ def test_two_installs_on_one_stale_set_both_end_with_it_fresh(pub: Path) -> None
 def test_a_set_without_a_private_half_needs_no_lock(tmp_path: Path) -> None:
     root = make_droot(tmp_path / "tests" / "eval")
     assert claude_eval._set_for_recovery(root) == (None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+# Several installs on one stale set (C39, C40): the plan's offsets and durations, unscaled
+# (the 5 s wait), with real locks and threads. Every install must end with the set fresh
+# and recovered, and exactly one refreshes. At a 3 s refresh with three installs a set
+# may close (round 27: 3 of 6); that rate is recorded, never required to be 0.
+
+SCALE = 1.0  # the plan's real timings: a 20 ms poll and machine load don't scale down
+
+
+def _installs(
+    pub: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    n: int,
+    offsets: list[float],
+    resolve_s: float,
+    refresh_s: float,
+) -> tuple[list[tuple[bool, str | None]], int]:
+    card = (mg.paths(pub).private or pub) / "cases" / "d-inject.md"
+    card.write_text(card.read_text() + "\n")  # stale
+    monkeypatch.setattr(claude_eval, "SET_WAIT_S", 5.0 * SCALE)
+    real_fresh, real_build = mg.is_fresh, mg._build  # pyright: ignore[reportPrivateUsage]
+    refreshed = [0]
+    guard = threading.Lock()
+
+    def slow_fresh(sp: mg.SetPaths, restat: list[str] | None = None) -> bool:
+        time.sleep(resolve_s * SCALE)
+        return real_fresh(sp, restat)
+
+    def slow_build(sp: mg.SetPaths) -> None:
+        with guard:
+            refreshed[0] += 1
+        time.sleep(refresh_s * SCALE)
+        real_build(sp)
+
+    monkeypatch.setattr(mg, "is_fresh", slow_fresh)
+    monkeypatch.setattr(mg, "_build", slow_build)
+    out: list[tuple[bool, str | None]] = []
+
+    def install(delay: float) -> None:
+        time.sleep(delay * SCALE)
+        held, why = claude_eval._set_for_recovery(pub)  # pyright: ignore[reportPrivateUsage]
+        with guard:
+            out.append((held is not None, why))
+        time.sleep(0.02)  # recovering under the shared lock
+        if held is not None:
+            held.release()
+
+    threads = [threading.Thread(target=install, args=(offsets[i],)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads)
+    return out, refreshed[0]
+
+
+@pytest.mark.parametrize("n", [2, 3])
+@pytest.mark.parametrize("offsets", [[0.0, 0.0, 0.0], [0.0, 0.5, 1.0], [1.0, 0.3, 0.0]])
+@pytest.mark.parametrize(("resolve_s", "refresh_s"), [(0.03, 1.0), (0.5, 2.0), (0.03, 2.0)])
+def test_installs_on_one_stale_set_all_recover_and_one_refreshes(
+    pub: Path, monkeypatch: pytest.MonkeyPatch, n: int, offsets: list[float], resolve_s: float,
+    refresh_s: float,
+) -> None:  # fmt: skip
+    out, refreshed = _installs(pub, monkeypatch, n, offsets, resolve_s, refresh_s)
+    assert out == [(True, None)] * n
+    assert refreshed == 1
+    assert mg.is_fresh(mg.paths(pub))
+
+
+def test_a_3_s_refresh_with_three_installs_may_close_and_the_rate_is_recorded(
+    pub: Path, monkeypatch: pytest.MonkeyPatch, record_property: Any
+) -> None:
+    out, refreshed = _installs(pub, monkeypatch, 3, [0.0, 0.5, 1.0], 0.03, 3.0)
+    closed = sum(1 for held, _ in out if not held)
+    record_property("closed_of_3", closed)
+    assert refreshed == 1
+    assert all(held or why == "its lock stayed busy or it is still stale" for held, why in out)
+
+
+# Several sets at one start (C42, C44, C45, C53): each set's outcome is its own.
+
+
+def _second_set(tmp_path: Path) -> Path:
+    other = tmp_path / "b"
+    p = make_droot(other / "tests" / "eval")
+    priv = other / "eval" / "private" / "drafts"
+    for d in ("cases", "eml"):
+        (priv / d).mkdir(parents=True)
+        for f in (p / d).glob("d-inject.*"):
+            shutil.move(f, priv / d / f.name)
+    rows = (p / "labels.jsonl").read_text().splitlines()
+    (p / "labels.jsonl").write_text("".join(r + "\n" for r in rows if '"d-inject"' not in r))
+    (priv / "labels.jsonl").write_text("".join(r + "\n" for r in rows if '"d-inject"' in r))
+    mg.refresh_merged(p)
+    return p
+
+
+RB = "feedface" * 4  # set b's record: a fixed ID no real run takes
+
+
+def _two_runs(db_path: Path, clock: FakeClock, a: Path, b: Path) -> tuple[str, str]:
+    """An open run on set a, and a copy of its record on set b (only one draft run can be open
+    at a time, so b's is written into the registry, with its journal)."""
+    start(db_path, clock, a)
+    ra = (claude_eval.current() or pytest.fail()).run_id
+    claude_eval.reset()
+    reg = draftruns.load(db_path.parent)
+    rec = reg.get(ra)
+    assert rec is not None
+    rb = RB
+    assert rb != ra
+    reg.put(rec.model_copy(update={"run_id": rb, "root": str(b), "slot": rec.slot + "-b",
+                                   "options": rec.options | {"root": str(b)}}))  # fmt: skip
+    draftruns.save(db_path.parent, reg)
+    shutil.copy(
+        draftruns.journal_path(db_path.parent, ra), draftruns.journal_path(db_path.parent, rb)
+    )
+    return ra, rb
+
+
+def _spy_recovered(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The run IDs that reach today's recovery (step 3), each returning a stub line."""
+    seen: list[str] = []
+    real = claude_eval._recover_one  # pyright: ignore[reportPrivateUsage]
+
+    def spy(connect: Any, clock_: Any, data_dir: Path, rec: Any, spawn: Any) -> str:
+        seen.append(rec.run_id)
+        if rec.run_id == RB:
+            return f"{rec.run_id[:8]} recovered"
+        return real(connect, clock_, data_dir, rec, spawn)
+
+    monkeypatch.setattr(claude_eval, "_recover_one", spy)
+    return seen
+
+
+def test_a_held_set_closes_after_its_wait_and_the_other_set_recovers(
+    db_path: Path, clock: FakeClock, pub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert claude_eval.SET_WAIT_S == 5.0  # the plan's limit; shortened below for the test
+    monkeypatch.setattr(claude_eval, "SET_WAIT_S", 0.3)
+    other = _second_set(tmp_path)
+    a, b = _two_runs(db_path, clock, pub, other)
+    seen = _spy_recovered(monkeypatch)
+    card = (mg.paths(pub).private or pub) / "cases" / "d-inject.md"
+    card.write_text(card.read_text() + "\n")
+    lock = mg.paths(pub).lock
+    assert lock is not None
+    fd = os.open(lock, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_SH)  # another install's run on set a
+    try:
+        _restart(db_path, clock)
+    finally:
+        os.close(fd)
+    ra = _rec(db_path, a)
+    assert ra.attempt_over and "couldn't be read at service start" in ra.end_detail
+    assert seen == [b]  # set b went on to today's recovery
+
+
+def test_a_record_whose_root_is_gone_closes_as_today(db_path: Path, clock: FakeClock,
+                                                     pub: Path) -> None:  # fmt: skip
+    start(db_path, clock, pub)
+    run_id = (claude_eval.current() or pytest.fail()).run_id
+    claude_eval.reset()
+    shutil.rmtree(pub.parents[2] / "eval")  # the private half and its merged view
+    shutil.rmtree(pub)
+    lines = _restart(db_path, clock)
+    rec = _rec(db_path, run_id)
+    assert not rec.open and rec.attempt_over
+    assert "couldn't be read back" in rec.end_detail or "couldn't be read" in rec.end_detail
+    assert lines
+
+
+@pytest.mark.parametrize("how", ["refresh raises", "rows don't parse"])
+def test_a_set_that_fails_leaves_the_other_recovered(
+    db_path: Path, clock: FakeClock, pub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    how: str,
+) -> None:  # fmt: skip
+    other = _second_set(tmp_path)
+    a, b = _two_runs(db_path, clock, pub, other)
+    seen = _spy_recovered(monkeypatch)
+    priv = mg.paths(pub).private or pub
+    if how == "refresh raises":
+        card = priv / "cases" / "d-inject.md"
+        card.write_text(card.read_text() + "\n")
+        real = mg.refresh_merged
+
+        def boom(root: Path, **kw: Any) -> str:
+            if Path(root) == pub:
+                raise OSError("disk")
+            return real(root, **kw)
+
+        monkeypatch.setattr(mg, "refresh_merged", boom)
+    else:
+        (priv / "labels.jsonl").write_text("{not json\n")
+    lines = _restart(db_path, clock)  # never raises: the service stays bound
+    ra = _rec(db_path, a)
+    assert not ra.open and ra.attempt_over
+    assert b in seen and len(lines) == 2
+
+
+def test_a_raise_in_step_3_closes_only_that_record(
+    db_path: Path, clock: FakeClock, pub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = _second_set(tmp_path)
+    a, b = _two_runs(db_path, clock, pub, other)
+    seen: list[str] = []
+
+    def flaky(connect: Any, clock_: Any, data_dir: Path, rec: Any, spawn: Any) -> str:
+        del connect, clock_, data_dir, spawn
+        seen.append(rec.run_id)
+        if rec.run_id == a:
+            raise RuntimeError("boom")
+        return "ok"
+
+    monkeypatch.setattr(claude_eval, "_recover_one", flaky)
+    lines = _restart(db_path, clock)
+    ra, rb = _rec(db_path, a), _rec(db_path, b)
+    assert ra.attempt_over and ra.end_detail == "recovery failed (RuntimeError)"
+    assert rb.open and not rb.attempt_over and b in seen and "ok" in lines  # only a closed
+
+
+def test_steps_1_2_raising_close_that_sets_records_with_the_fixed_detail(
+    db_path: Path, clock: FakeClock, pub: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = _second_set(tmp_path)
+    a, b = _two_runs(db_path, clock, pub, other)
+    seen = _spy_recovered(monkeypatch)
+    real = mg.paths
+
+    def broken(root: Path) -> mg.SetPaths:
+        if Path(root) == pub:
+            raise OSError("permission")
+        return real(root)
+
+    monkeypatch.setattr(mg, "paths", broken)
+    _restart(db_path, clock)
+    monkeypatch.setattr(mg, "paths", real)
+    ra = _rec(db_path, a)
+    assert ra.attempt_over and ra.end_detail.startswith(f"the eval set {pub} couldn't be read")
+    assert "(OSError)" in ra.end_detail
+    assert seen == [b]
+
+
+def test_a_record_already_ended_lost_keeps_end_lost(
+    db_path: Path, clock: FakeClock, pub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record ended lost but not resumed (a crash between the two) whose set can't be read
+    keeps `end` "lost" when X13 closes it."""
+    monkeypatch.setattr(claude_eval, "SET_WAIT_S", 0.2)
+    start(db_path, clock, pub)
+    run_id = (claude_eval.current() or pytest.fail()).run_id
+    claude_eval.reset()
+    claude_eval._update_record(db_path.parent, run_id, end="lost",  # pyright: ignore[reportPrivateUsage]
+                               ended_at=clock.now(), complete=False)  # fmt: skip
+    lock = mg.paths(pub).lock
+    assert lock is not None
+    card = (mg.paths(pub).private or pub) / "cases" / "d-inject.md"
+    card.write_text(card.read_text() + "\n")
+    fd = os.open(lock, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_SH)
+    try:
+        _restart(db_path, clock)
+    finally:
+        os.close(fd)
+    rec = _rec(db_path, run_id)
+    assert rec.end == "lost" and rec.attempt_over
+
+
+def test_an_open_run_past_48_hours_on_a_stale_set_still_has_its_result_saved(
+    db_path: Path, clock: FakeClock, pub: Path
+) -> None:
+    from datetime import timedelta  # noqa: PLC0415
+
+    start(db_path, clock, pub)
+    run_id = (claude_eval.current() or pytest.fail()).run_id
+    claude_eval.reset()
+    clock.advance(timedelta(hours=49).total_seconds())
+    card = (mg.paths(pub).private or pub) / "cases" / "d-inject.md"
+    card.write_text(card.read_text() + "\n")  # stale: refreshed at start
+    _restart(db_path, clock)
+    rec = _rec(db_path, run_id)
+    assert not rec.open and rec.ended_at is not None and rec.end in ("lost", "expired")
+    assert rec.resumed_by is None

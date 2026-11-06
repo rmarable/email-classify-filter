@@ -44,6 +44,7 @@ from ecf_server.evalrun import (
     Asked,
     Case,
     Options,
+    case_bytes,
     case_inputs,
     field_flips,
     held,
@@ -68,7 +69,7 @@ def case_email(case: Case, text: str) -> jev.Email:
     """What Claude's classifier gets from a synthetic card (`claude_eval._prepare`'s fields), for
     Jev (D1, OD-504): the sender, subject, `Date:` header, attachment metadata and `text`, the
     stored classifier excerpt (redacted unless the run is `--no-redact`)."""
-    msg = ruletest.read_case(case.path.read_bytes()).parsed
+    msg = ruletest.read_case(case_bytes(case)).parsed
     atts = tuple(jev.Attachment(a.name, a.content_type, a.size) for a in msg.attachments
                  if not a.inline or a.name)  # fmt: skip
     return jev.Email(msg.from_name or "", msg.from_addr or "", msg.subject or "",

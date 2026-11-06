@@ -1011,7 +1011,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                     " --corpus` and `ecf eval rescore --corpus` still read a"
                                     " corpus")  # fmt: skip
         root = Path(_str(body, "root")).expanduser()
-        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+        if not root.is_absolute() or not root.is_dir():  # its files: read_set, after resolving
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
@@ -1072,7 +1072,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
         """`ecf eval run --claude` (OD-288): registers the run; `/ecf-eval` drives it."""
         body = _body(request)
         root = Path(_str(body, "root")).expanduser()
-        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+        if not root.is_absolute() or not root.is_dir():  # its files: read_set, after resolving
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         batch = body.get("batch", 1)
         if isinstance(batch, bool) or not isinstance(batch, int):

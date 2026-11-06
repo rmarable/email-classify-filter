@@ -99,6 +99,13 @@ def is_private_root(root: Path) -> bool:
     return p.parent.name == "private" and p.parent.parent.name == "eval"
 
 
+def public_of(root: Path) -> Path:
+    """The logical (public) path of either half: `<top>/eval/private/<set>` gives
+    `<top>/tests/eval/<set>`; a public path is returned as it is."""
+    p = _logical(root)
+    return p.parents[2] / "tests" / "eval" / p.name if is_private_root(p) else p
+
+
 def card_ids(root: Path) -> list[str]:
     """The set's card IDs, from its file names (the builder makes each card's ID its stem)."""
     d = root / "cases"
@@ -131,8 +138,8 @@ def refresh_after_write(root: Path) -> str | None:
         return None
     try:
         refresh_merged(root)
-    except InvalidInputError as exc:
-        return f"note: the merged set wasn't refreshed: {exc}"
+    except Exception as exc:  # never masks the writer's own result or error (C89)
+        return f"note: the merged set wasn't refreshed: {exc or type(exc).__name__}"
     return None
 
 
@@ -287,34 +294,61 @@ def _read_merge(merged: Path) -> dict[str, Any] | None:
     return d if d.get("format") == FORMAT else None
 
 
-def _same(root: Path, recorded: dict[str, list[Any]]) -> bool:
-    """Whether `root`'s files are the ones `recorded`: same names, and each file's stat or, on a
-    stat mismatch, its sha256."""
-    now = {str(p.relative_to(root)): p for p in _walk(root)}
-    if set(now) != set(recorded):
-        return False
-    for rel, p in now.items():
-        rec = recorded[rel]
+def _stats(root: Path) -> dict[str, tuple[Path, int, int, int]]:
+    """`_walk`'s files with their stats, one `scandir` per folder (the freshness check's floor)."""
+    out: dict[str, tuple[Path, int, int, int]] = {}
+    for d in (*COPIED, LINKED):
         try:
-            if list(_stat(p)) != rec[:3] and _sha(p) != rec[3]:
+            entries = list(os.scandir(root / d))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for e in entries:
+            if not e.name.startswith(".") and e.is_file():
+                st = e.stat()
+                out[f"{d}/{e.name}"] = (Path(e.path), st.st_size, st.st_mtime_ns, st.st_ino)
+    for f in FILES:
+        try:
+            st = (root / f).stat()
+        except FileNotFoundError:
+            continue
+        out[f] = (root / f, st.st_size, st.st_mtime_ns, st.st_ino)
+    return out
+
+
+def _same(root: Path, recorded: dict[str, list[Any]], restat: list[str] | None = None) -> bool:
+    """Whether `root`'s files are the ones `recorded`: same names, and each file's stat or, on a
+    stat mismatch, its sha256. A file matched by its sha256 alone is added to `restat`, so a
+    refresh can record its new stat and stop hashing it."""
+    now = _stats(root)
+    if now.keys() != recorded.keys():
+        return False
+    for rel, (p, size, mtime, ino) in now.items():
+        rec = recorded[rel]
+        if (size, mtime, ino) == (rec[0], rec[1], rec[2]):
+            continue
+        try:
+            if _sha(p) != rec[3]:
                 return False
         except OSError:
             return False
+        if restat is not None:
+            restat.append(rel)
     return True
 
 
-def is_fresh(sp: SetPaths) -> bool:
+def is_fresh(sp: SetPaths, restat: list[str] | None = None) -> bool:
     """Whether the merged view equals what its two sources would give now. The two label files
     are recomputed in memory and compared byte for byte, so a consistent hand edit of the merged
-    files and `merge.json` is still refused."""
+    files and `merge.json` is still refused. `restat` collects files matched by hash alone."""
     if sp.private is None or sp.merged is None:
         return False
     doc = _read_merge(sp.merged)
     if doc is None:
         return False
     man = doc.get("manifest", {})
-    if not (_same(sp.public, man.get("public", {})) and _same(sp.private, man.get("private", {}))
-            and _same(sp.merged, man.get("merged", {}))):  # fmt: skip
+    if not (_same(sp.public, man.get("public", {}), restat)
+            and _same(sp.private, man.get("private", {}), restat)
+            and _same(sp.merged, man.get("merged", {}), restat)):  # fmt: skip
         return False
     try:
         want = merge_sources(sp.public, sp.private, LABEL_FILES)
@@ -454,6 +488,20 @@ def _build(sp: SetPaths) -> None:
     os.replace(tmp, m / MERGE_FILE)
 
 
+def _restat(sp: SetPaths) -> None:
+    """Rewrite merge.json with the current stats of a fresh view (contents unchanged)."""
+    doc = None if sp.private is None or sp.merged is None else _read_merge(sp.merged)
+    if doc is None or sp.private is None or sp.merged is None:
+        return
+    man = doc["manifest"]
+    doc["manifest"] = {"public": _manifest(sp.public, man.get("public", {})),
+                       "private": _manifest(sp.private, man.get("private", {})),
+                       "merged": _manifest(sp.merged, man.get("merged", {}))}  # fmt: skip
+    tmp = _tmp(sp.merged / MERGE_FILE)
+    tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, sp.merged / MERGE_FILE)
+
+
 def _take(fd: int, op: int, wait: float) -> bool:
     """Take a flock, polling every 20 ms until `wait` seconds have passed; never blocking."""
     deadline = time.monotonic() + wait
@@ -487,7 +535,10 @@ def refresh_merged(root: Path, *, wait: float = 0.0,
         if not got:
             raise RefreshBusy(BUSY)
         try:
-            if is_fresh(sp):
+            restat: list[str] = []
+            if is_fresh(sp, restat):
+                if restat:  # touched, unchanged: record the new stats (manifest only)
+                    _restat(sp)
                 return "fresh"
             _build(sp)
             return "refreshed"

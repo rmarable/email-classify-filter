@@ -19,7 +19,7 @@ from typing import cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
-from ecf.eval import markers
+from ecf.eval import markers, merged
 from ecf.eval.cards import Card, load_cards
 from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
 from ecf.eval.setio import atomic_write, writable_root
@@ -188,6 +188,10 @@ def _check_ids(root: Path, cards: list[Card]) -> None:
 def build_all(root: Path) -> BuildReport:
     """Build every card under `root/cases`. Stops before writing anything if hygiene fails."""
     writable_root(root)
+    if merged.is_private_root(root) and (unmarked := marker_refusals(root, private=True)):
+        # every build of a private half, whoever calls it (EVAL-PRIVATE.md, "Builder refusal")
+        raise InvalidInputError("a private card must carry an injection marker (X1): "
+                                + "; ".join(unmarked[:10]))  # fmt: skip
     cards = load_cards(root / "cases")
     _check_ids(root, cards)
     findings = [f for c in cards for f in scan_card(c, f"{c.id}.md")]
