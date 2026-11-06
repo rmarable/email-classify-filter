@@ -26,7 +26,7 @@ its rules bind as if they were here.
 | Before you… | Read |
 |---|---|
 | edit `tests/eval/synthetic/**` or `tests/eval/drafts/**` | `.claude/rules/eval-synthetic.md` |
-| edit `docs/roadmap/**` | `.claude/rules/roadmap.md` |
+| edit `docs/roadmap/**` (incl. a plan checked by models: no rule without a model event and fault; the plan-to-model cross-reference check) | `.claude/rules/roadmap.md` |
 | edit `README.md`, `docs/operator-guide.md`, `docs/admin-guide.md`, `docs/gmail-setup.md`, or write a new user-facing doc | `.claude/rules/user-docs.md` |
 | plan a change to the classifier, rules, policy, facts or eval; run a review; choose or evaluate a model | `docs/agents/reviews-and-evals.md` |
 | ask to commit (which tests to run), or merge to `main` | `docs/agents/testing-and-merge.md` |
