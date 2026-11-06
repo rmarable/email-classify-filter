@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: coding agents share the computer: they announce heavy runs to each other, the task that blocks a gate, a merge or the operator goes first, and the others shrink or pause when asked (OD-703).
 - Decided: the planned test of several installs starting at once uses realistic test-set refresh times (OD-697).
 - Decided: at startup ecf waits up to 5 seconds per eval test set for its lock and refreshes it only if still needed, and the daily check for prompt-injection test emails reads other branches and tags only for test emails not already on the main branch (OD-696).
 - Decided: the plan's extra safeguards around the GitHub check for prompt-injection test emails (operator approval lines, a separate merge working copy and its lock) are withdrawn in favour of the check itself plus normal review, and at startup ecf now simply waits a few seconds for a test set's lock instead of retrying (OD-695; replaces OD-688 and OD-689 where they conflict).
