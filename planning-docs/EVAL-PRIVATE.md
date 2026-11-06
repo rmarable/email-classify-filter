@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 22, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 23, 2026-11-05. Not built.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -52,7 +52,9 @@ Draft 20 (6014c90) went through a nineteenth Opus check, the fifth with no highs
 low is folded in with OD-685 (operator, 2026-11-05). Draft 21 (fd0109f) went through a twentieth
 Opus check (one high, in draft 21's own approval rule: a missing approval line could never be fixed,
 so the daily run would stay red for good); every fix is folded in with OD-686, and the merge gate is
-back on a committed local merge (operator, 2026-11-05).
+back on a committed local merge (operator, 2026-11-05). Draft 22 (5b953ee) went through a twenty-first
+Opus check with no highs; every medium and low is folded in with OD-687 (operator, 2026-11-05),
+including a gate branch in its own worktree and a list of old blobs that no longer build.
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -222,8 +224,9 @@ on and keeps future releases clean. Rewriting history is not proposed.
       runs none. The scan files are exactly `tests/eval/known-public-injection-blobs.txt`,
       `scripts/check_card_injection.py`, `.github/workflows/card-scan.yml`, `.githooks/pre-push`,
       `src/ecf/eval/markers.py` (a small module of its own holding `INJECTION_MARKERS` and
-      `is_injection_card`, so routine `ecf.eval` work doesn't touch it) and `tests/test_card_scan.py`
-      (the pin tests); none exists on main today, so the rule below applies from the move merge on.
+      `is_injection_card`, so routine `ecf.eval` work doesn't touch it), `tests/test_card_scan.py`
+      (the pin tests) and `tests/eval/unbuildable-history-blobs.txt` (below); none exists on main
+      today, so the rule below applies from the move merge on.
       `triggers.py` is not one: 10 of 254 merges since 2026-10-05 touched it or its tests for other
       triggers (round 20). Weakening trigger 10 itself, from any file, is caught instead by the
       both-ways recompute of the list (below), which the merge gate and the daily run make on their own
@@ -233,53 +236,89 @@ on and keeps future releases clean. Rewriting history is not proposed.
       (`tests/test_sdist_contents.py`, `release.yml`; 13 changes since 2026-10-05, too many to approve
       one by one). A test pins the script's imports, so a helper module it starts importing must join
       the scan files. The checks:
-      - **The approval rule**, one function in the script (`--check-approvals <main ref>`), run the
-        same way by the pre-push hook before any push to main, by every push run on main and by the
-        daily run. It walks all of main's first-parent commits (`git rev-list --first-parent` piped to
-        one `git diff-tree --stdin -r --name-only --diff-merges=first-parent`; 0.15 s for all 1,145
-        commits, round 21; without the flag a merge lists nothing). Every commit that changes a scan
-        file must be approved: by the paragraph `Card scan change approved by the operator (<date>)`
-        in its own message, or by a later first-parent commit whose message carries `Card scan change
-        approved by the operator (<date>) for <full sha>`, so a forgotten line is fixed by an approval
-        commit, never by rewriting main. The line is a paragraph of its own above the trailer (inside
-        the trailer's paragraph git parses no trailer at all, round 21) and has no colon, so
-        AGENTS.md's one trailer line is unchanged. A first-parent non-merge commit with a
-        `Co-Authored-By: Codex` trailer is refused (Codex branches are merged, never fast-forwarded).
+      - **The approval rule**, one function in the script (`--check-approvals <sha>`), run the same
+        way by the pre-push hook before any push to main (with the local sha being pushed; the hook
+        refuses deleting main, and `--no-verify` is the no-hook case), by every push run on main and
+        by the daily run. It walks all of main's first-parent commits (`git rev-list --first-parent`
+        piped to one `git diff-tree --stdin -r --name-only --diff-merges=first-parent`; 0.06-0.08 s
+        for main's 382 first-parent commits, round 22; without the flag a merge lists nothing). Every
+        commit that changes a scan file must be approved, by one of:
+        - its own message holding the paragraph `Card scan change approved by the operator
+          (<YYYY-MM-DD>)`, exactly (a line ending `for <sha>` approves only the commit it names);
+        - a later first-parent commit whose message holds `Card scan change approved by the operator
+          (<YYYY-MM-DD>) for <sha>`, with the full 40-character sha of an earlier first-parent commit.
+          A forgotten approval is fixed this way, by an empty commit (`git commit --allow-empty`, no
+          CHANGELOG line), never by rewriting main.
+
+        Only first-parent commits' messages count. A paragraph counts only in a message with no line
+        matching `^co-authored-by:\s*codex` (case-insensitive, any line: git's trailer parser finds no
+        trailer under a Handoff block, round 22), so a scan-file change Codex wrote is approved only
+        by a later Claude commit `for <sha>`; nothing is refused outright, so no commit can keep a
+        check red for good. The paragraph sits above the trailer, on its own (inside the trailer's
+        paragraph git parses no trailer at all, round 21), and has no colon, so AGENTS.md's one
+        trailer line is unchanged. The operator approves the commit actually pushed: a cherry-picked
+        or amended commit's copied paragraph is removed unless the operator approved that diff.
         None of the scan files exists in any ref's history today, so main's past passes. The hook
         checks before anything is public; a push without the hook, or with `[skip ci]`, is caught by
         the push run or by the next daily run. The rule reads no `before`; on main a missing `before`
         still fails the push run's blob scan closed (above).
       - **The merge gate.** Its lines in `testing-and-merge.md` land in the move commit: merges to main
-        are `--no-ff`; direct commits and merges that change a scan file carry the approval paragraph;
-        the gate's single scan pass (below). The merge is committed locally with `git merge --no-ff`
-        and the gate runs on that commit before the push: `git diff --exit-code HEAD^1 HEAD -- <scan
-        files>`; on a difference the operator is shown it and asked, and the approval paragraph is
-        added with `git commit --amend` (the merge isn't pushed yet). One pass of the script, `--tree
-        HEAD --no-skip --recompute`, builds every card and `.eml` blob in `HEAD`'s history once with
-        the merge's code: the tip's blobs are checked with nothing skipped and the list is recomputed
-        both ways from the same results. Measured separately in round 21 on this Mac: the recompute
-        41-45 s for 1,514 blobs (about 27 ms a blob) and the tip scan 46 s, so one pass is about 45 s
-        today, growing with history (about 80 s in a year at November's pace, more at October's); if it
-        passes two minutes, a per-blob cache keyed by blob ID and a digest of the files that decide
-        what trigger 10 flags is added.
+        are `--no-ff` and made on a gate branch; direct commits and merges that change a scan file
+        carry the approval paragraph; the gate's single scan pass (below). The merge is never made on
+        local main, since the main checkout is shared and another session could push an ungated merge
+        from it (as happened with aa6c5f2 on 2026-11-05). After a fetch, `git worktree add
+        ../ecf-gate-<topic> -b gate/<topic> origin/main`, then `git merge --no-ff <branch>` there, and
+        the gate runs on that commit: `git diff --exit-code HEAD^1 HEAD -- <scan files>`; on a
+        difference the operator is shown it and asked, and the approval paragraph is added with `git
+        commit --amend --only` (the message is rewritten whole, with the gate lines and both commits
+        named; `--only` keeps anything staged out of the commit). The gate records the tree it
+        checked in `.git/ecf-gated-tree` (local, never pushed); before the push `HEAD^{tree}` must
+        equal it, or the gate runs again. Then `git push origin HEAD:main`, and the main checkout
+        fast-forwards to it afterwards. If the operator declines, the gate fails or the push is
+        rejected (another session pushed main first), the gate branch and worktree are removed (the
+        operator's OK), main is fetched, and the merge and gate are redone; never rebased or re-merged
+        onto. One pass of the script, `--tree HEAD --no-skip --recompute`, builds every card and
+        `.eml` blob in `HEAD`'s history once with the merge's code: the tip's blobs are checked with
+        nothing skipped (they are all in the history set) and the list is recomputed both ways from
+        the same results. It takes 17-46 s on this Mac depending on load (about 11-27 ms a blob,
+        rounds 21-22; 1,514 blobs), growing with history (about 32-74 s in a year at November's pace,
+        more at October's). If the gate pass or the hook passes two minutes, a per-blob cache keyed by
+        blob ID and a digest of the files that decide what trigger 10 flags, shared by both, is added.
+        Step 3 runs `--recompute` once on a GitHub runner too, since the list was computed on macOS.
       - **The daily run** uses main's workflow on main's checkout and code, reading every ref's blobs
-        as data; it runs the approval rule over all of main and the same recompute on main's code, so
-        a branch that weakens its own scan, or a direct or `[skip ci]` commit on main that weakens
-        trigger 10, is found within a day (stated limit).
+        as data; it runs the approval rule over all of main and the same recompute on main's code,
+        from the same build as its scan (every ref's blobs are main's 1,514; the recompute adds only
+        the 45 listed blobs the scan otherwise skips, under 1 s), so a branch that weakens its own
+        scan, or a direct or `[skip ci]` commit on main that weakens trigger 10, is found within a
+        day (stated limit).
+      - **Old blobs that no longer build.** Every pass that builds history (the gate, the daily run,
+        the hook on a range, Steps 5 and 7) would otherwise refuse a stricter card schema forever (a
+        `cards.py` change that stops one of the 1,514 history blobs building, as SPEC §1.4 allows in a
+        major version). `tests/eval/unbuildable-history-blobs.txt` lists such blobs, each with the
+        result the last code that built it gave (flagged or not), and is a scan file, so each entry is
+        approved; a listed blob is taken as its recorded result. A blob on main's tip must always
+        build, and a blob not listed that fails to build fails closed. Empty today (all 1,514 build,
+        round 21).
       A push that edits the workflow runs its own edited copy, and the daily run then uses it, so these
       checks guard against mistakes, not a hostile pusher (only Claude Code pushes main, after the
       gate; stated limit).
       The script checks the list it reads against its constants (sha256 and count, 45) and refuses on
       any difference; every pin test lives in `tests/test_card_scan.py`, and a depth-1 clone can run
       them. Tests: a first-parent commit on main changing a scan file without the line fails the hook,
-      the push run and the daily run, and passes once a later commit approves it `for <sha>`; an
-      approved merge followed by an unrelated commit in one push passes; a `[skip ci]` commit changing
-      a scan file is caught by the daily run; the move merge passes with its line; the line inside
-      the trailer's paragraph is refused; a fast-forwarded commit with a Codex trailer is refused; a
-      push to main with `before` missing fails; a `keywords.yaml` change that unflags a listed blob
-      stops the gate's and the daily run's recompute; the script's imports match the pinned set; a
-      branch whose script skips everything is found by the daily run; the daily run scans a branch
-      cut before Step 3 without error.
+      the push run and the daily run, and passes once a later commit approves it `for <sha>`; a `for`
+      line with a short sha, or naming a commit that isn't first-parent, doesn't count; an own-message
+      line ending `for <other sha>` doesn't approve its own commit; an approved merge followed by an
+      unrelated commit in one push passes; a `[skip ci]` commit changing a scan file is caught by the
+      daily run; the move merge passes with its line; the line inside the trailer's paragraph is
+      refused; an approval paragraph in a commit with a Codex line, also under a Handoff block,
+      doesn't count, and a later Claude `for <sha>` clears it; the hook refuses deleting main and
+      checks the pushed sha; an amend that takes in a staged file changes the tree and the push is
+      refused until the gate runs again; the hook skips the tip build on the gated tree; a listed
+      unbuildable history blob passes with its recorded result and an unlisted one fails; a push to
+      main with `before` missing fails; a `keywords.yaml` change that unflags a listed blob stops the
+      gate's and the daily run's recompute; the script's imports match the pinned set; a branch whose
+      script skips everything is found by the daily run; the daily run scans a branch cut before Step
+      3 without error.
     - Trigger 10 is re-run on the old blobs when the list is recomputed: at Step 5 (the move commit),
       Step 7 (the merge), every later merge gate and every daily run. Each recompute must equal the
       committed list both ways: every
@@ -306,8 +345,9 @@ on and keeps future releases clean. Rewriting history is not proposed.
   - **Skipping.** Only main's tip tree is scanned with nothing skipped, so a listed blob restored
     onto main is refused by the push run and the daily run. Every other ref, tags included, is
     scanned with the list: all 28 `v*` tags hold listed cards and can't change, and a new release is
-    checked in full by the sdist test. The merge gate's single pass checks `HEAD`, the local
-    merge commit, with nothing skipped (whole tree), so a listed blob can't come back into main's tip
+    checked in full by the sdist test. The merge gate's single pass checks `HEAD`, the gate
+    branch's merge commit, with nothing skipped (whole tree), so a listed blob can't come back into
+    main's tip
     through a merge. Draft 14's rule (skip anything in `origin/main`'s history) stays withdrawn.
   - A test reads the workflow file and checks its triggers. Stated limits: a push that skips its own
     run, or a branch that weakens its own scan (X10), is found by the next daily run, up to a day after
@@ -315,14 +355,14 @@ on and keeps future releases clean. Rewriting history is not proposed.
     run and disables schedules after 60 days without repository activity (unverified, as GitHub
     documents it); the scan covers cards and `.eml` files under `tests/eval/` only, not label, review
     or `checks.yaml` rows, fixtures or docs (no card text is ever quoted there, `eval-synthetic.md`);
-    the hook builds nearly the whole tip tree on each push, about 46 s on this Mac (1,202 tip blobs,
-    round 21; the round 15 estimate was 10-20 s); the daily run builds the 1,514 blobs of main's history
-    once, about 45 s here, unmeasured on a runner.
+    the hook builds nearly the whole tip tree on each push, 16-46 s on this Mac depending on load
+    (1,202 tip blobs, rounds 21-22; the round 15 estimate was 10-20 s), and skips it when the pushed
+    tip's tree is the gated tree (the gate built it moments before with the same code); the daily run
+    builds the 1,514 blobs of main's history once, 17-46 s here, unmeasured on a runner.
   - **Card-only merges get the scan too.** A merge that changes only `.md` files counts as docs only
     and skips the macOS gate (`docs/agents/testing-and-merge.md:29-30`), and `ci.yml:11` skips
-    `**/*.md`; so any merge that touches `tests/eval/` runs the gate's single pass on the local merge
-    commit
-    first. The line
+    `**/*.md`; so any merge that touches `tests/eval/` runs the gate's single pass on the gate branch's
+    merge commit first. The line
     saying so in `testing-and-merge.md` lands in the move commit, with the three guards (Step 3).
 - **X6, Step 5 runs on fresh dev services, not a copy of the install.** With no R (the expected
   case, Step 5), nothing in P needs the install's live state: the `null` runs run on fresh `ecf-server
@@ -355,9 +395,10 @@ on and keeps future releases clean. Rewriting history is not proposed.
   first-parent commit, the scan files are named exactly, and the merge gate's both-ways recompute
   covers trigger 10. Amended in draft 22 (OD-686): the hook checks approval before a push, a later
   commit can approve an earlier one, the daily run recomputes too, and the gate runs on a committed
-  local merge.
+  local merge. Amended in draft 23 (OD-687): no refusal by trailer, the gate on a gate branch in its
+  own worktree with its tree recorded, and a list of old blobs that no longer build.
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -469,7 +510,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   1. take the set's shared lock, tried once, and resolve it; a missing lock file (only
      `refresh_merged` creates it) counts as stale; if the lock is busy (another install or a CLI `ecf
      eval build` is refreshing), wait as in step 3 and start again at step 1;
-    2. if it is stale, release the lock and call `refresh_merged`, which takes the exclusive lock
+  2. if it is stale, release the lock and call `refresh_merged`, which takes the exclusive lock
      itself (not wrapped in another lock, which the same process would refuse); here, and only here,
      it polls the lock without blocking every 20 ms for up to 1 s (CLI writers still try once), so
      two installs re-resolving at the same moment can't keep refusing each other's single try;
@@ -483,10 +524,14 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
      recovers, 20 s closes at about 15 s). Without step 2's polling, two installs whose resolves
      overlap could refuse each other until the budget ran out (an event model: 41% closed at a 0.3 s
      resolve; a warm resolve is about 28 ms); with it, 0 of 3,000 closed at 0.1, 0.3 and 0.5 s
-     resolves, longest 2.4 s (model, round 21; Step 3's tests run it with real locks). A set that a
-     long hold keeps busy uses up the budget for the sets after it, which each get one pass once the
-     budget is spent; the worst start, three sets, is about 15 s plus one pass per remaining set, about
-     20 s, inside both start limits;
+     resolves, longest 2.4 s (model, round 21); with real `flock`, two and three installs at 0.03-0.5
+     s resolves recovered in 576 of 576 runs, longest 3.4 s, no starvation (round 22). A set that a
+     long hold keeps busy uses up the budget for the sets after it; once it is spent, each later set
+     still gets up to 3 s of its own, with step 1's shared lock polled every 20 ms as step 2's is,
+     since a single pass collided with another install's refresh about half the time (round 22, real
+     `flock`: 12 of 23 later-set slots closed with 2-3 installs). The worst start, three sets, is about
+     15 s plus 3 s per remaining set plus record recovery, about 21-24 s (18.6 s measured in round 22
+     before the floor), inside both start limits;
   4. if the set is fresh and its shared lock held, its records recover exactly as today: `_restored`
      and `_finish` save each open record's result, the limits apply in `_resume_lost`
      (`:2073-2078`), today's handlers (`:2022-2033`, `:2052-2056`, `:2079-2088`) close what can't be
@@ -702,7 +747,7 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   card and `.eml` blob under `tests/eval/`; then it runs the script on each pushed ref's tip tree
   (`git ls-tree -r`), which also finds an `eml/` or `.build/` file with no card; on a push to main it
   also runs the
-  approval rule (X5); only the remote being
+  approval rule on the pushed sha and refuses deleting main (X5); only the remote being
   pushed to is excluded from the range, and with no remote-tracking ref for it the range is
   `<local> --not origin/main` (in the private repository, whose first push has no `origin/main`, all
   of `<local>`: every card there is private by design); CONTRIBUTING and
@@ -718,8 +763,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   a checkout without the hook (or with `--no-verify`) is caught only by the card-scan workflow, after
   it is published (stated limit: by then it is public); the workflow checks each pushed commit, so a
   card added and removed within one push is still reported. The hook builds with the working tree's
-  code and `keywords.yaml`; a historical card that no longer builds fails closed (the operator
-  pushes from an up-to-date checkout); a test
+  code and `keywords.yaml`; a historical card that no longer builds fails closed unless it is in
+  `unbuildable-history-blobs.txt` (X5; the operator pushes from an up-to-date checkout); a test
   checks the card equals the template's output with `author` changed to `claude` (the template has
   `author: hand`, `case_templates.py:6`) and `rule: fraud_guard` and `must_escalate: true` added. The
   pin depends on LF line endings, so a new public `.gitattributes` marks `tests/eval/**/cases/*.md
@@ -839,7 +884,8 @@ Each write, commit and push needs the operator's OK.
    refused (new merged version) and its attempt over; a fresh set isn't refreshed; two services
    starting on one stale set, the second 0, 50, 100, 200 and 290 ms after the first, both end with
    the set fresh and recover (the race simulated in round 19), and two whose resolves take 0.3 s and
-   overlap both recover through step 2's polling (round 21's livelock); a busy lock at step 1 retries
+   overlap both recover through step 2's polling (round 21's livelock); with a set held past the
+   budget and 2-3 installs, the later sets recover within their 3 s floor; a busy lock at step 1 retries
    from step
    1; an exclusive lock held 8 s on one set still ends with it fresh and its records recovered; a long
    `ecf eval build`
@@ -1046,11 +1092,11 @@ Each write, commit and push needs the operator's OK.
    §16 (the pins, the sdist fact, the gate guard, X1's markers), OD-654's wording ("main's installed
    code" becomes the installed release's code, with Step 5's `src/` precondition), CONTRIBUTING,
    AGENTS.md, CHANGELOG.
-7. **Merge:** a diff review on Fable; then `git merge --no-ff`, committed locally, and before the
-   push:
+7. **Merge:** a diff review on Fable; then, on a gate branch in its own worktree (X5), `git merge
+   --no-ff`, committed there, and before the push:
    - the macOS merge gate (twice, as above), on the merge commit; its scan-file diff against `HEAD^1`
      stops here by design (main has none of the scan files yet): the operator is shown the diff and
-     asked, and the approval paragraph is added with `git commit --amend` (X5);
+     asked, and the approval paragraph is added with `git commit --amend --only` (X5);
    - the gate's single pass: the tip with nothing skipped, and the known-blob list recomputed over
      the merge's history (must equal the committed one);
    - the freeze check: everything the freeze covers (cards and `.eml` files compared as blobs by
@@ -1058,8 +1104,9 @@ Each write, commit and push needs the operator's OK.
      and trigger 10 over `<freeze base>..HEAD^1` find no marked or flagged card; the freeze base,
      read from `state-archive/eval-private/`, is an ancestor of `HEAD^1`. Any
      difference stops for the operator (an edit on main the freeze missed).
-   Then the pre-push hook checks the approval rule, push, and watch CI (the push run's approval
-   rule passes on the merge's paragraph).
+   Then `HEAD^{tree}` is checked against the gated tree, `git push origin HEAD:main` (the pre-push
+   hook checks the approval rule), and CI is watched (the push run's approval rule passes on the
+   merge's paragraph); the main checkout fast-forwards after.
 
 ## Measured costs (performance reviewer, 2026-11-05)
 
@@ -1078,4 +1125,8 @@ about 6-7 ms, `merge-base` about 7 ms (about 12 and 14 ms through the `/usr/bin/
 live check about 125 ms), `evalrun.load` unchanged by OD-632's two cards. The merged set
 costs about 4.4 MB of copies across the three sets (`synthetic` cases 1.5 MB and `eml` 1.7 MB,
 `drafts` 0.57 and 0.54 MB, `heldout3` 0.12 MB) plus linked `.build/`; Step 3 records the measured
-refresh time.
+refresh time. Rounds 21-22 (this Mac, load-dependent): the gate's single pass over 1,514 history blobs
+17-46 s (about 11-27 ms a blob; 0 build failures, 45 flagged); the hook's tip build over 1,202 blobs
+16-46 s; the approval walk 0.06-0.08 s; the daily run's build as the gate's pass (runner unmeasured).
+X9 with real `flock`: 576 of 576 recovered, longest 3.4 s; worst start 18.6 s before the later-set
+floor.
