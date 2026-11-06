@@ -33,3 +33,7 @@ def test_the_sdist_holds_only_allowed_paths(tmp_path: Path) -> None:
         and "/.claude-plugin/" not in n
     ]  # the plugin manifest ships
     assert not [n for n in names if "__pycache__" in n]  # hidden paths (.build, caches): above
+    # the private set never ships (EVAL-PRIVATE.md, "Releases and CI"); the check that no card or
+    # email in the sdist is an injection card (check_card_injection.check_files, nothing skipped)
+    # is turned on by the move commit, once the public sets hold none
+    assert not [n for n in names if n == "eval" or n.startswith("eval/")]

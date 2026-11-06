@@ -49,7 +49,7 @@ from importlib import resources
 from typing import Any
 
 from ecf.yamlio import load_yaml
-from ecf_server import internal
+from ecf_server import internal, message
 from ecf_server.facts import PUBLIC_DOMAINS, domain_of
 from ecf_server.htmltext import COMMON_TLDS
 from ecf_server.message import ParsedMessage
@@ -467,6 +467,18 @@ def texts_of(parsed: ParsedMessage) -> list[str]:
     text, then every part's full text, the order `scan` reads them in up to its limit."""
     out = [parsed.subject, parsed.from_name, *(a.name for a in parsed.attachments)]
     return out + [t.visible for t in parsed.texts] + [t.full for t in parsed.texts]
+
+
+def card_injection(raw: bytes) -> list[str]:
+    """Trigger 10 on a built email, as the service reads it: the injection phrases `scan` finds
+    in `texts_of(message.parse(raw))` (the eval card scan, EVAL-PRIVATE.md X5)."""
+    return scan(texts_of(message.parse(raw))).get("injection", [])
+
+
+def text_injection(text: str) -> list[str]:
+    """Trigger 10 on one string, in all three forms `scan` reads (the card scan's check of every
+    string in a card file, whether or not the email carries it)."""
+    return scan([text]).get("injection", [])
 
 
 @dataclass
