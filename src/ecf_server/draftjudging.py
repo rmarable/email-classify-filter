@@ -369,7 +369,7 @@ def null_floor(data_dir: Path, root: Path, now: str) -> dict[str, Any]:
                         checker_digest=draftcheck.digest(), cases=out)  # fmt: skip
     with LOCK:
         write_json(folder(data_dir) / f"{run_id}{NULL_SUFFIX}",
-               {"root": str(root.resolve()), "set_version": version})  # fmt: skip
+               {"root": evalrun.logical(root), "set_version": version})  # fmt: skip
         drafteval.write(folder(data_dir), record)
     return {"run_id": run_id, "cases": len(out), "drafts": sum(c.text is not None for c in out)}
 

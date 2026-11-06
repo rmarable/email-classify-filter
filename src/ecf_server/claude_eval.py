@@ -686,7 +686,7 @@ def _baseline(conn: sqlite3.Connection, opts: Options, models: dict[str, str]) -
 def _opts_doc(opts: Options) -> dict[str, Any]:
     """A draft run's options as the record keeps them, to resume it after a restart."""
     doc = asdict(opts)
-    doc |= {"root": str(opts.root.resolve()), "cases": list(opts.cases),
+    doc |= {"root": evalrun.logical(opts.root), "cases": list(opts.cases),
             "copy_to": None if opts.copy_to is None else str(opts.copy_to)}  # fmt: skip
     return doc
 
@@ -821,7 +821,11 @@ def _check_root(conn: sqlite3.Connection, root: Path) -> None:
     set's size: refused on another folder while the gate's set is still there (window tuning
     L1), so a pilot or partial set can't become the gate's evidence by a missed flag."""
     stored = slack_admin.setting(conn, evalrun.EVAL_ROOT)
-    if stored and Path(stored) != root.resolve() and (Path(stored) / "labels.jsonl").is_file():
+    if (
+        stored
+        and Path(stored).resolve() != Path(evalrun.logical(root))
+        and (Path(stored) / "labels.jsonl").is_file()
+    ):
         raise InvalidInputError(f"the go-live gate's set is at {stored}: a run for the gate on"
                                 f" {root} would point the gate there. Pass --not-for-gate for an"
                                 " experiment; if the set has moved, remove the old folder's"

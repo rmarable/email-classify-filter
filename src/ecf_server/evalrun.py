@@ -67,7 +67,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.eval import corpus_labels, fixed_labels, genset, metrics
+from ecf.eval import corpus_labels, fixed_labels, genset, merged, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.cards import bool_target, level_target, phrase_fold, target_met
 from ecf.eval.metrics import wilson
@@ -286,14 +286,16 @@ def corpus_run(session: corpus_session.Session,
 
 
 def set_version(root: Path) -> str:
-    """The set's version (`ecf.eval.labels.set_version`, shared with the client)."""
-    return label_file.set_version(root)
+    """The set's version (`ecf.eval.labels.set_version`, shared with the client), read from the
+    set `merged.resolve` gives for the logical root (EVAL-PRIVATE.md, "The resolver")."""
+    return label_file.set_version(merged.resolve(root))
 
 
 def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
     """The cases, with each confirmation re-checked against the files (OD-241), and the set's
-    version (a hash of labels.jsonl)."""
-    root = root.resolve()
+    version (a hash of labels.jsonl). `root` is the logical set path; the resolver gives the merged
+    view when the set has a private half (EVAL-PRIVATE.md, "The resolver")."""
+    root = merged.resolve(root).resolve()
     index = root / "labels.jsonl"
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root}")
@@ -325,7 +327,7 @@ def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
                         judged=label_file.judged(r), unscored=label_file.unscored(r),
                         deferred=tuple(label_file.deferred(r)), signal=_phrase(r.get("signal")),
                         injection_phrase=_phrase(r.get("injection_phrase"))))  # fmt: skip
-    return out, set_version(root)
+    return out, label_file.set_version(root)
 
 
 def _phrase(value: Any) -> str | None:
@@ -754,6 +756,12 @@ def null_classification(schema: Any) -> dict[str, Any]:
     return out
 
 
+def logical(root: Path) -> str:
+    """The set's public path as stored, symlinks followed so an alias is the same set: never the
+    merged view `merged.resolve` gives readers (EVAL-PRIVATE.md, "The stored root")."""
+    return str(root.resolve())
+
+
 def remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root: Path) -> None:
     """Where the set is, so the go-live gate can check a run is on its current version. Best
     effort: without it the gate's synthetic check fails closed ("isn't where the last run found
@@ -762,7 +770,7 @@ def remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root:
         conn = connect()
         try:
             with write_tx(conn):
-                slack_admin.put_setting(conn, EVAL_ROOT, str(root.resolve()), to_ts(clock.now()),
+                slack_admin.put_setting(conn, EVAL_ROOT, logical(root), to_ts(clock.now()),
                                         actor="service")  # fmt: skip
         finally:
             conn.close()

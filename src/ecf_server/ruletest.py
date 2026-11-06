@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.eval import fixed_labels
+from ecf.eval import fixed_labels, merged
 from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
 from ecf.schema import derive_labels, unlabel_removed
 from ecf_server import db, draftcheck, fetch, internal, precheck, rules, triggers
@@ -117,8 +117,9 @@ class Case:
 
 
 def load_cases(root: Path) -> tuple[list[Case], list[str]]:
-    """The cases listed in `labels.jsonl` under `root`, and the IDs whose file isn't built."""
-    root = root.resolve()
+    """The cases listed in `labels.jsonl` under `root` (the set the resolver gives for the logical
+    path), and the IDs whose file isn't built."""
+    root = merged.resolve(root).resolve()
     index = root / "labels.jsonl"
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root} (the synthetic set's folder)")
