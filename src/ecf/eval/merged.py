@@ -18,8 +18,9 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -437,7 +438,8 @@ def _take(fd: int, op: int, wait: float) -> bool:
         time.sleep(POLL_S)
 
 
-def refresh_merged(root: Path, *, wait: float = 0.0) -> str:
+def refresh_merged(root: Path, *, wait: float = 0.0,
+                   on_wait: Callable[[float], None] | None = None) -> str:  # fmt: skip
     """Rebuild the merged view of `root`'s set if it is stale, under the exclusive lock (the one
     writer of the merged folder, and the only one that creates the lock file). Returns "fresh" or
     "refreshed"; raises RefreshBusy when the lock stays held for `wait` seconds."""
@@ -447,7 +449,11 @@ def refresh_merged(root: Path, *, wait: float = 0.0) -> str:
     _writable(sp.lock.parent)
     fd = os.open(sp.lock, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        if not _take(fd, fcntl.LOCK_EX, wait):
+        t0 = time.monotonic()
+        got = _take(fd, fcntl.LOCK_EX, wait)
+        if on_wait is not None:
+            on_wait(time.monotonic() - t0)
+        if not got:
             raise RefreshBusy(BUSY)
         try:
             if is_fresh(sp):
@@ -479,6 +485,28 @@ def take_shared(root: Path, *, wait: float = 0.0) -> int | None:
 def release(fd: int | None) -> None:
     if fd is not None:
         os.close(fd)  # closing the descriptor drops its flock
+
+
+class SetLock:
+    """A run's shared lock on its set's merged view, released exactly once (a stop while
+    preparing and the end of the run may both release it). `fd` is None with no private half."""
+
+    def __init__(self, fd: int | None) -> None:
+        self._fd = fd
+        self._guard = threading.Lock()
+
+    @classmethod
+    def take(cls, root: Path, *, wait: float = 0.0) -> SetLock:
+        return cls(take_shared(root, wait=wait))
+
+    @property
+    def held(self) -> bool:
+        return self._fd is not None
+
+    def release(self) -> None:
+        with self._guard:
+            fd, self._fd = self._fd, None
+        release(fd)
 
 
 def _under_private(p: Path) -> bool:

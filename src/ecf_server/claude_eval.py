@@ -50,6 +50,7 @@ decisions 2026-10-02, OD-287 to OD-292).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import hmac
@@ -276,6 +277,7 @@ class Run:
     source: dict[str, Any] = field(default_factory=dict[str, Any])  # D: its SOURCE_KEYS
     source_key: str | None = None  # the source run's `eval_runs.digest`
     private_commit: str | None = None  # a for-gate run's private HEAD at its start (EVAL-PRIVATE)
+    set_lock: merged.SetLock | None = None  # the set's shared lock, held until the run ends
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -325,6 +327,14 @@ class Run:
         """A draft-set run: registered in the record, with a journal (M8 plan §4)."""
         return self.journal is not None
 
+    def release_set(self) -> None:
+        """Release the set's shared lock, once: a second release (a stop while preparing, then
+        the prepare-failed branch) does nothing."""
+        with self.lock:
+            held, self.set_lock = self.set_lock, None
+        if held is not None:
+            held.release()
+
 
 @dataclass
 class _Slot:
@@ -344,9 +354,11 @@ def current() -> Run | None:
 
 
 def reset() -> None:
-    """Forget the run (tests; a service start has none)."""
+    """Forget the run (tests; a service start has none), and drop its set lock as a restart does."""
     with _SLOT.lock:
-        _SLOT.run = None
+        run, _SLOT.run = _SLOT.run, None
+    if run is not None:
+        run.release_set()
 
 
 def _hash(token: str) -> str:
@@ -525,13 +537,37 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
     return str(row["run_id"]), got, {k: m[k] for k in C_SOURCE_KEYS if k in m}
 
 
-def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
+def start(connect: Callable[[], sqlite3.Connection],
           clock: Clock, data_dir: Path, opts: Options, *,
           spawn: Callable[[Callable[[], None]], None] | None = None,
           resume: draftruns.Registration | None = None,
           ) -> dict[str, Any]:  # fmt: skip
     """Register a run. `resume`: a draft run lost to a restart, carried on in its slot
-    (`recover`)."""
+    (`recover`). The set's shared lock is taken first and kept on the run until it ends; a failure
+    before the spawn ends a registered run as failed, clears the slot only if it is still this
+    run's, and releases the lock (EVAL-PRIVATE.md, "The merged set")."""
+    held = merged.SetLock.take(opts.root)
+    box: list[Run] = []
+    try:
+        return _start(connect, clock, data_dir, opts, spawn, resume, held, box)
+    except BaseException:
+        if box:
+            run = box[0]
+            with run.lock:
+                if run.open:  # a stop may have finished it already
+                    _finish(connect, clock, run, "failed", "starting the run failed")
+            with _SLOT.lock:  # taken after run.lock is released (start takes _SLOT then run)
+                if _SLOT.run is run:
+                    _SLOT.run = None
+        held.release()
+        raise
+
+
+def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
+           clock: Clock, data_dir: Path, opts: Options,
+           spawn: Callable[[Callable[[], None]], None] | None,
+           resume: draftruns.Registration | None, held: merged.SetLock,
+           box: list[Run]) -> dict[str, Any]:  # fmt: skip
     if opts.preset not in USED_ROLES:
         raise InvalidInputError("a Claude eval runs preset C or D (preset B was removed in"
                                 " v3.0.0, ADR 0031)")  # fmt: skip
@@ -643,6 +679,8 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             _j(run, {"e": "registered", "slot": rec.slot, "attempt": rec.attempt,
                      "kind": rec.kind, "resumed_from": rec.resumed_from})  # fmt: skip
         run.private_commit = clean.private_commit if clean is not None else None
+        run.set_lock = held
+        box.append(run)
         _SLOT.run = run
     if opts.for_gate:  # only here (P16); never an experiment's or a generated set's (eval P1)
         evalrun.remember_root(connect, clock, opts.root)
@@ -658,6 +696,7 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
                 run.state = "failed"
                 run.detail = f"preparing the cases failed ({type(exc).__name__})"
                 _end_record(clock, run, "failed", run.detail, complete=False)
+            run.release_set()
 
     (spawn or _thread)(work)
     return snapshot(run)
@@ -1026,8 +1065,17 @@ def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
     _finish(connect, clock, run, "done")
 
 
-def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  # noqa: PLR0915 - the summary's parts
+def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             state: str, detail: str = "") -> None:  # fmt: skip
+    """`_finish_run`, then the set's shared lock released, whatever happened."""
+    try:
+        _finish_run(connect, clock, run, state, detail)
+    finally:
+        run.release_set()
+
+
+def _finish_run(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  # noqa: PLR0915 - the summary's parts
+                state: str, detail: str = "") -> None:  # fmt: skip
     """Save what was scored (a stopped or expired run too, marked incomplete) and end the run.
     A draft run is complete once every case is scored, so one stopped during the determinism
     repeats counts, with its repeats marked unfinished (M8 plan AK3)."""
@@ -2043,6 +2091,87 @@ def recover(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: P
     # came between finishing it and resuming it (diff review 5B-1)
     todo = [r for r in runs if r.open or (r.end == "lost" and r.resumed_by is None
                                           and not r.attempt_over and not r.complete)]  # fmt: skip
+    lines: list[str] = []
+    by_set: dict[str, list[draftruns.Registration]] = {}
+    for r in todo:
+        by_set.setdefault(str((r.options or {}).get("root") or ""), []).append(r)
+    for root, recs in by_set.items():  # one set at a time (X13, EVAL-PRIVATE.md)
+        held, why = _set_for_recovery(Path(root)) if root else (None, None)
+        try:
+            if why is not None:  # the set can't be read: close, never restore from it
+                lines += [_close_unread(data_dir, clock, r, root, why) for r in recs]
+                continue
+            lines += _recover_all(connect, clock, data_dir, recs, spawn)
+        finally:
+            if held is not None:
+                held.release()
+    return lines
+
+
+SET_WAIT_S = 5.0  # waiting per set at start, over all its lock waits (X13); not shared out
+
+
+def _set_for_recovery(root: Path) -> tuple[merged.SetLock | None, str | None]:
+    """X13: the set's shared lock, held, once the set is fresh; or why it can't be read. A set
+    without a private half needs no lock. Waits are 20 ms polls, never a blocking flock in a
+    thread; the 5 s count only time spent waiting; a stale set is refreshed under the exclusive
+    lock by `refresh_merged`, which does nothing if another install refreshed meanwhile, while
+    recovery holds no lock of its own (a second exclusive take in one process fails)."""
+    try:
+        sp = merged.paths(root)
+        if sp.private is None:
+            return None, None
+        left = [SET_WAIT_S]
+
+        def waited(s: float) -> None:
+            left[0] = max(0.0, left[0] - s)
+
+        def shared() -> merged.SetLock | None:
+            t0 = time.monotonic()
+            try:
+                return merged.SetLock.take(root, wait=left[0])
+            except merged.RefreshBusy:
+                return None
+            except InvalidInputError:
+                return None  # no lock file yet: stale until a refresh creates it
+            finally:
+                waited(time.monotonic() - t0)
+
+        held = shared()
+        if held is not None and held.held and merged.is_fresh(sp):
+            return held, None
+        if held is not None:
+            held.release()
+        with contextlib.suppress(merged.RefreshBusy):
+            merged.refresh_merged(root, wait=left[0], on_wait=waited)
+        held = shared()
+        if held is not None and held.held and merged.is_fresh(sp):
+            return held, None
+        if held is not None:
+            held.release()
+        return None, "its lock stayed busy or it is still stale"
+    except Exception as exc:  # the set's own: steps 1-2 and the release only
+        return None, f"{type(exc).__name__}"
+
+
+def _close_unread(data_dir: Path, clock: Clock, r: draftruns.Registration, root: str,
+                  why: str) -> str:  # fmt: skip
+    """X13 step 4: closed as today's handler closes a record, with a fixed detail."""
+    detail = (f"the eval set {root} couldn't be read at service start ({why}): run `ecf eval"
+              f" build --root {root}`; this attempt can't be resumed")  # fmt: skip
+    try:
+        _update_record(data_dir, r.run_id, end=r.end or "lost", ended_at=clock.now(),
+                       complete=False, attempt_over=True, end_detail=detail)  # fmt: skip
+    except Exception as again:
+        log.error("claude_eval.recover_mark_failed", run=r.run_id[:8],
+                  error_type=type(again).__name__)  # fmt: skip
+    return f"{r.run_id[:8]} not recovered (its set couldn't be read)"
+
+
+def _recover_all(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
+                 todo: list[draftruns.Registration],
+                 spawn: Callable[[Callable[[], None]], None] | None) -> list[str]:  # fmt: skip
+    """Today's recovery, per record (step 3): a raise closes only that record."""
     lines: list[str] = []
     for r in todo:  # one run failing never stops the others
         try:

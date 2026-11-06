@@ -719,6 +719,29 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     _check_options(opts)
     if genset.is_generated(opts.root):
         opts = replace(opts, for_gate=False)
+    # the set's shared lock, from before the resolver and load to a successful spawn: every
+    # refusal or failure in between releases it and leaves no phantom run (EVAL-PRIVATE.md)
+    held = merged.SetLock.take(opts.root)
+    prev: list[tuple[Any, ...]] = []  # the run state this call replaced, to undo on a failure
+    try:
+        return _start(connect, clock, data_dir, opts, power, battery, spawn, thermal, asker,
+                      held, prev.append)  # fmt: skip
+    except BaseException:
+        held.release()
+        if prev:
+            with RUN.lock:
+                (RUN.run_id, RUN.state, RUN.done, RUN.total, RUN.detail, RUN.result,
+                 RUN.started_at, RUN.set_name) = prev[0]  # fmt: skip
+        raise
+
+
+def _start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,  # noqa: PLR0913, PLR0917 - start()'s arguments
+           opts: Options, power: Callable[[], schedule.Power],
+           battery: Callable[[], int | None],
+           spawn: Callable[[Callable[[], None]], None] | None,
+           thermal: Callable[[], dict[str, int]], asker: AskerFactory | None,
+           held: merged.SetLock,
+           mine: Callable[[tuple[Any, ...]], None]) -> dict[str, Any]:  # fmt: skip
     if opts.backend == JEV:
         if asker is None:
             raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
@@ -736,6 +759,8 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     with RUN.lock:
         if RUN.state == "running":
             raise ConflictError(f"eval {RUN.run_id} is already running; see `ecf eval status`")
+        mine((RUN.run_id, RUN.state, RUN.done, RUN.total, RUN.detail, RUN.result,
+              RUN.started_at, RUN.set_name))  # fmt: skip
         RUN.run_id, RUN.state, RUN.done, RUN.total = new_random_id(), "running", 0, len(cases)
         RUN.detail, RUN.result, RUN.started_at = "", None, to_ts(clock.now())
         RUN.set_name = "synthetic"
@@ -753,6 +778,8 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("eval.failed", error_type=type(exc).__name__)
             end = {"state": "failed", "detail": type(exc).__name__}
+        finally:
+            held.release()
         RUN.set(**end)  # only now can another run start
 
     (spawn or _thread)(work)
