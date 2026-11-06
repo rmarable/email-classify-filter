@@ -853,3 +853,45 @@ def test_the_revs_entry_point_on_a_bare_remote_more_cases(repo: Path) -> None:
     head = commit(repo, "a listed blob")
     r = _cli(repo, "--ref", "refs/heads/k", "--no-tip-build", "--revs", f"{main}..{head}")
     assert r.returncode == 0, r.stderr
+
+
+# Review round 3: a path under tests/eval in another letter case (M4); a marked card restored
+# onto main (M2); a set file naming a card that isn't in its set (M3).
+
+
+def test_a_card_under_another_letter_case_of_tests_eval_is_refused(repo: Path) -> None:
+    blob = git(repo, "hash-object", "-w", "--stdin",
+               stdin=PLAIN.format(id="cased", extra="", body=INJ))  # fmt: skip
+    # straight into the index: a case-insensitive checkout would fold the folder's case
+    git(repo, "update-index", "--add", "--cacheinfo",
+        f"100644,{blob},tests/Eval/synthetic/cases/cased.md")  # fmt: skip
+    git(repo, "commit", "-q", "-m", "a respelled folder")
+    assert any("tests/Eval/" in r and "not a recognised" in r for r in _range(repo))
+
+
+def test_a_marked_card_restored_onto_main_is_refused_at_its_push(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: X1-marked, trigger 10 doesn't flag it, its blob is old (in the anchor's history):
+    on a branch it passes X1 (an old card), on main's tip it is refused."""
+    p = card(repo, "hid-again", extra="hidden_text: quiet\n")
+    base = commit(repo, "a marked card on main, before the move")
+    monkeypatch.setattr(cs, "X1_ANCHOR", base)
+    p.unlink()
+    before = commit(repo, "the move")
+    git(repo, "update-ref", "refs/remotes/origin/main", before)
+    git(repo, "checkout", base, "--", "tests/eval/synthetic/cases/hid-again.md")
+    after = commit(repo, "restored")
+    v = cs.run_range("refs/heads/main", [f"{before}..{after}"], after, tip_build=True, top=repo)
+    assert any("hid-again" in r and "marked" in r for r in v.refused)
+
+
+def test_a_set_file_naming_a_card_not_in_its_set_is_refused(repo: Path) -> None:
+    labels = repo / "tests" / "eval" / "synthetic" / "labels.jsonl"
+    labels.write_text('{"id": "plain"}\n{"id": "a-private-card"}\n')
+    commit(repo, "a row for a card this tree hasn't")
+    got = _range(repo, tip_build=False)
+    assert any("labels.jsonl" in r and "names a-private-card" in r for r in got)
+    assert any(
+        "names a-private-card" in r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused
+    )

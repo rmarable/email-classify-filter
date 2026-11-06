@@ -92,7 +92,9 @@ def test_summarize_records_counts_by_half_only_for_a_set_with_a_private_half(spl
 
 def test_a_run_matching_the_set_passes_the_guard(conn: sqlite3.Connection, clock: FakeClock,
                                                   split: Path) -> None:  # fmt: skip
-    _run(conn, clock, split, _counts(split) | {"public_cases": 300, "private_cases": 12})
+    _run(conn, clock, split, _counts(split) | {
+        "public_cases": 300, "private_cases": 12, "merged_version": evalrun.set_version(split),
+        "private_commit": "0" * 40})  # fmt: skip
     assert gate.synthetic(conn, DIGEST).ok
 
 

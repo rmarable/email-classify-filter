@@ -426,7 +426,10 @@ def test_a_writer_at_any_step_of_a_refresh_never_leaves_a_stale_view_called_fres
             return real_rs(*a, **k)
 
         monkeypatch.setattr(mg, "_restat", rs)
-    mg.refresh_merged(pub)
+    try:
+        mg.refresh_merged(pub)
+    except InvalidInputError as exc:  # it saw the change and stayed stale: also right
+        assert "changed while the merged view was refreshed" in str(exc)
     monkeypatch.undo()
     assert done[0], "the writer never ran at that step"
     assert _honest(sp)

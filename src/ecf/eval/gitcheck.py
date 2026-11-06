@@ -192,12 +192,12 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def clean_and_pushed(top: Path, set_name: str) -> Clean:
+def clean_and_pushed(top: Path, set_name: str, *, fresh: bool = False) -> Clean:
     """Whether `tests/eval/<set>` and `eval/private/<set>` have no uncommitted changes, and the
     private HEAD is on a branch whose remote-tracking upstream contains it. Never raises."""
     global _backoff_until  # noqa: PLW0603 - process-wide, shared by the tick, status, address_gate
     with _lock:
-        if _now() < _backoff_until:
+        if not fresh and _now() < _backoff_until:  # `stage set live` asks fresh: past it
             return Clean(False, "git timed out recently; the check is retried shortly", error=True)
     token = _deadline.set(_now() + TIMEOUT_S)
     try:
@@ -247,9 +247,13 @@ def _repo_stats(top: Path) -> tuple[Any, ...]:
 def _set_stats(root: Path) -> tuple[Any, ...]:
     out: list[Any] = []
     for d in ("cases", "eml"):
-        sub = root / d
-        if sub.is_dir():
-            out += [(p.name, _stat(p)) for p in sorted(sub.iterdir())]
+        try:  # one scandir per folder; its entries carry their stat
+            entries = sorted(os.scandir(root / d), key=lambda e: e.name)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for e in entries:
+            st = e.stat(follow_symlinks=False)
+            out.append((e.name, (st.st_size, st.st_mtime_ns, st.st_ino)))
     for f in ("labels.jsonl", "fixed_labels.jsonl"):
         out.append((f, _stat(root / f)))
     return tuple(out)

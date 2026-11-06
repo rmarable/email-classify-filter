@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -90,7 +91,9 @@ def wanted(path: str) -> bool:
 
 
 def under_eval(path: str) -> bool:
-    return path.startswith("tests/eval/")
+    """Under tests/eval/ in any letter case (a case-insensitive checkout reads `tests/Eval/`
+    there): such a path must be one of the exact recognised forms or it is refused."""
+    return path.lower().startswith("tests/eval/")
 
 
 def unrecognised(path: str) -> bool:
@@ -274,12 +277,13 @@ def exempt(top: Path = TOP) -> set[str]:
 
 
 def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
-              top: Path = TOP, published: frozenset[str] = frozenset()) -> Verdict:  # fmt: skip
+              top: Path = TOP, published: frozenset[str] = frozenset(),
+              old: set[str] | None = None) -> Verdict:  # fmt: skip
     """A pushed range: every changed blob (listed blobs skipped; X1 only on blobs new since the
     anchor), then the tip's path checks and, except in the hook, a build of the tip's other
     blobs: unskipped with X1 on main, with the list elsewhere."""
     items = changed(revs, top)
-    old = anchor_history(top)
+    old = anchor_history(top) if old is None else old  # the hook reads it once per push
     listed = known(top) & old  # `exempt`, with the history read once
     # `published`: blobs main's history already has (the hook only): main's own runs checked them
     v = scan(items, skip=listed | published, x1_old=old, top=top)
@@ -287,10 +291,13 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     if tip:
         found = tree(tip, top)
         refused += [f"{p}: no card for it in its set" for p in orphans(found)]
+        refused += unowned(found, top)
         if tip_build:
             covered = {b for b, _ in items}
             main = is_main(ref)
-            rest = [(b, p) for b, p in found if b not in covered or (main and b in listed)]
+            # main's tip is checked whole, X1 on, nothing skipped: a marked card restored onto
+            # main (a revert of the move) is refused at its push (review round 3, M2)
+            rest = found if main else [(b, p) for b, p in found if b not in covered]
             t = scan(rest, skip=set() if main else listed, x1_old=None if main else old, top=top)
             refused += t.refused
             warned += t.warned
@@ -300,8 +307,36 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
 def run_tree(treeish: str, *, no_skip: bool, top: Path = TOP) -> Verdict:
     found = tree(treeish, top)
     v = scan(found, skip=set() if no_skip else exempt(top), x1_old=None, top=top)
-    return Verdict([*v.refused, *(f"{p}: no card for it in its set" for p in orphans(found))],
-                   v.warned)  # fmt: skip
+    return Verdict([*v.refused, *(f"{p}: no card for it in its set" for p in orphans(found)),
+                    *unowned(found, top)], v.warned)  # fmt: skip
+
+
+def unowned(found: list[tuple[str, str]], top: Path = TOP) -> list[str]:
+    """Every row or key of a set file (labels, fixed labels, reviews, checks.yaml) that names no
+    card of its own set in this tree: a private card's row or expected replies left in a public
+    file (review round 3, M3). Read from the tree, so it holds for what is pushed."""
+    cards: dict[str, set[str]] = {}
+    for _b, path in found:
+        if CARD.match(path):
+            cards.setdefault(path.split("/")[2], set()).add(Path(path).stem)
+    files = [(b, p) for b, p in found if SET_FILES.match(p)]
+    data = cat(sorted({b for b, _ in files}), top)
+    out: list[str] = []
+    for b, path in files:
+        own = cards.get(path.split("/")[2], set())
+        text = data[b].decode("utf-8", "replace")
+        if path.endswith(".yaml"):
+            ids = re.findall(r"^([A-Za-z0-9][A-Za-z0-9_-]*):", text, re.M)
+        else:
+            ids: list[str] = []
+            for line in text.splitlines():
+                try:
+                    ids.append(str(json.loads(line)["id"]) if line.strip() else "")
+                except (ValueError, KeyError, TypeError):
+                    out.append(f"{path} ({b[:12]}): a row that doesn't parse")
+        out += [f"{path} ({b[:12]}): names {i}, which has no card in its set"
+                for i in sorted({i for i in ids if i} - own)]  # fmt: skip
+    return out
 
 
 def list_known(rev: str, top: Path = TOP) -> list[str]:
@@ -434,6 +469,7 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
                        [])  # fmt: skip
     refused, ranges = pushed(remote, lines, cwd)
     warned: list[str] = []
+    history = None if private or not ranges else (_published(remote, cwd), anchor_history(cwd))
     for rref, lsha, revs in ranges:
         if private:
             items = changed(revs, cwd, want=lambda p: PRIVATE_CARD.match(p) is not None)
@@ -442,8 +478,10 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
                 refused += check_private(b, p, data[b])
             continue
         main_ref = "refs/heads/main" if rref == "refs/heads/main" else rref
-        v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd,
-                      published=_published(remote, cwd))  # fmt: skip
+        if history is None:  # unreachable: set whenever there are ranges
+            continue
+        v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd, published=history[0],
+                      old=history[1])  # fmt: skip
         refused += v.refused
         warned += v.warned
     return Verdict(refused, warned)

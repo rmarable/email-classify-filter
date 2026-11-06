@@ -9,6 +9,7 @@ import json
 import shutil
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +73,13 @@ def test_git_failing_refuses_a_for_gate_run_and_the_gate_retries_next_time(  # C
         claude_start(db_path, clock, split, preset="C")
     assert claude_eval.current() is None
     first = len(calls)
-    check = gate.synthetic(conn, DIGEST)
-    assert not check.ok and "git couldn't run" in check.detail
-    gate.synthetic(conn, DIGEST)  # the same pass: shared
+    with gate.one_pass():
+        check = gate.synthetic(conn, DIGEST)
+        assert not check.ok and "git couldn't run" in check.detail
+        gate.synthetic(conn, DIGEST)  # the same pass: shared
     assert len(calls) == first + 1
-    later = gate._now() + gate.PASS_S + 1  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(gate, "_now", lambda: later)
-    gate.synthetic(conn, DIGEST)  # the next tick: the error was not kept
+    with gate.one_pass():
+        gate.synthetic(conn, DIGEST)  # the next tick: the error was never kept
     assert len(calls) == first + 2
 
 
@@ -87,17 +88,20 @@ def test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off(  # C9
 ) -> None:
     _run(conn, clock, split, _counts(split))
     calls = _count_git(monkeypatch, subprocess.TimeoutExpired("git", 5))
-    for _ in range(4):  # a status over four addresses in one pass
-        check = gate.synthetic(conn, DIGEST)
-        assert not check.ok and "timed out" in check.detail
-    assert len(calls) == 1
-    now = [gate._now() + 100.0]  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(gate, "_now", lambda: now[0])
+    now = [1000.0]
     monkeypatch.setattr(gitcheck, "_now", lambda: now[0])
-    for _ in range(5):  # later passes, within the backoff: no git at all
-        now[0] += gate.PASS_S + 1
-        assert "retried shortly" in gate.synthetic(conn, DIGEST).detail
+    with gate.one_pass():
+        for _ in range(4):  # a status over four addresses in one pass
+            check = gate.synthetic(conn, DIGEST)
+            assert not check.ok and "timed out" in check.detail
     assert len(calls) == 1
+    for _ in range(5):  # later passes, within the backoff: no git at all
+        now[0] += 50  # five passes, all inside the 300 s backoff
+        with gate.one_pass():
+            assert "retried shortly" in gate.synthetic(conn, DIGEST).detail
+    assert len(calls) == 1
+    gate.synthetic(conn, DIGEST, fresh=True)  # `stage set live`: past the backoff
+    assert len(calls) == 2
 
 
 def test_stage_set_live_runs_the_check_fresh(  # C10
@@ -263,19 +267,33 @@ def test_a_slow_transient_read_is_shared_by_the_rest_of_its_pass(
     conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _run(conn, clock, split, _counts(split))
-    now = [gate._now()]  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(gate, "_now", lambda: now[0])
     calls: list[str] = []
 
     def hang(cmd: list[str], **_kw: Any) -> Any:
         calls.append(cmd[-1])
-        now[0] += 3 * gate.PASS_S  # the read takes longer than a pass
+        time.sleep(0.2)  # however long the read takes, its pass shares it
         raise subprocess.TimeoutExpired("git", 5)
 
     monkeypatch.setattr(gitcheck, "_run_git", hang)
-    for _ in range(4):
-        assert not gate.synthetic(conn, DIGEST).ok
+    with gate.one_pass():
+        for _ in range(4):
+            assert not gate.synthetic(conn, DIGEST).ok
     assert len(calls) == 1
+
+
+def test_a_tick_doesnt_remember_an_address_whose_check_was_transient(
+    conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P1 (round 3): after a transient failure every address is checked again next tick."""
+    make_address(conn, clock, "assist")
+    _run(conn, clock, split, _counts(split))
+    stages.SEEN.clear()
+    _count_git(monkeypatch, OSError("no git"))
+    stages.tick(conn, clock)
+    assert "ap" not in stages.SEEN
+    monkeypatch.undo()
+    stages.tick(conn, clock)
+    assert "ap" in stages.SEEN
 
 
 def test_a_pass_works_out_the_sets_key_once(

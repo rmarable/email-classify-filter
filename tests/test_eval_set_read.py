@@ -210,19 +210,17 @@ def test_a_refresh_holding_the_lock_is_a_transient_failed_check(
     _run(conn, clock, split, _counts(split))
     lock = mg.paths(split).lock
     assert lock is not None
-    retry = gate._RETRY[0]  # pyright: ignore[reportPrivateUsage]
-    fd = os.open(lock, os.O_RDWR)
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    try:
-        check = gate.synthetic(conn, DIGEST)
-        assert not check.ok and "a refresh is running" in check.detail
-    finally:
-        os.close(fd)
-    assert gate._RETRY[0] == retry + 1  # pyright: ignore[reportPrivateUsage]
-    assert not gate.synthetic(conn, DIGEST).ok  # the same pass shares the busy result
-    later = gate._now() + gate.PASS_S + 1  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(gate, "_now", lambda: later)
-    assert gate.synthetic(conn, DIGEST).ok  # the next pass reads again
+    del monkeypatch
+    with gate.one_pass():
+        fd = os.open(lock, os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            check = gate.synthetic(conn, DIGEST)
+            assert not check.ok and "a refresh is running" in check.detail
+        finally:
+            os.close(fd)
+        assert not gate.synthetic(conn, DIGEST).ok  # the same pass shares the busy result
+    assert gate.synthetic(conn, DIGEST).ok  # never cached: the next call reads again
 
 
 # The git check: one timeout for the whole check, and "no private half" is never clean.

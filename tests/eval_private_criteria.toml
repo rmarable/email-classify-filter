@@ -45,7 +45,7 @@ tests = ["tests/test_eval_set_read.py::test_each_kind_of_problem_is_reported_not
 [[item]]
 id = "B9"
 plan = "the gate guard"
-tests = ["tests/test_eval_identity.py::test_a_respelled_root_cant_pass_the_gate_without_the_private_set", "tests/test_eval_private_gate.py::test_a_run_matching_the_set_passes_the_guard", "tests/test_eval_private_gate.py::test_a_run_that_read_none_of_a_half_is_refused", "tests/test_eval_private_gate.py::test_a_pre_guard_run_with_other_counts_is_refused_with_the_exact_message", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_private_gate.py::test_a_fraud_only_run_is_checked_on_fraud_guard_cases_only"]
+tests = ["tests/test_eval_gate_model.py::test_the_gate_passes_exactly_when_the_promise_holds", "tests/test_eval_identity.py::test_a_respelled_root_cant_pass_the_gate_without_the_private_set", "tests/test_eval_private_gate.py::test_a_run_matching_the_set_passes_the_guard", "tests/test_eval_private_gate.py::test_a_run_that_read_none_of_a_half_is_refused", "tests/test_eval_private_gate.py::test_a_pre_guard_run_with_other_counts_is_refused_with_the_exact_message", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_private_gate.py::test_a_fraud_only_run_is_checked_on_fraud_guard_cases_only"]
 
 [[item]]
 id = "B10"
@@ -66,7 +66,7 @@ deferred = "its call in build_all for a public set lands in the move commit (pla
 [[item]]
 id = "B13"
 plan = "X5's script and `card_injection` in the hook, CI, sdist and merge-gate scans"
-tests = ["tests/test_card_scan.py::test_card_and_text_injection_flag_the_phrase_and_nothing_else", "tests/test_card_scan.py::test_an_oddly_named_file_under_tests_eval_is_refused", "tests/test_card_scan.py::test_git_output_is_read_without_quoting", "tests/test_card_scan.py::test_a_push_cant_exempt_its_own_card_by_listing_it", "tests/test_card_scan.py::test_the_private_hook_runs_the_hygiene_scan", "tests/test_card_scan.py::test_a_private_clone_is_recognised_by_its_config_wherever_it_sits", "tests/test_card_scan.py::test_a_repository_that_is_neither_is_refused", "tests/test_card_scan.py::test_the_hook_skips_blobs_main_already_has_but_not_new_ones", "tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
+tests = ["tests/test_card_scan.py::test_card_and_text_injection_flag_the_phrase_and_nothing_else", "tests/test_card_scan.py::test_an_oddly_named_file_under_tests_eval_is_refused", "tests/test_card_scan.py::test_a_card_under_another_letter_case_of_tests_eval_is_refused", "tests/test_card_scan.py::test_a_marked_card_restored_onto_main_is_refused_at_its_push", "tests/test_card_scan.py::test_a_set_file_naming_a_card_not_in_its_set_is_refused", "tests/test_card_scan.py::test_git_output_is_read_without_quoting", "tests/test_card_scan.py::test_a_push_cant_exempt_its_own_card_by_listing_it", "tests/test_card_scan.py::test_the_private_hook_runs_the_hygiene_scan", "tests/test_card_scan.py::test_a_private_clone_is_recognised_by_its_config_wherever_it_sits", "tests/test_card_scan.py::test_a_repository_that_is_neither_is_refused", "tests/test_card_scan.py::test_the_hook_skips_blobs_main_already_has_but_not_new_ones", "tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
 deferred = "the sdist test's marker assertion and the merge gate's tree-scan line land in the move commit (plan, as above)"
 
 [[item]]
@@ -173,7 +173,7 @@ tests = ["tests/test_eval_gitcheck.py::test_a_committed_and_pushed_set_is_clean_
 [[criterion]]
 id = "C9"
 plan = "a hanging `git` costs one timeout per pass and then backs off"
-tests = ["tests/test_eval_gate_paths.py::test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off", "tests/test_eval_set_read.py::test_every_git_call_in_a_check_shares_one_timeout"]
+tests = ["tests/test_eval_gate_paths.py::test_a_tick_doesnt_remember_an_address_whose_check_was_transient", "tests/test_eval_gate_paths.py::test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off", "tests/test_eval_set_read.py::test_every_git_call_in_a_check_shares_one_timeout"]
 
 [[criterion]]
 id = "C10"
@@ -213,7 +213,7 @@ tests = ["tests/test_eval_run_locks.py::test_a_claude_run_holds_the_lock_until_i
 [[criterion]]
 id = "C17"
 plan = "a merged path given as `--root` or stored as the root is refused"
-tests = ["tests/test_eval_resolver_wiring.py::test_the_loader_and_version_read_the_merged_set", "tests/test_eval_gate_paths.py::test_a_merged_path_stored_as_the_root_is_refused"]
+tests = ["tests/test_eval_resolver_wiring.py::test_the_loader_and_version_read_the_merged_set", "tests/test_eval_gate_paths.py::test_a_merged_path_stored_as_the_root_is_refused", "tests/test_eval_gate_model.py::test_the_gate_passes_exactly_when_the_promise_holds"]
 
 [[criterion]]
 id = "C18"
@@ -265,7 +265,7 @@ tests = ["tests/test_eval_merged.py::test_a_consistent_hand_edit_of_the_merged_f
 [[criterion]]
 id = "C27"
 plan = "a made-up run from before the guard is accepted only when its version equals the verified merged version (refused when it differs, when the private set is absent, and when the merged set is stale)"
-tests = ["tests/test_eval_private_gate.py::test_a_pre_guard_run_matching_the_set_is_accepted", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_gate_paths.py::test_a_pre_guard_run_is_refused_when_the_private_set_is_gone", "tests/test_eval_private_gate.py::test_a_stale_merged_set_is_a_failed_check_not_an_error"]
+tests = ["tests/test_eval_gate_model.py::test_the_gate_passes_exactly_when_the_promise_holds", "tests/test_eval_private_gate.py::test_a_pre_guard_run_matching_the_set_is_accepted", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_gate_paths.py::test_a_pre_guard_run_is_refused_when_the_private_set_is_gone", "tests/test_eval_private_gate.py::test_a_stale_merged_set_is_a_failed_check_not_an_error"]
 
 [[criterion]]
 id = "C28"
@@ -275,7 +275,7 @@ tests = ["tests/test_eval_merged.py::test_an_open_merged_copy_keeps_its_bytes_wh
 [[criterion]]
 id = "C29"
 plan = "a public-only for-gate run is refused"
-tests = ["tests/test_eval_private_gate.py::test_a_public_only_for_gate_run_is_refused"]
+tests = ["tests/test_eval_private_gate.py::test_a_public_only_for_gate_run_is_refused", "tests/test_eval_gate_model.py::test_the_gate_passes_exactly_when_the_promise_holds"]
 
 [[criterion]]
 id = "C30"

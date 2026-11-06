@@ -294,7 +294,8 @@ def _tick(conn: sqlite3.Connection, clock: Clock) -> None:
         if SEEN.get(aid) == seen:
             continue
         g = gate.compute(conn, aid)
-        SEEN[aid] = seen  # after computing: an error is retried next tick
+        if not gate.transient_in_pass():  # a transient result is retried next tick, never kept
+            SEEN[aid] = seen
         if g.met:
             with write_tx(conn):
                 gate.record(conn, g, clock.now(), passed=True)

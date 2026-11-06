@@ -34,7 +34,9 @@ def canonical(path: Path) -> Path:
     real = Path(os.path.realpath(p))
     if _GETPATH is not None:
         try:
-            fd = os.open(real, os.O_RDONLY)
+            # O_NONBLOCK: a FIFO can't hang it; O_EVTONLY (macOS): no read access asked for, so a
+            # cloud-only (dataless) folder isn't downloaded just to learn its name's case
+            fd = os.open(real, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_EVTONLY", 0))
         except OSError:
             pass
         else:

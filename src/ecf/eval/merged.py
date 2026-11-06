@@ -20,7 +20,7 @@ import shutil
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -271,18 +271,6 @@ def merge_sources(public: Path, private: Path, kinds: tuple[str, ...] = FILES, *
 # reuses the recorded sha256; a mismatch is hashed, so a touched but unchanged file stays fresh.
 
 
-def _walk(root: Path) -> Iterator[Path]:
-    for d in (*COPIED, LINKED):
-        sub = root / d
-        if sub.is_dir():
-            yield from sorted(
-                p for p in sub.iterdir() if p.is_file() and not p.name.startswith(".")
-            )
-    for f in FILES:
-        if (root / f).is_file():
-            yield root / f
-
-
 def _stat(p: Path) -> tuple[int, int, int]:
     st = p.stat()
     return st.st_size, st.st_mtime_ns, st.st_ino
@@ -454,13 +442,16 @@ def _copy_cards(m: Path, halves: tuple[tuple[Path, dict[str, list[Any]]], ...],
     """Copy (or link, for `.build/`) every card and email file of both halves into `m`, skipping
     a file whose merged copy is unchanged since the last refresh. Returns the paths placed."""
     keep: set[str] = set()
+    ready: set[Path] = set()
     for half, man in halves:
         for rel, ent in man.items():
             if rel in FILES:
                 continue
             dst = m / rel
             keep.add(rel)
-            _writable(dst.parent)
+            if dst.parent not in ready:  # once per folder, not per file
+                _writable(dst.parent)
+                ready.add(dst.parent)
             old = prev_merged.get(rel)
             if (
                 old is not None
@@ -501,11 +492,22 @@ def _build(sp: SetPaths) -> None:
         keep.add(kind)
         if not (dst.is_file() and dst.read_bytes() == data):
             _place_copy(dst, dst, data)
-    for p in list(_walk(m)):  # orphans last
-        rel = str(p.relative_to(m))
+    for rel, (p, *_s) in _stats(m).items():  # orphans last
         if rel not in keep:
             p.chmod(0o644)
             p.unlink()
+    merged_man = _manifest(m, prev_merged)
+    copied = {**pub_man, **priv_man}
+    moved = sorted(
+        rel
+        for rel, ent in copied.items()
+        if rel not in FILES and merged_man.get(rel, [None] * 4)[3] != ent[3]
+    )
+    if moved:  # a source changed under the refresh (and maybe back): stay stale, never fresh
+        raise InvalidInputError(
+            f"a source file changed while the merged view was refreshed"
+            f" ({', '.join(moved[:5])}): run `ecf eval build` again"
+        )
     doc = {
         "format": FORMAT,
         "public_version": label_file.set_version(sp.public),
@@ -515,7 +517,7 @@ def _build(sp: SetPaths) -> None:
         "manifest": {
             "public": pub_man,
             "private": priv_man,
-            "merged": _manifest(m, prev_merged),
+            "merged": merged_man,
         },
     }
     tmp = _tmp(m / MERGE_FILE)
@@ -601,7 +603,12 @@ def take_shared(root: Path, *, wait: float = 0.0) -> int | None:
         fd = os.open(sp.lock, os.O_RDONLY)
     except FileNotFoundError as exc:
         raise InvalidInputError(f"{sp.name}: run `ecf eval build` (no merged set yet)") from exc
-    if not _take(fd, fcntl.LOCK_SH, wait):
+    try:
+        got = _take(fd, fcntl.LOCK_SH, wait)
+    except BaseException:
+        os.close(fd)  # never leak the descriptor, whatever `_take` raised
+        raise
+    if not got:
         os.close(fd)
         raise RefreshBusy("a refresh is running; try again")
     return fd

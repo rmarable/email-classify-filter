@@ -515,8 +515,17 @@ def test_a_forced_run_offers_only_draft_reply_and_tells_refusals_apart(
                          (run.run_id,)).fetchone()  # fmt: skip
     metrics = json.loads(saved["metrics"])
     assert metrics["options"]["for_gate"] is False and metrics["options"]["forced_draft"] is True
-    # the gate's set re-pointed here by hand: a forced run is still refused (gate.py, AG9)
-    evalrun.remember_root(connector(db_path), clock, droot)
+    # the gate's set re-pointed by hand to a countable checkout set: a forced run is still
+    # refused for what it is (gate.py, AG9), not only for where it ran
+    from tests.eval_checkout import commit  # noqa: PLC0415
+    from tests.test_eval_recovery_x13 import make_split_drafts  # noqa: PLC0415
+
+    countable = make_split_drafts(droot.parent / "checkout")
+    commit(droot.parent / "checkout", first=True)
+    conn.execute("UPDATE eval_runs SET set_version = ? WHERE run_id = ?",
+                 (evalrun.set_version(countable), run.run_id))  # fmt: skip
+    conn.commit()
+    evalrun.remember_root(connector(db_path), clock, countable)
     check = gate.synthetic(conn, run.key, "C")
     assert not check.ok and "marked not for the gate" in check.detail
     result = load_result(db_path.parent / "evals" / f"{run.run_id}.json")

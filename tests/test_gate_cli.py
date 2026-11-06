@@ -8,15 +8,12 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import date
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from ecf.cli import app
 from ecf.errors import PolicyDeniedError
-from ecf.eval import labels
-from ecf.eval.builder import build_all
 from ecf.paths import Paths
 from ecf_server import claude_pins, db, decide, evalrun, slack_admin
 from ecf_server.clock import FakeClock, to_ts
@@ -54,14 +51,10 @@ def _seed(conn: sqlite3.Connection, clock: FakeClock) -> str:
 def _built_set(root: Path) -> Path:
     """A small real set, every card confirmed, so the run's counts are the set's own (the gate's
     references guard, EVAL-PRIVATE.md)."""
-    synthetic = Path(__file__).parent / "eval" / "synthetic"
-    (root / "cases").mkdir(parents=True)
-    for name in ("starter-bec", "starter-control", "starter-injection"):
-        (root / "cases" / f"{name}.md").write_text((synthetic / "cases" / f"{name}.md").read_text())
-    assert not build_all(root).findings
-    for name in ("starter-bec", "starter-control", "starter-injection"):
-        labels.confirm(root, name, date(2026, 10, 1))
-    return root
+    from tests.eval_checkout import checkout_set  # noqa: PLC0415
+
+    return checkout_set(root, ("starter-bec", "starter-control"), ("starter-injection",),
+                        ("starter-bec", "starter-control", "starter-injection"))  # fmt: skip
 
 
 def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:

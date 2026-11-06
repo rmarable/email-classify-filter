@@ -4,9 +4,7 @@ targets, and the per-band figures."""
 
 from __future__ import annotations
 
-import shutil
 import sqlite3
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +19,7 @@ from ecf.eval.results import RESULT_FORMAT, CaseResult, load_result, window_figu
 from ecf.schema import with_fixed
 from ecf_server import claude_eval, db, evalrun, ruletest, schedule, triggers
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import INJ_TEST, checkout_set
 
 SYNTHETIC = Path(__file__).resolve().parent / "eval" / "synthetic"
 FILLER = " ".join(
@@ -56,15 +55,9 @@ def _card(text: str) -> Card:
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    r = tmp_path / "synthetic"
-    (r / "cases").mkdir(parents=True)
-    for name in ("starter-bec.md", "starter-control.md"):
-        shutil.copy(SYNTHETIC / "cases" / name, r / "cases" / name)
-    (r / "cases" / "long-signal.md").write_text(LONG)
-    assert not build_all(r).findings
-    for cid in ("starter-bec", "starter-control", "long-signal"):
-        labels.confirm(r, cid, date(2026, 10, 1))
-    return r
+    return checkout_set(tmp_path, ("starter-bec", "starter-control", "long-signal"),
+                        (INJ_TEST,), ("starter-bec", "starter-control", "long-signal"),
+                        texts={"long-signal": LONG})  # fmt: skip
 
 
 # Cards: the phrases, where they go, and yes/no injection targets.
@@ -347,13 +340,8 @@ def test_a_policy_rescore_plans_a_claude_run_at_its_sensitivity(
     it would hide it, a change on a result made with today's code (fix check F2, G1)."""
     from tests import test_claude_eval as ce  # noqa: PLC0415
 
-    r = tmp_path / "set"
-    (r / "cases").mkdir(parents=True)
-    for name in ("starter-bec.md", "hide-genuine-backup-summary.md"):
-        shutil.copy(SYNTHETIC / "cases" / name, r / "cases" / name)
-    assert not build_all(r).findings
-    for cid in ("starter-bec", "hide-genuine-backup-summary"):
-        labels.confirm(r, cid, date(2026, 10, 1))
+    r = checkout_set(tmp_path / "set", ("starter-bec", "hide-genuine-backup-summary"),
+                     (INJ_TEST,), ("starter-bec", "hide-genuine-backup-summary"))  # fmt: skip
     notice = with_fixed(ce.MARKETING | {"category": "notification", "sender_type": "automated",
                                          "requires_action": False, "fraud_risk": "none",
                                          "requires_reply": False})  # fmt: skip

@@ -9,7 +9,6 @@ import json
 import shutil
 import sqlite3
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -20,28 +19,21 @@ from typer.testing import CliRunner
 
 from ecf import cli
 from ecf.errors import InvalidInputError, NotFoundError
-from ecf.eval import labels
-from ecf.eval.builder import build_all
 from ecf.eval.results import load_result
 from ecf_server import claude_eval, evalrun, message, ruletest, slack_admin, triggers
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock
 from tests import test_claude_eval as ce
+from tests.eval_checkout import INJ_TEST, checkout_set
 from tests.test_eval_window import LONG
 
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     """Two starter cards and a long card whose signal and injection sit past 1,500."""
-    r = tmp_path / "synthetic"
-    (r / "cases").mkdir(parents=True)
-    for name in ("starter-bec.md", "starter-control.md"):
-        shutil.copy(ce.SYNTHETIC / "cases" / name, r / "cases" / name)
-    (r / "cases" / "long-signal.md").write_text(LONG)
-    assert not build_all(r).findings
-    for cid in ("starter-bec", "starter-control", "long-signal"):
-        labels.confirm(r, cid, date(2026, 10, 1))
-    return r
+    return checkout_set(tmp_path, ("starter-bec", "starter-control", "long-signal"),
+                        (INJ_TEST,), ("starter-bec", "starter-control", "long-signal"),
+                        texts={"long-signal": LONG})  # fmt: skip
 
 
 @pytest.fixture(autouse=True)
@@ -187,8 +179,13 @@ def test_a_rescore_keeps_the_window_and_the_cases(
 def test_a_for_gate_run_on_another_root_is_refused_while_the_old_set_exists(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
-    other = tmp_path / "other"
-    shutil.copytree(root, other)
+    other = checkout_set(
+        tmp_path / "other",
+        ("starter-bec", "starter-control", "long-signal"),
+        (INJ_TEST,),
+        ("starter-bec", "starter-control", "long-signal"),
+        texts={"long-signal": LONG},
+    )  # another checkout's copy of the set
     ce.start(db_path, clock, root)
     assert _remembered(conn) == str(root.resolve())
     claude_eval.reset()

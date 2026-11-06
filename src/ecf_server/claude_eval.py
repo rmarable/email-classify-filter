@@ -871,17 +871,22 @@ def _carried(p: draftruns.Registration, digests: dict[str, str], ids: set[str]) 
 
 
 def _check_clean(root: Path) -> gitcheck.Clean | None:
-    """A for-gate run on a set with a private half needs both halves committed and the private
-    one pushed, checked live at its start; a set in a checkout's `tests/eval/` without its private
-    half is refused (EVAL-PRIVATE.md, "The gate guard"; scope: operator decision 2026-11-06)."""
+    """A run for the gate is only ever on a checkout's set with its private half, both halves
+    committed and the private one pushed, checked live at its start: any other set (public only,
+    outside a checkout) is refused (EVAL-PRIVATE.md, "The gate guard"; operator decision
+    2026-11-06, round 3: replaces the earlier checkout-only scope)."""
     sp = merged.paths(root)
-    if sp.top is None:
-        return None
-    if sp.private is None:
-        raise InvalidInputError(f"a run for the gate needs the private set: this checkout has no"
-                                f" eval/private/{sp.name} (public set only). Pass --not-for-gate"
-                                " for an experiment")  # fmt: skip
-    got = gitcheck.clean_and_pushed(sp.top, sp.name)
+    if sp.top is None or sp.private is None:
+        where = (
+            f"this checkout has no eval/private/{sp.name}"
+            if sp.top is not None
+            else f"{root} isn't a checkout's tests/eval/<set>"
+        )
+        raise InvalidInputError(
+            f"a run for the gate needs a checkout's set with its private"
+            f" half: {where}. Pass --not-for-gate for an experiment"
+        )
+    got = gitcheck.clean_and_pushed(sp.top, sp.name, fresh=True)  # a run's start: always live
     if not got.ok:
         raise InvalidInputError(f"a run for the gate needs the set committed and pushed:"
                                 f" {got.detail}")  # fmt: skip

@@ -12,12 +12,12 @@ import pytest
 
 from ecf import cli_admin
 from ecf.errors import InvalidInputError, PolicyDeniedError, StepupRequiredError
-from ecf.eval.builder import build_all
 from ecf_server import claude_pins, db, decide, evalrun, gate, review, slack_admin, stages, stepup
 from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
 from ecf_server.stepper import FakeStepper
+from tests.eval_checkout import checkout_set
 from tests.test_decide import KNOWN_BULK, MARKETING, make_classified
 from tests.test_decide import make_address as _address
 
@@ -53,12 +53,8 @@ def make_address(conn: sqlite3.Connection, clock: FakeClock, stage: str) -> None
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    """A one-card set, built (the gate reads every row's file)."""
-    (tmp_path / "cases").mkdir()
-    name = "starter-control.md"
-    (tmp_path / "cases" / name).write_bytes((SYNTHETIC / "cases" / name).read_bytes())
-    assert not build_all(tmp_path).findings
-    return tmp_path
+    """A set the gate can count: a checkout's two halves, committed and pushed."""
+    return checkout_set(tmp_path, ("starter-control",), ("starter-injection",))
 
 
 def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,  # noqa: PLR0913 - run fields
