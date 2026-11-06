@@ -17,6 +17,13 @@ The rules shared with Codex are in `AGENTS.md` (OD-532, ADR 0033):
   before the merge, or back to Codex as a list.
 - Phase R and a branch's first diff review run on Fable, later rounds on Opus (OD-577, amends OD-532); a Fable round falls back to Opus when Fable is out of credits (OD-562); Codex isn't one of the reviewers.
 
+## Other sessions
+
+- At session start and before heavy work, run `ListAgents`; message each active peer with
+  `SendMessage` (AGENTS.md, "Shared machine", OD-703). Agree shared splits (OD ranges, freezes, who
+  edits which lines of the state file) by message, and record them as one line in your own entry.
+- When a peer asks you to pause or shrink a run, do it or say why not, in the same turn.
+
 ## Session state
 
 - `CLAUDE-STATE.md` holds local working state. It is gitignored, must never be committed, and is loaded automatically through `CLAUDE.local.md` (gitignored; the single line `@CLAUDE-STATE.md`).

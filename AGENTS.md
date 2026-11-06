@@ -147,3 +147,12 @@ sessions or subagents of each.
   local working state and off limits. Decisions themselves are in SPEC and `docs/adr/`. Revisit if
   Codex reports it can't reference the archive of stated decisions (`state-archive/`), or if the
   operator changes their mind (OD-532).
+- **Shared machine** (operator decision 2026-11-06, OD-703): sessions and subagents of both kinds
+  run side by side on one computer and share its memory, CPU and disk. Before heavy work (the full
+  suite, a move simulation, model checks that use more than ~1 GB or all cores, evals, builds), tell
+  the other active sessions what will run and roughly what it uses; Codex tells the operator, who
+  passes it on. Priority follows the task: work that blocks a gate, a merge or the operator runs
+  first, and other sessions shrink (fewer workers, one run at a time) or pause when asked. If two
+  tasks conflict and neither clearly ranks higher, ask the operator. Never stop, kill or slow down
+  another session's process yourself; ask that session to do it. Answer a peer's request before
+  starting new work.
