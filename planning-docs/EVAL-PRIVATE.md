@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 28, 2026-11-06. Not built.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 29, 2026-11-06. Step 3 in build.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -67,6 +67,8 @@ start-up retry loop with plain lock waits (X13), with OD-695. Draft 26 (6d84350)
 twenty-fifth Opus check, scoped to the core, with no highs; it confirmed the underlying problem is
 fixed, and its text fixes are folded in with OD-696 (operator, 2026-11-06). A delta check of draft 27
 (8cb51a5) found it ready to build once one Step 3 test bound was corrected, done here with OD-697.
+Step 3's fourth code review (round 4, Opus) found `git status` blind to an edit hidden by an index
+flag; draft 29 proves the set's content against HEAD instead, with OD-704 (operator, 2026-11-06).
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -364,7 +366,7 @@ on and keeps future releases clean. Rewriting history is not proposed.
   limit, and refreshes under the exclusive lock only if the set is still stale (Design, "The merged
   set").
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695), OD-697 (draft 28: the Step 3 lock test's refresh bound; amends OD-696). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695), OD-697 (draft 28: the Step 3 lock test's refresh bound; amends OD-696), OD-704 (draft 29: clean proven by content against HEAD, the fingerprint over every set file, recent files re-hashed; amends OD-648 and OD-643). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -540,7 +542,9 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   `checks.yaml` (it loads through
   `ecf.yamlio`, whose loader refuses duplicate keys),
   so a private card's expected replies can't sit in a public file unnoticed; CI also runs this
-  ownership check on the public sets alone. `cases/` and `eml/` are plain copies (small; a full copy
+  ownership check on the public sets alone, through the same function as the merge (the card scan
+  parses each set file as the merge does and scans every value with trigger 10's text check;
+  OD-704). `cases/` and `eml/` are plain copies (small; a full copy
   measured 105 ms), made read-only; `.build/` files are links to the sources (large): an APFS clone
   where available (`clonefile` from `libSystem` through `ctypes`, since Python has none; cloned to a
   temporary name, then renamed, since `clonefile` refuses an existing destination; a non-zero return
@@ -651,15 +655,18 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   gate's detail shows them. `git` runs in the service (the gate computes there, `gate.py:124`) as
   `/usr/bin/git -C <repository top> --no-optional-locks -c core.fsmonitor=false -c
   core.hooksPath=/dev/null -c core.attributesFile=/dev/null` with `GIT_OPTIONAL_LOCKS=0`,
-  `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, `status --porcelain --ignore-submodules
-  --ignored=matching -- <set path>` (`-C <top>` and `tests/eval/<set>` for the public repository,
-  `-C <top>/eval/private` and `<set>` for the private one; a pathspec, so changes elsewhere don't count;
-  an ignored file under `cases/` or `eml/` counts as dirty, except `*.tmp` and `.DS_Store`, since an
-  uncommitted ignore rule could otherwise hide a card the merge copies; the public `.gitignore`'s
-  `!tests/eval/*/cases/**` (line 78) re-includes everything under `cases/`, so the two ignore rules
-  for them go after it and the status parser also ignores those two names in `??` and `!!` lines; the
-  check runs on the gate's set, `synthetic`, only, since `heldout3/eml/` is ignored in both
-  repositories), a timeout of
+  `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`. Clean means the set's content is
+  HEAD's (operator decision 2026-11-06, OD-704; draft 28 asked `git status`, which an
+  assume-unchanged or skip-worktree flag in the index blinds, Step 3 review round 4): one
+  `ls-tree -r -z <HEAD> -- <set path>` per repository (HEAD read from its ref files; `-C <top>` and
+  `tests/eval/<set>` for the public repository, `-C <top>/eval/private` and `<set>` for the private
+  one), and a walk of the set folder (no `git`, no ignore rules, symbolic links listed not followed)
+  that hashes each file as git does (sha1 or sha256 by the repository's format); a file missing,
+  added (untracked and ignored alike) or with another blob id is dirty, and a file that can't be read
+  counts as changed. Left out of the walk: `.build/` (built, ignored by design), `*.tmp` and
+  `.DS_Store`. So neither the index, `status` options (`status.showUntrackedFiles=no` made the old
+  command fail) nor an uncommitted ignore rule can make an edit look committed. About 38 ms for
+  `synthetic`'s 797 files (Step 3, round 4); it runs only when the fingerprint changes. A timeout of
   a few seconds and an argv test (the `/usr/bin/git` shim adds about 6 ms a call over the Command
   Line Tools binary, 10.9 against 4.9 ms in round 9, and survives Xcode switches); the repository's own config is trusted as
   the operator's. Any `git` error, timeout or missing binary counts as not clean, with its message, and
@@ -673,11 +680,15 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   repositories: the HEAD file, the config file (and a worktree's `config.worktree`), the loose branch
   ref and `packed-refs` (both), every file under
   `refs/remotes/` (a push renames `refs/remotes/<remote>/<branch>` and leaves `refs/remotes` itself
-  unchanged, measured 2026-11-05) and the index; and a stat walk of both source sets' `cases/`,
-  `eml/` and label files (every file's name, size, `mtime_ns` and inode: about 2 ms for `synthetic`'s
-  797 entries, measured in round 8; `.build/` is left out, its sha256 is checked on load), which catches an
-  in-place edit that changes no folder or index time; a missing file is a value, not an error; the
-  walk runs once per pass. In a worktree, where `.git` is a file, the paths come from its `gitdir:` line
+  unchanged, measured 2026-11-05) and the index; and a stat walk of every file the clean check
+  hashes, in both source sets (the same walk, OD-704: every file's name, size, `mtime_ns` and inode,
+  so an edit to `checks.yaml`, `reviews.jsonl` or any other set file counts too; about 6 ms for
+  `synthetic`'s 797 files, Step 3 round 4; `.build/` is left out, its sha256 is checked on load),
+  which catches an in-place edit that changes no folder or index time; a missing file is a value, not
+  an error; the walk runs once per pass. A stat can't vouch for a file written within the last 2 s (a
+  same-size rewrite in one timestamp tick keeps it): the merge manifest records such a file so that
+  it is hashed again next time, and a cached gate state keeps those files' sha256 and counts only
+  while they hold (OD-704). In a worktree, where `.git` is a file, the paths come from its `gitdir:` line
   and `commondir`, read without `git`. Accepted limit: a plain `git status` (an editor, a shell prompt)
   rewrites the public index, costing one recompute per tick for addresses that haven't passed. The
   set-level part of the check (merge, load, `git`) is cached by that whole fingerprint plus `merge.json`
