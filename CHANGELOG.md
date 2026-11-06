@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: the eval gate treats a test set as committed only when every file matches the commit, so an edit hidden from `git status` can't count, and the prompt-injection card scan reads label and check files exactly as the merge does (OD-704).
 - Decided: in AWS mode (M1) a key rotation is finished only on the computer that holds its key text; finishing a maintenance job from another computer is a separate M2 task, apart from multi-user teams (OD-732).
 - Decided: coding agents share the computer: they announce heavy runs to each other, the task that blocks a gate, a merge or the operator goes first, and the others shrink or pause when asked (OD-703).
 - Decided: the planned test of several installs starting at once uses realistic test-set refresh times (OD-697).
