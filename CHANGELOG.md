@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: in AWS mode (M1) a key rotation is finished only on the computer that holds its key text; finishing a maintenance job from another computer is a separate M2 task, apart from multi-user teams (OD-732).
 - Decided: coding agents share the computer: they announce heavy runs to each other, the task that blocks a gate, a merge or the operator goes first, and the others shrink or pause when asked (OD-703).
 - Decided: the planned test of several installs starting at once uses realistic test-set refresh times (OD-697).
 - Decided: at startup ecf waits up to 5 seconds per eval test set for its lock and refreshes it only if still needed, and the daily check for prompt-injection test emails reads other branches and tags only for test emails not already on the main branch (OD-696).
