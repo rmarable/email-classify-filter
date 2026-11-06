@@ -281,3 +281,73 @@ def test_an_in_place_write_through_a_hard_link_refuses_a_run_for_the_gate(
     with pytest.raises(InvalidInputError, match="out of date"):
         claude_start(db_path, clock, pub, preset="C")
     assert claude_eval.current() is None
+
+
+def test_the_version_and_the_rows_come_from_one_read_of_the_label_file(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B7, "Torn reads": a label file rewritten between reads can't give a version of one copy
+    and rows of another; read_set reads it once."""
+    index = root / "labels.jsonl"
+    before = index.read_bytes()
+    reads: list[int] = []
+    real = Path.read_bytes
+
+    def once_then_rewrite(self: Path) -> bytes:
+        data = real(self)
+        if self == index:
+            reads.append(1)
+            index.write_bytes(b"")  # someone rewrites it right after the read
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", once_then_rewrite)
+    s = evalrun.read_set(root)
+    monkeypatch.undo()
+    assert len(reads) == 1
+    assert s.version == label_file.version_of(before, None) and len(s.cases) == 3
+
+
+def test_a_same_stat_in_place_write_through_a_hard_link_is_reported_and_refused(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """C5 as the plan states it: an in-place write through the merged folder that keeps the
+    file's size and times passes the freshness check, so the loader itself reports the sha256
+    mismatch and a run for the gate refuses."""
+    del conn
+    pub, priv, _n = _split_set(tmp_path)
+    vid = mg.card_ids(priv)[0]  # a large card's shape: its email in `.build/`, linked, not copied
+    (priv / ".build").mkdir(exist_ok=True)
+    (priv / "eml" / f"{vid}.eml").rename(priv / ".build" / f"{vid}.eml")
+    rows = [json.loads(x) for x in (priv / "labels.jsonl").read_text().splitlines()]
+    rows = [r | ({"file": f".build/{vid}.eml"} if r["id"] == vid else {}) for r in rows]
+    (priv / "labels.jsonl").write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+    repos(tmp_path)
+    monkeypatch.setattr(mg, "_CLONE", None)  # the hard-link path, forced
+    mg.refresh_merged(pub)
+    m = mg.paths(pub).merged
+    assert m is not None
+    victim = next(c for c in evalrun.read_set(pub).cases if c.id == vid)
+    linked = m / ".build" / f"{vid}.eml"
+    assert linked.stat().st_ino == (priv / ".build" / f"{vid}.eml").stat().st_ino
+    st = linked.stat()
+    linked.chmod(0o644)
+    with linked.open("r+b") as f:
+        f.write(b"Y")
+    os.utime(linked, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert mg.is_fresh(mg.paths(pub))  # same size, time and inode: the stat says fresh
+    got = dict(evalrun.read_set(pub).problems)
+    assert got.get(victim.id) == evalrun.CHANGED
+    gitcheck.reset_backoff()
+    with pytest.raises(InvalidInputError, match=f"{victim.id} \\(changed\\)"):
+        claude_start(db_path, clock, pub, preset="C")
+
+
+def test_the_gates_confirmed_count_matches_a_runs_on_the_real_sets() -> None:
+    """L12: `reference_counts` counts confirmed cases with an expectation, `summarize` confirmed
+    scored ones; on a complete run they agree only if every confirmed card has an expectation.
+    Pinned on every committed set (merged with its private half where present)."""
+    eval_dir = Path(__file__).resolve().parent / "eval"
+    for root in sorted(p for p in eval_dir.iterdir() if (p / "labels.jsonl").is_file()):
+        cases = evalrun.read_set(root).cases
+        assert all(c.expected for c in cases if c.confirmed), root.name

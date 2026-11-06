@@ -171,7 +171,7 @@ def test_the_fingerprint_follows_both_halves_and_merge_json(
     # same bytes: nothing copied, but merge.json records the new stat once, so the file is no
     # longer hashed on every freshness check
     assert mg.refresh_merged(split) == "fresh"
-    restat: list[str] = []
+    restat: list[tuple[str, str, str]] = []
     assert mg.is_fresh(mg.paths(split), restat) and restat == []
     before = gate.inputs(conn, "ap", DIGEST)
     assert mg.refresh_merged(split) == "fresh"

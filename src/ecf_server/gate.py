@@ -37,9 +37,12 @@ the action refuses it.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import sqlite3
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -195,8 +198,9 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
     run = conn.execute("SELECT max(created_at) FROM eval_runs WHERE digest = ?",
                        (digest,)).fetchone()  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
+    key = (*_set_key(Path(root)), _RETRY[0]) if root else None
     return (GATE_VERSION, digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0],
-            senders[0], run[0], root, _set_key(Path(root)) if root else None)  # fmt: skip
+            senders[0], run[0], root, key)  # fmt: skip
 
 
 def _set_stats(root: Path) -> tuple[Any, ...] | None:
@@ -257,12 +261,14 @@ def unsafe(plan: dict[str, Any]) -> bool:
     return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
-# The set's state, read once per pass and shared by the tick, `stages.status` and
-# `address_gate` (EVAL-PRIVATE.md, "The gate guard": the set-level part is cached, not run per
-# address). One entry, keyed by the label files' and merge.json's stats and the repositories'
-# git fingerprint. A transient result (git
-# failing, a refresh holding the lock) is kept for one pass only and bumps `_RETRY`, an input,
-# so the next tick tries again. `stage set live` reads it fresh.
+# The set's state, read once and shared by the tick, `stages.status` and `address_gate`
+# (EVAL-PRIVATE.md, "The gate guard": the set-level part is cached, not run per address). One
+# entry, keyed by everything the read depends on: the stats of every file in the set it reads
+# (the merged view, or the public set), the sources' label files and merge.json, and the
+# repositories' git fingerprint. Inside one pass (`one_pass`: a tick, a status request) the key
+# is worked out once. A transient result (git failing, a refresh holding the lock) is kept for
+# one pass only and bumps `_RETRY`, an input, so the next tick tries again. `stage set live`
+# reads it fresh.
 
 
 @dataclass(frozen=True)
@@ -280,6 +286,8 @@ _STATE: dict[tuple[Any, ...], tuple[SetState, float]] = {}
 _RETRY = [0]
 PASS_S = 1.0
 _now = time.monotonic  # a seam for tests
+_PASS: contextvars.ContextVar[dict[str, tuple[Any, ...]] | None] = contextvars.ContextVar(
+    "gate_pass", default=None)  # fmt: skip
 
 
 def reset_cache() -> None:
@@ -287,27 +295,44 @@ def reset_cache() -> None:
     _STATE.clear()
 
 
+@contextlib.contextmanager
+def one_pass() -> Generator[None]:
+    """One tick or one request: inside it each set's key is worked out once and shared by every
+    address (no memo outside a pass, so a change is seen at the next call)."""
+    token = _PASS.set({})
+    try:
+        yield
+    finally:
+        _PASS.reset(token)
+
+
 def _set_key(root: Path) -> tuple[Any, ...]:
-    """What the set's state depends on: stats and the git fingerprint, no hashing (about 5 ms).
-    Worked out on every call, never remembered, so a change is seen at once."""
+    """What the set's state depends on, from stats and the git fingerprint (no hashing)."""
+    memo = _PASS.get()
+    if memo is not None and str(root) in memo:
+        return memo[str(root)]
     sp = merged.paths(root)
     git = (None if sp.private is None or sp.top is None
            else gitcheck.fingerprint(sp.top, sp.name))  # fmt: skip
-    return (str(root), _set_stats(root), git, _RETRY[0])
+    view = sp.merged if sp.private is not None and sp.merged is not None else sp.public
+    read = tuple(sorted((rel, s[1:]) for rel, s in merged.file_stats(view).items()))
+    key = (str(root), _set_stats(root), read, git)
+    if memo is not None:
+        memo[str(root)] = key
+    return key
 
 
 def set_state(root: Path, *, fresh: bool = False) -> SetState:
-    key = _set_key(root)
-    now = _now()
+    key = (*_set_key(root), _RETRY[0])
     hit = _STATE.get(key)
-    if hit is not None and not fresh and (not hit[0].transient or now - hit[1] < PASS_S):
+    if hit is not None and not fresh and (not hit[0].transient or _now() - hit[1] < PASS_S):
         return hit[0]
     got = _read_state(root)
     if got.transient:  # the tick's inputs change, so the next tick tries again; this pass's
         _RETRY[0] += 1  # other callers share this result under the key they will compute
         key = (*key[:-1], _RETRY[0])
     _STATE.clear()  # one entry: the current state
-    _STATE[key] = (got, now)
+    _STATE[key] = (got, _now())  # stamped after the read: a slow read still lasts its pass
     return got
 
 
@@ -381,6 +406,11 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
                      f" version of the set: run {again}")  # fmt: skip
     if state is None:  # unreachable: a version came from it
         return Check("synthetic", False, "the gate's set can't be read")
+    sp = merged.paths(Path(str(root)))
+    if sp.top is not None and sp.private is None:  # D2b at the gate too (EVAL-PRIVATE.md)
+        return Check("synthetic", False, f"the gate's set is in a checkout without"
+                     f" eval/private/{sp.name} (public set only): run {again} from a checkout"
+                     " with the private set")  # fmt: skip
     if state.problems:  # every card must run as read (EVAL-PRIVATE.md, "Fail closed")
         return Check("synthetic", False, f"the gate's set has cards that can't run as read:"
                      f" {state.problem_text}. Run `ecf eval build`")  # fmt: skip

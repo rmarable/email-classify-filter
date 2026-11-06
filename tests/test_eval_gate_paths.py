@@ -93,7 +93,8 @@ def test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off(  # C9
     assert len(calls) == 1
     now = [gate._now() + 100.0]  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(gate, "_now", lambda: now[0])
-    for _ in range(gitcheck.BACKOFF):  # later passes back off: no git at all
+    monkeypatch.setattr(gitcheck, "_now", lambda: now[0])
+    for _ in range(5):  # later passes, within the backoff: no git at all
         now[0] += gate.PASS_S + 1
         assert "retried shortly" in gate.synthetic(conn, DIGEST).detail
     assert len(calls) == 1
@@ -238,3 +239,102 @@ def test_routes_read_the_merged_set(split: Path) -> None:  # B24
     (st,) = out["sets"]
     cases, _ = evalrun.load(split, fraud_only=False)
     assert st["confirmed"] + st["unconfirmed"] == len(cases)
+
+
+# The gate's cache (review round 2, M7, P1, P2): its key covers every file the read reads, a
+# slow transient read is shared by the rest of its pass, and a pass works out the key once.
+
+
+def test_a_merged_email_lost_after_a_good_check_is_seen_at_the_next_check(
+    conn: sqlite3.Connection, clock: FakeClock, split: Path
+) -> None:
+    _run(conn, clock, split, _counts(split))
+    assert gate.synthetic(conn, DIGEST).ok  # cached
+    m = mg.paths(split).merged
+    assert m is not None
+    eml = next((m / "eml").glob("*.eml"))
+    eml.chmod(0o644)
+    eml.unlink()
+    check = gate.synthetic(conn, DIGEST)  # not fresh=True: the key moved
+    assert not check.ok
+
+
+def test_a_slow_transient_read_is_shared_by_the_rest_of_its_pass(
+    conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(conn, clock, split, _counts(split))
+    now = [gate._now()]  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(gate, "_now", lambda: now[0])
+    calls: list[str] = []
+
+    def hang(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd[-1])
+        now[0] += 3 * gate.PASS_S  # the read takes longer than a pass
+        raise subprocess.TimeoutExpired("git", 5)
+
+    monkeypatch.setattr(gitcheck, "_run_git", hang)
+    for _ in range(4):
+        assert not gate.synthetic(conn, DIGEST).ok
+    assert len(calls) == 1
+
+
+def test_a_pass_works_out_the_sets_key_once(
+    conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_address(conn, clock, "assist")
+    _run(conn, clock, split, _counts(split))
+    prints: list[int] = []
+    real = gitcheck.fingerprint
+
+    def counted(top: Path, name: str) -> Any:
+        prints.append(1)
+        return real(top, name)
+
+    monkeypatch.setattr(gitcheck, "fingerprint", counted)
+    with gate.one_pass():
+        for _ in range(3):
+            gate.inputs(conn, "ap", DIGEST)
+            gate.compute(conn, "ap")
+    assert len(prints) == 1
+    gate.compute(conn, "ap")  # outside a pass: worked out again, never remembered
+    assert len(prints) == 2
+    entered: list[bool] = []
+    real_pass = gate.one_pass
+
+    def watched() -> Any:
+        entered.append(True)
+        return real_pass()
+
+    monkeypatch.setattr(gate, "one_pass", watched)
+    stages.status(conn, clock.now())
+    stages.tick(conn, clock)
+    assert entered == [True, True]  # status and the tick each run as one pass
+
+
+def test_git_timing_out_refuses_a_for_gate_run(  # C6, the timeout half
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, split: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    del conn
+    _count_git(monkeypatch, subprocess.TimeoutExpired("git", 5))
+    with pytest.raises(InvalidInputError, match="committed and pushed: git: git timed out"):
+        claude_start(db_path, clock, split, preset="C")
+    assert claude_eval.current() is None
+
+
+def test_step_5s_call_on_a_database_copy(  # C61, as Step 5 makes it: a backup, read only
+    conn: sqlite3.Connection, clock: FakeClock, split: Path, tmp_path: Path
+) -> None:
+    make_address(conn, clock, "assist")
+    _run(conn, clock, split, _counts(split), version="0" * 16)
+    copy = tmp_path / "copy.db"
+    dst = sqlite3.connect(copy)
+    conn.backup(dst)
+    dst.close()
+    ro = sqlite3.connect(f"file:{copy}?mode=ro", uri=True)
+    ro.row_factory = sqlite3.Row
+    try:
+        digest = claude_pins.address_key(ro, "ap")
+        assert gate.synthetic(ro, digest).detail.startswith("the latest run (ce3be1df")
+    finally:
+        ro.close()

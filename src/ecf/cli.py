@@ -986,7 +986,7 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
             for placed in report.placed:
                 typer.echo("  " + placement_line(*placed))
     if len(halves) > 1:
-        merged.refresh_merged(root)
+        merged.refresh_merged(root, wait=merged.CLI_WAIT_S)
         typer.echo(f"commit tests/eval/{root.name} and eval/private/{root.name}")
 
 

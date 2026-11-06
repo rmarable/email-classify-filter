@@ -20,12 +20,12 @@ tests = ["tests/test_eval_merged.py::test_a_refresh_waits_for_or_refuses_a_held_
 [[item]]
 id = "B4"
 plan = "the resolver in `ecf.eval`"
-tests = ["tests/test_eval_merged.py::test_resolver_cases", "tests/test_eval_merged.py::test_resolver_refuses_a_private_or_merged_path", "tests/test_eval_resolver_wiring.py::test_the_loader_and_version_read_the_merged_set"]
+tests = ["tests/test_eval_merged.py::test_resolver_cases", "tests/test_eval_merged.py::test_resolver_refuses_a_private_or_merged_path", "tests/test_eval_resolver_wiring.py::test_the_loader_and_version_read_the_merged_set", "tests/test_eval_identity.py::test_every_spelling_of_a_sets_path_is_the_same_set", "tests/test_eval_identity.py::test_the_private_and_merged_folders_are_refused_however_spelled", "tests/test_eval_identity.py::test_a_symlink_to_a_checkouts_set_is_that_set"]
 
 [[item]]
 id = "B5"
 plan = "`merge.json` and the in-memory recomputation"
-tests = ["tests/test_eval_merged.py::test_a_consistent_hand_edit_of_the_merged_files_is_refused", "tests/test_eval_private_gate.py::test_the_fingerprint_follows_both_halves_and_merge_json"]
+tests = ["tests/test_eval_merged.py::test_a_consistent_hand_edit_of_the_merged_files_is_refused", "tests/test_eval_private_gate.py::test_the_fingerprint_follows_both_halves_and_merge_json", "tests/test_eval_merged.py::test_a_writer_at_any_step_of_a_refresh_never_leaves_a_stale_view_called_fresh"]
 
 [[item]]
 id = "B6"
@@ -35,7 +35,7 @@ tests = ["tests/test_eval_resolver_wiring.py::test_stored_roots_are_logical", "t
 [[item]]
 id = "B7"
 plan = "one-read loading and per-case re-check"
-tests = ["tests/test_eval_set_read.py::test_a_complete_set_reads_with_no_problems", "tests/test_eval_set_read.py::test_case_bytes_checks_the_hash", "tests/test_eval_set_read.py::test_a_case_edited_under_a_run_fails_it"]
+tests = ["tests/test_eval_set_read.py::test_the_version_and_the_rows_come_from_one_read_of_the_label_file", "tests/test_eval_set_read.py::test_a_complete_set_reads_with_no_problems", "tests/test_eval_set_read.py::test_case_bytes_checks_the_hash", "tests/test_eval_set_read.py::test_a_case_edited_under_a_run_fails_it"]
 
 [[item]]
 id = "B8"
@@ -45,7 +45,7 @@ tests = ["tests/test_eval_set_read.py::test_each_kind_of_problem_is_reported_not
 [[item]]
 id = "B9"
 plan = "the gate guard"
-tests = ["tests/test_eval_private_gate.py::test_a_run_matching_the_set_passes_the_guard", "tests/test_eval_private_gate.py::test_a_run_that_read_none_of_a_half_is_refused", "tests/test_eval_private_gate.py::test_a_pre_guard_run_with_other_counts_is_refused_with_the_exact_message", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_private_gate.py::test_a_fraud_only_run_is_checked_on_fraud_guard_cases_only"]
+tests = ["tests/test_eval_identity.py::test_a_respelled_root_cant_pass_the_gate_without_the_private_set", "tests/test_eval_private_gate.py::test_a_run_matching_the_set_passes_the_guard", "tests/test_eval_private_gate.py::test_a_run_that_read_none_of_a_half_is_refused", "tests/test_eval_private_gate.py::test_a_pre_guard_run_with_other_counts_is_refused_with_the_exact_message", "tests/test_eval_private_gate.py::test_the_version_comes_first", "tests/test_eval_private_gate.py::test_a_fraud_only_run_is_checked_on_fraud_guard_cases_only"]
 
 [[item]]
 id = "B10"
@@ -55,7 +55,7 @@ tests = ["tests/test_eval_gitcheck.py::test_the_fingerprint_follows_every_change
 [[item]]
 id = "B11"
 plan = "the hardened live dirty check"
-tests = ["tests/test_eval_gitcheck.py::test_the_argv_reads_only_the_repositorys_own_config", "tests/test_eval_gitcheck.py::test_an_edit_or_a_new_card_is_dirty", "tests/test_eval_set_read.py::test_every_git_call_in_a_check_shares_one_timeout", "tests/test_eval_set_read.py::test_no_private_half_is_never_clean"]
+tests = ["tests/test_eval_gitcheck.py::test_the_argv_reads_only_the_repositorys_own_config", "tests/test_eval_gitcheck.py::test_an_edit_or_a_new_card_is_dirty", "tests/test_eval_gitcheck.py::test_an_ignored_set_file_is_dirty", "tests/test_eval_gitcheck.py::test_an_oddly_named_uncommitted_card_is_reported_by_its_real_name", "tests/test_eval_set_read.py::test_every_git_call_in_a_check_shares_one_timeout", "tests/test_eval_set_read.py::test_no_private_half_is_never_clean"]
 
 [[item]]
 id = "B12"
@@ -66,7 +66,7 @@ deferred = "its call in build_all for a public set lands in the move commit (pla
 [[item]]
 id = "B13"
 plan = "X5's script and `card_injection` in the hook, CI, sdist and merge-gate scans"
-tests = ["tests/test_card_scan.py::test_card_and_text_injection_flag_the_phrase_and_nothing_else", "tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
+tests = ["tests/test_card_scan.py::test_card_and_text_injection_flag_the_phrase_and_nothing_else", "tests/test_card_scan.py::test_an_oddly_named_file_under_tests_eval_is_refused", "tests/test_card_scan.py::test_git_output_is_read_without_quoting", "tests/test_card_scan.py::test_a_push_cant_exempt_its_own_card_by_listing_it", "tests/test_card_scan.py::test_the_private_hook_runs_the_hygiene_scan", "tests/test_card_scan.py::test_a_private_clone_is_recognised_by_its_config_wherever_it_sits", "tests/test_card_scan.py::test_a_repository_that_is_neither_is_refused", "tests/test_card_scan.py::test_the_hook_skips_blobs_main_already_has_but_not_new_ones", "tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
 deferred = "the sdist test's marker assertion and the merge gate's tree-scan line land in the move commit (plan, as above)"
 
 [[item]]
@@ -128,7 +128,7 @@ tests = ["tests/test_eval_gate_paths.py::test_routes_read_the_merged_set", "test
 [[item]]
 id = "B25"
 plan = "the per-request gate cache"
-tests = ["tests/test_eval_set_read.py::test_the_gate_reads_the_set_once_while_nothing_changes", "tests/test_eval_gate_paths.py::test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off"]
+tests = ["tests/test_eval_set_read.py::test_the_gate_reads_the_set_once_while_nothing_changes", "tests/test_eval_gate_paths.py::test_a_pass_works_out_the_sets_key_once", "tests/test_eval_gate_paths.py::test_a_merged_email_lost_after_a_good_check_is_seen_at_the_next_check", "tests/test_eval_gate_paths.py::test_a_slow_transient_read_is_shared_by_the_rest_of_its_pass", "tests/test_eval_gate_paths.py::test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off"]
 
 [[criterion]]
 id = "C1"
@@ -153,12 +153,12 @@ tests = ["tests/test_eval_merged.py::test_an_open_merged_copy_keeps_its_bytes_wh
 [[criterion]]
 id = "C5"
 plan = "with the hard-link path forced, an in-place write through the merged folder makes the loader report the sha256 mismatch and a for-gate run refuse"
-tests = ["tests/test_eval_merged.py::test_hard_linked_build_file_written_in_place_is_refused", "tests/test_eval_set_read.py::test_an_in_place_write_through_a_hard_link_refuses_a_run_for_the_gate", "tests/test_eval_set_read.py::test_each_kind_of_problem_is_reported_not_dropped"]
+tests = ["tests/test_eval_set_read.py::test_a_same_stat_in_place_write_through_a_hard_link_is_reported_and_refused", "tests/test_eval_merged.py::test_hard_linked_build_file_written_in_place_is_refused", "tests/test_eval_set_read.py::test_an_in_place_write_through_a_hard_link_refuses_a_run_for_the_gate"]
 
 [[criterion]]
 id = "C6"
 plan = "`git` failing or timing out makes a for-gate run refuse and is retried on the next tick"
-tests = ["tests/test_eval_gate_paths.py::test_git_failing_refuses_a_for_gate_run_and_the_gate_retries_next_time"]
+tests = ["tests/test_eval_gate_paths.py::test_git_failing_refuses_a_for_gate_run_and_the_gate_retries_next_time", "tests/test_eval_gate_paths.py::test_git_timing_out_refuses_a_for_gate_run"]
 
 [[criterion]]
 id = "C7"
@@ -248,8 +248,8 @@ tests = ["tests/test_eval_gitcheck.py::test_changes_outside_the_set_dont_count"]
 [[criterion]]
 id = "C24"
 plan = "a status call over several addresses, and a tick, run the set-level check once (time recorded, not gated)"
-tests = ["tests/test_eval_set_read.py::test_the_gate_reads_the_set_once_while_nothing_changes"]
-note = "the time is measured, not tested: recorded by the Step 3 diff review (phase-r-raw/step3-diff-performance.md), to SPEC at Step 6"
+tests = ["tests/test_eval_gate_paths.py::test_a_pass_works_out_the_sets_key_once", "tests/test_eval_set_read.py::test_the_gate_reads_the_set_once_while_nothing_changes"]
+note = "the time is measured, not gated: the Step 3 reviews' figures go to SPEC at Step 6"
 
 [[criterion]]
 id = "C25"
@@ -280,7 +280,7 @@ tests = ["tests/test_eval_private_gate.py::test_a_public_only_for_gate_run_is_re
 [[criterion]]
 id = "C30"
 plan = "X5's tests (above) pass, including a card added and removed within one push (refused by the hook, reported by CI), a pushed `.eml` with no card change, and a build error or missing `ecf_server` (refused)"
-tests = ["tests/test_card_scan.py::test_the_hook_refuses_a_card_added_and_removed_in_one_push", "tests/test_card_scan.py::test_the_workflow_reports_a_card_added_and_removed_in_one_push", "tests/test_card_scan.py::test_a_pushed_email_with_no_card_change_is_checked", "tests/test_card_scan.py::test_a_card_that_doesnt_build_is_refused", "tests/test_card_scan.py::test_the_script_fails_closed_without_ecf_server", "tests/test_card_scan.py::test_a_card_that_doesnt_parse_is_refused", "tests/test_card_scan.py::test_a_pdf_placeholder_gives_the_scan_the_same_texts"]
+tests = ["tests/test_card_scan.py::test_the_hook_refuses_a_card_added_and_removed_in_one_push", "tests/test_card_scan.py::test_the_workflow_reports_a_card_added_and_removed_in_one_push", "tests/test_card_scan.py::test_a_pushed_email_with_no_card_change_is_checked", "tests/test_card_scan.py::test_a_card_that_fails_to_build_is_refused", "tests/test_card_scan.py::test_a_card_with_a_value_its_schema_forbids_is_refused", "tests/test_card_scan.py::test_the_script_fails_closed_without_ecf_server", "tests/test_card_scan.py::test_a_card_that_doesnt_parse_is_refused", "tests/test_card_scan.py::test_a_pdf_placeholder_gives_the_scan_the_same_texts"]
 
 [[criterion]]
 id = "C31"
@@ -305,7 +305,7 @@ tests = ["tests/test_eval_run_locks.py::test_a_failed_thread_start_leaves_no_loc
 [[criterion]]
 id = "C35"
 plan = "the same for a Claude run whose `remember_root` or spawn fails"
-tests = ["tests/test_eval_run_locks.py::test_a_claude_run_whose_remember_root_fails_leaves_no_lock_and_another_starts", "tests/test_eval_run_locks.py::test_a_claude_run_whose_spawn_fails_lets_the_next_one_start"]
+tests = ["tests/test_eval_run_locks.py::test_a_claude_run_whose_remember_root_fails_leaves_no_lock_and_another_starts", "tests/test_eval_run_locks.py::test_a_claude_runs_failed_spawn_ends_it_and_clears_only_its_slot", "tests/test_eval_run_locks.py::test_a_claude_run_whose_spawn_fails_lets_the_next_one_start"]
 
 [[criterion]]
 id = "C36"
@@ -326,13 +326,12 @@ tests = ["tests/test_eval_recovery_x13.py::test_a_fresh_set_is_not_refreshed_and
 id = "C39"
 plan = "two and three services starting on one stale set at offsets from 0 to 1 s, with 0.03-0.5 s resolves and a 1-2 s refresh (a real refresh takes 1 s or less), all end with the set fresh and recover, and exactly one refreshes"
 tests = ["tests/test_eval_recovery_x13.py::test_installs_on_one_stale_set_all_recover_and_one_refreshes"]
-note = "timings scaled by 0.1 (the 5 s wait to 0.5 s)"
 
 [[criterion]]
 id = "C40"
 plan = "at a 3 s refresh with three installs a set may close, as round 27 measured (3 of 6 runs), and the test records that rate rather than requiring 0"
 tests = ["tests/test_eval_recovery_x13.py::test_a_3_s_refresh_with_three_installs_may_close_and_the_rate_is_recorded"]
-note = "timings scaled by 0.1; the close count is recorded as a test property"
+note = "the close count is recorded as a test property"
 
 [[criterion]]
 id = "C41"
@@ -374,7 +373,6 @@ tests = ["tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_
 id = "C48"
 plan = "`git push origin foo:main` is scanned as main"
 tests = ["tests/test_card_scan.py::test_a_push_to_main_from_another_branch_is_scanned_as_main"]
-note = "in the hook, which builds the pushed range only, main's name changes nothing else"
 
 [[criterion]]
 id = "C49"
@@ -415,7 +413,7 @@ tests = ["tests/test_eval_gitcheck.py::test_the_fingerprint_follows_a_commit_a_p
 [[criterion]]
 id = "C56"
 plan = "X5's \"Which copy runs\" tests pass"
-tests = ["tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip", "tests/test_card_scan.py::test_the_hook_refuses_deleting_main_and_a_non_commit", "tests/test_card_scan.py::test_the_workflow_refuses_a_ref_that_isnt_a_commit", "tests/test_card_scan.py::test_the_hook_checks_head_colon_main_and_a_new_branch", "tests/test_card_scan.py::test_a_delete_only_push_leaving_an_orphan_email_is_refused", "tests/test_card_scan.py::test_the_workflow_fails_a_push_to_main_whose_before_is_missing", "tests/test_card_scan.py::test_the_daily_run", "tests/test_card_scan.py::test_a_widened_trigger_10_on_an_old_tag_blob_leaves_the_daily_run_green", "tests/test_card_scan.py::test_the_daily_run_scans_a_branch_cut_before_step_3", "tests/test_card_scan.py::test_the_known_list_is_pinned"]
+tests = ["tests/test_card_scan.py::test_the_hook_refuses_new_flagged_and_marked_cards_on_every_ref", "tests/test_card_scan.py::test_a_push_to_main_from_another_branch_is_scanned_as_main", "tests/test_card_scan.py::test_the_workflow_refuses_new_flagged_and_marked_cards_on_a_branch_main_and_a_new_ref", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip", "tests/test_card_scan.py::test_the_hook_refuses_deleting_main_and_a_non_commit", "tests/test_card_scan.py::test_the_workflow_refuses_a_ref_that_isnt_a_commit", "tests/test_card_scan.py::test_the_hook_checks_head_colon_main_and_a_new_branch", "tests/test_card_scan.py::test_a_delete_only_push_leaving_an_orphan_email_is_refused", "tests/test_card_scan.py::test_the_workflow_fails_a_push_to_main_whose_before_is_missing", "tests/test_card_scan.py::test_the_daily_run", "tests/test_card_scan.py::test_a_widened_trigger_10_on_an_old_tag_blob_leaves_the_daily_run_green", "tests/test_card_scan.py::test_the_daily_run_scans_a_branch_cut_before_step_3", "tests/test_card_scan.py::test_the_known_list_is_pinned"]
 
 [[criterion]]
 id = "C57"
@@ -425,7 +423,7 @@ tests = ["tests/test_card_scan.py::test_the_workflow_triggers"]
 [[criterion]]
 id = "C58"
 plan = "on a local bare remote, the `--revs` entry point catches a card commit, a card added and removed, a card added by a merge commit, a new branch and a pushed `.eml`, passes a card deletion and a listed known blob, refuses a new flagged card pushed straight to main (the CI side, with `origin/main` at the pushed commit) and a listed blob in the merge-gate tree scan"
-tests = ["tests/test_card_scan.py::test_the_revs_entry_point_on_a_bare_remote", "tests/test_card_scan.py::test_a_card_added_by_a_merge_commit_is_refused", "tests/test_card_scan.py::test_a_pushed_email_with_no_card_change_is_checked", "tests/test_card_scan.py::test_an_old_marked_card_passes_x1_on_a_branch", "tests/test_card_scan.py::test_the_workflow_refuses_a_flagged_card_pushed_straight_to_main", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
+tests = ["tests/test_card_scan.py::test_the_revs_entry_point_on_a_bare_remote", "tests/test_card_scan.py::test_the_revs_entry_point_on_a_bare_remote_more_cases", "tests/test_card_scan.py::test_a_card_added_by_a_merge_commit_is_refused", "tests/test_card_scan.py::test_a_pushed_email_with_no_card_change_is_checked", "tests/test_card_scan.py::test_an_old_marked_card_passes_x1_on_a_branch", "tests/test_card_scan.py::test_the_workflow_refuses_a_flagged_card_pushed_straight_to_main", "tests/test_card_scan.py::test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip"]
 
 [[criterion]]
 id = "C59"
@@ -440,7 +438,7 @@ tests = ["tests/test_card_scan.py::test_the_hook_checks_a_new_branchs_commits_or
 [[criterion]]
 id = "C61"
 plan = "a script calls `gate.synthetic` (`gate.py:246`) on a database copy with the digest from `claude_pins.address_key`, as Step 5 does"
-tests = ["tests/test_eval_gate_paths.py::test_step_5s_call_with_the_addresss_own_digest"]
+tests = ["tests/test_eval_gate_paths.py::test_step_5s_call_on_a_database_copy", "tests/test_eval_gate_paths.py::test_step_5s_call_with_the_addresss_own_digest"]
 
 [[criterion]]
 id = "C62"

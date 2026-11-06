@@ -46,6 +46,7 @@ HASHES = "tests/eval/moved-ids.sha256"
 LATER = ("long-093",)
 PREFIXES = ("d-inj-", "h3-inj-")
 KEY = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]*):")
+WORD = re.compile(r"[a-z0-9][a-z0-9-]*[a-z0-9]")  # an ID-shaped word
 
 
 def _public(top: Path, name: str) -> Path:
@@ -98,19 +99,29 @@ def _rows(path: Path) -> list[tuple[str, str]]:
 
 
 def _blocks(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """A checks.yaml's header and its top-level blocks, each `(key, text)`."""
+    """A checks.yaml's header and its top-level blocks, each `(key, text)`. The header is what
+    comes before the first key; after it, comment and blank lines directly above a key belong
+    to that key's block, so a comment about a moved card moves with it (review round 2, L10)."""
     lines = text.splitlines(keepends=True)
     i = 0
     while i < len(lines) and not KEY.match(lines[i]):
         i += 1
     head, blocks = "".join(lines[:i]), list[tuple[str, str]]()
+    pending = ""
     for line in lines[i:]:
         m = KEY.match(line)
         if m:
-            blocks.append((m.group(1), line))
+            blocks.append((m.group(1), pending + line))
+            pending = ""
+        elif line.lstrip().startswith("#") or not line.strip():
+            pending += line
         else:
-            k, t = blocks[-1]
-            blocks[-1] = (k, t + line)
+            k, body = blocks[-1]
+            blocks[-1] = (k, body + pending + line)
+            pending = ""
+    if pending:  # trailing comments stay with the last block
+        k, body = blocks[-1]
+        blocks[-1] = (k, body + pending)
     return head, blocks
 
 
@@ -126,11 +137,14 @@ class Moved:
     cards: int = 0
     files: list[str] = field(default_factory=list[str])
     rows: dict[str, int] = field(default_factory=dict[str, int])
+    writes: dict[Path, str] = field(default_factory=dict[Path, str])  # each file's new text
 
 
 def plan_move(top: Path, name: str, ids: list[str]) -> Moved:
-    """What `apply` would move for one set, checked before anything is written: every card is
-    public, nothing it moves is in the private half already (no card, file, row or key)."""
+    """What `apply` would move for one set, worked out and checked before anything is written:
+    every card is public, nothing it moves is in the private half already, and the new label,
+    review and check files, computed in memory, merge back to the old ones (label bytes equal,
+    the review rows the same multiset, checks.yaml parsing equal with no key in both)."""
     pub, priv = _public(top, name), _private(top, name)
     want = set(ids)
     missing = sorted(i for i in want if not (pub / "cases" / f"{i}.md").is_file())
@@ -150,62 +164,84 @@ def plan_move(top: Path, name: str, ids: list[str]) -> Moved:
             (priv / CHECKS).read_text(encoding="utf-8"))[1] if k in want)  # fmt: skip
     if there:
         raise InvalidInputError(f"{name}: already in the private set: {', '.join(there[:10])}")
-    for k in (LABELS, FIXED, REVIEWS):
-        if n := sum(1 for i, _ in _rows(pub / k) if i in want):
-            out.rows[k] = n
-    if (pub / CHECKS).is_file():
-        _head, blocks = _blocks((pub / CHECKS).read_text(encoding="utf-8"))
-        if n := sum(1 for k, _ in blocks if k in want):
-            out.rows[CHECKS] = n
+    out.writes, out.rows = _contents(pub, priv, want)
+    _verify(pub, priv, out.writes)
     return out
+
+
+def _contents(pub: Path, priv: Path, want: set[str]) -> tuple[dict[Path, str], dict[str, int]]:
+    """Every label, review and check file's new text, for both halves, and rows moved by kind."""
+    writes: dict[Path, str] = {}
+    counts: dict[str, int] = {}
+    for kind in (LABELS, FIXED, REVIEWS):
+        rows = _rows(pub / kind)
+        move = [(i, x) for i, x in rows if i in want]
+        if not move:
+            continue
+        old = _rows(priv / kind)
+        # reviews.jsonl is append-only history: the moved rows after any it had; the rest in ID
+        # order
+        new = [x for _, x in (old + move if kind == REVIEWS else sorted(old + move))]
+        writes[priv / kind] = "".join(f"{x}\n" for x in new)
+        writes[pub / kind] = "".join(f"{x}\n" for i, x in rows if i not in want)
+        counts[kind] = len(move)
+    if (pub / CHECKS).is_file():
+        head, blocks = _blocks((pub / CHECKS).read_text(encoding="utf-8"))
+        move = [body for k, body in blocks if k in want]
+        if move:
+            old = (priv / CHECKS).read_text(encoding="utf-8") if (priv / CHECKS).is_file() else ""
+            writes[priv / CHECKS] = old + "".join(move)
+            writes[pub / CHECKS] = head + "".join(body for k, body in blocks if k not in want)
+            counts[CHECKS] = len(move)
+    return writes, counts
+
+
+def _now_text(path: Path, writes: dict[Path, str]) -> str:
+    if path in writes:
+        return writes[path]
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def _verify(pub: Path, priv: Path, writes: dict[Path, str]) -> None:
+    """The split, in memory: what the two halves' files will hold merges back to the old ones."""
+
+    def lines(text: str) -> list[str]:
+        return [x for x in text.splitlines() if x.strip()]
+
+    for kind in (LABELS, FIXED):
+        old = _now_text(pub / kind, {}) + _now_text(priv / kind, {})
+        new = sorted(lines(_now_text(pub / kind, writes)) + lines(_now_text(priv / kind, writes)),
+                     key=lambda x: str(json.loads(x)["id"]))  # fmt: skip
+        merged = "".join(f"{x}\n" for x in new)
+        was = "".join(f"{x}\n" for x in sorted(lines(old), key=lambda x: str(json.loads(x)["id"])))
+        if merged != was:
+            raise InvalidInputError(f"{pub.name} {kind}: the split doesn't merge back")
+    old_reviews = lines(_now_text(pub / REVIEWS, {})) + lines(_now_text(priv / REVIEWS, {}))
+    new_reviews = lines(_now_text(pub / REVIEWS, writes)) + lines(_now_text(priv / REVIEWS, writes))
+    if sorted(old_reviews) != sorted(new_reviews):
+        raise InvalidInputError(f"{pub.name} {REVIEWS}: the split loses or adds a row")
+    before = _now_text(pub / CHECKS, {})
+    if before:
+        a = _parsed(_now_text(pub / CHECKS, writes), "public checks.yaml")
+        b = _parsed(_now_text(priv / CHECKS, writes), "private checks.yaml")
+        if set(a) & set(b) or {**a, **b} != _parsed(before, "checks.yaml"):
+            raise InvalidInputError(f"{pub.name} {CHECKS}: the split doesn't merge back")
 
 
 def apply(top: Path, name: str, ids: list[str]) -> Moved:
-    """Move one set's listed cards to its private half (after `plan_move`'s checks) and check
-    the split."""
-    plan_move(top, name, ids)
+    """Move one set's listed cards to its private half: `plan_move` works out and checks every
+    write first, then they are made, then the files moved, then the split checked on disk."""
     pub, priv = _public(top, name), _private(top, name)
-    want = set(ids)
     before = {k: (pub / k).read_bytes() for k in (LABELS, FIXED) if (pub / k).is_file()}
     checks_before = (pub / CHECKS).read_text(encoding="utf-8") if (pub / CHECKS).is_file() else ""
-    out = Moved(cards=len(ids))
-    for kind in (LABELS, FIXED, REVIEWS):
-        n = _move_rows(pub, priv, kind, want)
-        if n:
-            out.rows[kind] = n
-    if checks_before:
-        n = _move_checks(pub, priv, checks_before, want)
-        if n:
-            out.rows[CHECKS] = n
-    out.files = _move_files(pub, priv, want)
-    _check_split(pub, priv, before, checks_before)
+    reviews_before = [x for _, x in _rows(pub / REVIEWS) + _rows(priv / REVIEWS)]
+    out = plan_move(top, name, ids)
+    priv.mkdir(parents=True, exist_ok=True)
+    for path, text in out.writes.items():
+        atomic_write(path, text)
+    out.files = _move_files(pub, priv, set(ids))
+    _check_split(pub, priv, before, checks_before, reviews_before)
     return out
-
-
-def _move_rows(pub: Path, priv: Path, kind: str, want: set[str]) -> int:
-    rows = _rows(pub / kind)
-    move = [(i, x) for i, x in rows if i in want]
-    if not move:
-        return 0
-    old = _rows(priv / kind)
-    # reviews.jsonl is append-only history: the moved rows after any it had; the rest in ID order
-    new = [x for _, x in (old + move if kind == REVIEWS else sorted(old + move))]
-    priv.mkdir(parents=True, exist_ok=True)
-    atomic_write(priv / kind, "".join(f"{x}\n" for x in new))
-    atomic_write(pub / kind, "".join(f"{x}\n" for i, x in rows if i not in want))
-    return len(move)
-
-
-def _move_checks(pub: Path, priv: Path, text: str, want: set[str]) -> int:
-    head, blocks = _blocks(text)
-    move = [t for k, t in blocks if k in want]
-    if not move:
-        return 0
-    old = (priv / CHECKS).read_text(encoding="utf-8") if (priv / CHECKS).is_file() else ""
-    priv.mkdir(parents=True, exist_ok=True)
-    atomic_write(priv / CHECKS, old + "".join(move))
-    atomic_write(pub / CHECKS, head + "".join(t for k, t in blocks if k not in want))
-    return len(move)
 
 
 def _move_files(pub: Path, priv: Path, want: set[str]) -> list[str]:
@@ -222,8 +258,13 @@ def _move_files(pub: Path, priv: Path, want: set[str]) -> list[str]:
     return moved
 
 
-def _check_split(pub: Path, priv: Path, before: dict[str, bytes], checks_before: str) -> None:
-    got = merge_sources(pub, priv, (LABELS, FIXED, CHECKS))
+def _check_split(pub: Path, priv: Path, before: dict[str, bytes], checks_before: str,
+                 reviews_before: list[str] | None = None) -> None:  # fmt: skip
+    got = merge_sources(pub, priv, (LABELS, FIXED, CHECKS, REVIEWS))
+    if reviews_before is not None:
+        now = [x for x in (got.get(REVIEWS) or b"").decode().splitlines() if x.strip()]
+        if sorted(now) != sorted(reviews_before):
+            raise InvalidInputError(f"{pub.name} {REVIEWS}: the split loses or adds a row")
     for kind in (LABELS, FIXED):
         if got.get(kind) != before.get(kind):
             raise InvalidInputError(f"{pub.name} {kind}: the merged bytes differ from the old file")
@@ -270,7 +311,11 @@ def public_check(top: Path, known: set[str] | None = None) -> list[str]:
         if (root / CHECKS).is_file():
             _head, blocks = _blocks((root / CHECKS).read_text(encoding="utf-8"))
             found += [f"{where}/{CHECKS}: a key for {k}" for k, _ in blocks if moved(k)]
-    return found
+        for kind in (LABELS, FIXED, REVIEWS, CHECKS):  # any mention, in any text, comments too
+            if (root / kind).is_file():
+                words = set(WORD.findall((root / kind).read_text(encoding="utf-8")))
+                found += [f"{where}/{kind}: mentions {w}" for w in sorted(words) if moved(w)]
+    return sorted(set(found))
 
 
 def main(argv: list[str] | None = None) -> int:

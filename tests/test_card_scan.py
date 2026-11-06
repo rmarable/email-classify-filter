@@ -148,6 +148,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base = commit(top, "base")
     git(top, "tag", "v1.0.0")
     monkeypatch.setattr(cs, "X1_ANCHOR", base)
+    monkeypatch.setattr(cs, "TOP", top)  # the hook's own checkout, as when git runs it there
     for d, ext in (("cases", "md"), ("eml", "eml")):
         (top / "tests" / "eval" / "synthetic" / d / f"{OLD}.{ext}").unlink()
     git(top, "update-ref", "refs/remotes/origin/main", commit(top, "the move"))
@@ -432,11 +433,23 @@ def test_a_pushed_email_with_no_card_change_is_checked(repo: Path) -> None:
     assert any("eml/quiet.eml" in r and "trigger 10 flags its email" in r for r in got)
 
 
-def test_a_card_that_doesnt_build_is_refused(repo: Path) -> None:
-    card(repo, "nobuild", extra="attachments:\n  - {name: a.pdf, generate: no_such_kind}\n")
+def test_a_card_with_a_value_its_schema_forbids_is_refused(repo: Path) -> None:
+    card(repo, "badvalue", extra="attachments:\n  - {name: a.pdf, generate: no_such_kind}\n")
     commit(repo, "add")
-    assert any("nobuild" in r and ("doesn't build" in r or "doesn't parse" in r)
-               for r in _range(repo))  # fmt: skip
+    assert any("badvalue" in r and "doesn't build" in r for r in _range(repo))  # schema: at build
+
+
+def test_a_card_that_fails_to_build_is_refused(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """X5 fails closed on a build error: the card parses, its build raises (a builder bug, a
+    field the builder can't render), and the scan refuses it."""
+    card(repo, "nobuild")
+    commit(repo, "add")
+
+    def broken(_card: Any) -> bytes:
+        raise RuntimeError("cannot render")
+
+    monkeypatch.setattr(cs, "build_bytes", broken)
+    assert any("nobuild" in r and "doesn't build" in r for r in _range(repo))
 
 
 def test_the_script_fails_closed_without_ecf_server(tmp_path: Path) -> None:
@@ -477,8 +490,9 @@ def test_a_listed_blob_is_refused_on_origin_main_and_passes_on_a_tag(repo: Path)
     assert _range(repo, "refs/tags/v9") == []
 
 
+@pytest.mark.parametrize("lref", ["refs/heads/foo", "HEAD", "<sha>"])
 def test_a_push_to_main_from_another_branch_is_scanned_as_main(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
+    repo: Path, monkeypatch: pytest.MonkeyPatch, lref: str
 ) -> None:
     """`git push origin foo:main`: the hook passes the remote ref, so the range counts as main's
     (in the hook, which builds the range only, being main changes nothing else)."""
@@ -491,8 +505,11 @@ def test_a_push_to_main_from_another_branch_is_scanned_as_main(
 
     monkeypatch.setattr(cs, "run_range", spy)
     card(repo, "foo-card")
-    commit(repo, "foo")
-    _push(repo, "refs/heads/main", git(repo, "rev-parse", "refs/remotes/origin/main"))
+    head = commit(repo, "foo")
+    local = head if lref == "<sha>" else lref
+    base = git(repo, "rev-parse", "refs/remotes/origin/main")
+    cs.run_hook("origin", "git@github.example:o/r.git",
+                [f"{local} {head} refs/heads/main {base}"], repo)  # fmt: skip
     assert seen == ["refs/heads/main"]
 
 
@@ -716,3 +733,123 @@ def test_the_daily_run_scans_a_branch_cut_before_step_3(repo: Path) -> None:
     git(repo, "update-ref", "refs/remotes/origin/ancient", commit(repo, "before step 3"))
     v = cs.run_daily(repo)
     assert v.refused == []
+
+
+# Every file under tests/eval/ is recognised or refused, however it is named (review round 2,
+# H2, M6): git quotes unusual names in its line output, and only exact forms are recognised.
+
+
+ODD = [
+    "cases/é-card.md",  # non-ASCII: git quotes it without -z
+    'cases/a"b.md',
+    "cases/a\\b.md",
+    "cases/tab\tname.md",
+    "cases/Upper.md",
+    "cases/card.MD",
+    "cases/card.md.orig",
+    "cases/old/card.md",
+    "notes.md",
+    "eml/x.txt",
+    ".build/sub/x.eml",
+]
+
+
+@pytest.mark.parametrize("name", ODD)
+def test_an_oddly_named_file_under_tests_eval_is_refused(repo: Path, name: str) -> None:
+    p = repo / "tests" / "eval" / "synthetic" / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(PLAIN.format(id="odd", extra="", body=INJ))
+    commit(repo, "an odd name")
+    for got in (_range(repo, tip_build=False), cs.run_tree("HEAD", no_skip=True, top=repo).refused):
+        assert any(name.rsplit("/", 1)[-1] in r for r in got), (name, got)
+
+
+def test_git_output_is_read_without_quoting(repo: Path) -> None:
+    p = repo / "tests" / "eval" / "synthetic" / "cases" / "été.md"
+    p.write_text(PLAIN.format(id="x", extra="", body=INJ))
+    commit(repo, "accented")
+    paths = {path for _b, path in cs.changed(["HEAD"], repo)}
+    assert "tests/eval/synthetic/cases/été.md" in paths
+    assert "tests/eval/synthetic/cases/été.md" in {q for _b, q in cs.tree("HEAD", repo)}
+
+
+def test_a_private_clone_is_recognised_by_its_config_wherever_it_sits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3: a clone outside `<TOP>/eval/private` (or using another checkout's hook folder) is
+    still the private repository, by its `ecf.privateRemote`: pushing it anywhere else is
+    refused, never scanned as public and passed."""
+    monkeypatch.setattr(cs, "TOP", tmp_path / "some-other-checkout")
+    elsewhere = tmp_path / "anywhere" / "private"
+    elsewhere.mkdir(parents=True)
+    git(elsewhere, "init", "-q", "-b", "main")
+    git(elsewhere, "config", "ecf.privateRemote", "github.com/owner/ecf-private")
+    assert (
+        cs.run_hook("origin", "git@github.com:owner/ecf-private.git", [], elsewhere).refused == []
+    )
+    assert cs.run_hook("origin", "git@github.com:owner/ecf.git", [], elsewhere).refused
+
+
+def test_a_repository_that_is_neither_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cs, "TOP", tmp_path / "the-public-checkout")
+    stray = tmp_path / "stray"
+    stray.mkdir()
+    git(stray, "init", "-q", "-b", "main")
+    got = cs.run_hook("origin", "git@github.com:owner/x.git", [], stray).refused
+    assert got and "is neither" in got[0]
+
+
+def test_the_hook_skips_blobs_main_already_has_but_not_new_ones(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P7: a branch that merges main doesn't rebuild main's cards in the hook; its own new card
+    is still checked."""
+    main = git(repo, "rev-parse", "refs/remotes/origin/main")
+    git(repo, "checkout", "-q", "-b", "side", main)
+    card(repo, "on-main")
+    git(repo, "update-ref", "refs/remotes/origin/main", commit(repo, "main moves on"))
+    git(repo, "checkout", "-q", "-b", "feature", main)
+    card(repo, "feature-inj", body=INJ)
+    commit(repo, "the branch's card")
+    git(repo, "merge", "-q", "--no-ff", "-m", "merge main", "refs/remotes/origin/main")
+    checked: list[str] = []
+    real = cs.check
+
+    def spy(blob: str, path: str, data: bytes, **kw: Any) -> Any:
+        checked.append(path)
+        return real(blob, path, data, **kw)
+
+    monkeypatch.setattr(cs, "check", spy)
+    got = _push(repo, "refs/heads/feature")
+    assert any("feature-inj" in r for r in got)
+    assert not any("on-main" in c for c in checked)
+
+
+def test_the_revs_entry_point_on_a_bare_remote_more_cases(repo: Path) -> None:
+    """C58's other clauses through the script's own `--ref ... --revs ...`: a card added by a
+    merge commit and a pushed `.eml` are refused; a listed known blob passes on a branch."""
+    _bare(repo)
+    main = git(repo, "rev-parse", "refs/remotes/origin/main")
+    git(repo, "checkout", "-q", "-b", "side", main)
+    card(repo, "via-merge", body=INJ)
+    commit(repo, "side")
+    git(repo, "checkout", "-q", "-b", "m", main)
+    git(repo, "merge", "-q", "--no-ff", "-m", "merge", "side")
+    head = git(repo, "rev-parse", "HEAD")
+    r = _cli(repo, "--ref", "refs/heads/m", "--no-tip-build", "--revs", f"{main}..{head}")
+    assert r.returncode == 1 and "via-merge" in r.stderr
+    git(repo, "checkout", "-q", "-b", "e", main)
+    eml = repo / "tests" / "eval" / "synthetic" / "eml" / "plain.eml"
+    eml.parent.mkdir(parents=True, exist_ok=True)
+    eml.write_bytes((SYN / "eml" / "starter-injection.eml").read_bytes().replace(
+        b"Question about my order", b"Question about my parcel"))  # fmt: skip
+    head = commit(repo, "only an email")
+    r = _cli(repo, "--ref", "refs/heads/e", "--no-tip-build", "--revs", f"{main}..{head}")
+    assert r.returncode == 1 and "eml/plain.eml" in r.stderr
+    git(repo, "checkout", "-q", "-b", "k", main)
+    copy(repo, OLD, repo.parent / "made")
+    head = commit(repo, "a listed blob")
+    r = _cli(repo, "--ref", "refs/heads/k", "--no-tip-build", "--revs", f"{main}..{head}")
+    assert r.returncode == 0, r.stderr

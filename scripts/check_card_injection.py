@@ -38,14 +38,22 @@ LIST = "tests/eval/known-public-injection-blobs.txt"
 # ones; moved with the list if the branch is rebased
 X1_ANCHOR = "8b26fd6ae4a5d74c650e2b6fc775809332655496"
 STARTER_EML_SHA256 = "2cfe1cf857be1b02621ef36e22ca3d8eb358f4a058cd1e551b0b3e997cb7ed9f"
-CARD = re.compile(r"^tests/eval/[^/]+/cases/[^/]+\.md$")
-PRIVATE_CARD = re.compile(r"^[^/]+/cases/[^/]+\.md$")  # in the private repository: <set>/cases/
-EML = re.compile(r"^tests/eval/[^/]+/(eml|\.build)/[^/]+\.eml$")
+# What may sit under tests/eval/, a closed list (review round 2, H2, M6): a path is recognised by
+# these exact forms or refused, so a card under another name, a subfolder or an odd extension
+# can't pass unread. IDs are lower-case letters, digits and hyphens, as every card's is.
+ID = r"[a-z0-9][a-z0-9-]*"
+CARD = re.compile(rf"^tests/eval/[a-z0-9][a-z0-9_-]*/cases/{ID}\.md$")
+EML = re.compile(rf"^tests/eval/[a-z0-9][a-z0-9_-]*/(eml|\.build)/{ID}\.eml$")
+SET_FILES = re.compile(r"^tests/eval/[a-z0-9][a-z0-9_-]*/(labels\.jsonl|fixed_labels\.jsonl"
+                       r"|reviews\.jsonl|checks\.yaml)$")  # fmt: skip
+TOP_FILES = ("tests/eval/known-public-injection-blobs.txt", "tests/eval/moved-ids.sha256")
+PRIVATE_CARD = re.compile(rf"^[a-z0-9][a-z0-9_-]*/cases/{ID}\.md$")  # in the private repository
 
 
 def git(*args: str, stdin: str | None = None, top: Path = TOP) -> str:
     r = subprocess.run(["git", "-C", str(top), *args], input=stdin, capture_output=True,
-                       text=True, check=False)  # fmt: skip
+                       text=True, encoding="utf-8", errors="surrogateescape",
+                       check=False)  # fmt: skip
     if r.returncode != 0:
         raise SystemExit(f"card scan: git {args[0]} failed: {r.stderr.strip()}")
     return r.stdout
@@ -81,34 +89,51 @@ def wanted(path: str) -> bool:
     return CARD.match(path) is not None or EML.match(path) is not None
 
 
+def under_eval(path: str) -> bool:
+    return path.startswith("tests/eval/")
+
+
+def unrecognised(path: str) -> bool:
+    """A path under tests/eval/ that is none of the recognised kinds: refused."""
+    return (under_eval(path) and not wanted(path) and SET_FILES.match(path) is None
+            and path not in TOP_FILES)  # fmt: skip
+
+
 def changed(revs: list[str], top: Path = TOP,
-            want: Callable[[str], bool] = wanted) -> list[tuple[str, str]]:  # fmt: skip
-    """(blob, path) for every card and email file (`want`) each commit in `revs` added or
-    changed, merge commits included and deleted files skipped, through one batched
-    `git diff-tree --stdin`."""
+            want: Callable[[str], bool] = under_eval) -> list[tuple[str, str]]:  # fmt: skip
+    """(blob, path) for every file (`want`, default: everything under tests/eval/) each commit
+    in `revs` added or changed, merge commits included and deleted files skipped, through one
+    batched `git diff-tree --stdin -z` (NUL-separated: git never quotes a path there)."""
     commits = git("rev-list", *revs, top=top)
     if not commits.strip():
         return []
-    out = git("diff-tree", "--stdin", "-r", "-m", "--root", "--no-renames", "--diff-filter=d",
-              stdin=commits, top=top)  # fmt: skip
+    out = git("diff-tree", "--stdin", "-z", "-r", "-m", "--root", "--no-renames",
+              "--diff-filter=d", stdin=commits, top=top)  # fmt: skip
     seen: dict[tuple[str, str], None] = {}
-    for line in out.splitlines():
-        if not line.startswith(":"):
-            continue
-        meta, path = line.split("\t", 1)
-        blob = meta.split()[3]
-        if want(path):
-            seen[(blob, path)] = None
+    parts = out.split("\0")
+    i = 0
+    while i < len(parts):
+        tok = parts[i]
+        if tok.startswith(":") and i + 1 < len(parts):  # ":<modes> <shas> <status>", then path
+            blob, path = tok.split()[3], parts[i + 1]
+            if want(path):
+                seen[(blob, path)] = None
+            i += 2
+        else:  # a commit ID line, or the empty tail
+            i += 1
     return list(seen)
 
 
 def tree(treeish: str, top: Path = TOP) -> list[tuple[str, str]]:
-    out = git("ls-tree", "-r", treeish, "--", "tests/eval", top=top)
+    """Every blob under tests/eval/ in a tree (`ls-tree -z`: paths never quoted)."""
+    out = git("ls-tree", "-r", "-z", treeish, "--", "tests/eval", top=top)
     found: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        meta, path = line.split("\t", 1)
+    for entry in out.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
         kind, blob = meta.split()[1:3]
-        if kind == "blob" and wanted(path):
+        if kind == "blob":
             found.append((blob, path))
     return found
 
@@ -204,9 +229,15 @@ def scan(items: list[tuple[str, str]], *, skip: set[str], x1_old: set[str] | Non
          lenient: bool = False, top: Path = TOP) -> Verdict:  # fmt: skip
     """Check each (blob, path) once. `skip`: blobs not to check; `x1_old`: blobs exempt from X1
     (None: X1 on every blob)."""
-    todo = [(b, p) for b, p in dict.fromkeys(items) if b not in skip]
+    items = list(dict.fromkeys(items))
+    refused = [
+        f"{p} ({b[:12]}): not a recognised file under tests/eval (a card, its email, a set"
+        " file or a list): rename or remove it"
+        for b, p in items
+        if unrecognised(p)
+    ]
+    todo = [(b, p) for b, p in items if wanted(p) and b not in skip]
     data = cat(sorted({b for b, _ in todo}), top)
-    refused: list[str] = []
     warned: list[str] = []
     for b, p in todo:
         v = check(b, p, data[b], x1=x1_old is None or b not in x1_old, lenient=lenient)
@@ -220,7 +251,9 @@ def check_files(items: list[tuple[str, bytes]]) -> Verdict:
     refused: list[str] = []
     warned: list[str] = []
     for path, data in items:
-        if wanted(path):
+        if unrecognised(path):
+            refused.append(f"{path}: not a recognised file under tests/eval")
+        elif wanted(path):
             v = check(hashlib.sha1(data).hexdigest(), path, data, x1=True)  # noqa: S324 - a label
             refused += v.refused
             warned += v.warned
@@ -241,14 +274,15 @@ def exempt(top: Path = TOP) -> set[str]:
 
 
 def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
-              top: Path = TOP) -> Verdict:  # fmt: skip
+              top: Path = TOP, published: frozenset[str] = frozenset()) -> Verdict:  # fmt: skip
     """A pushed range: every changed blob (listed blobs skipped; X1 only on blobs new since the
     anchor), then the tip's path checks and, except in the hook, a build of the tip's other
     blobs: unskipped with X1 on main, with the list elsewhere."""
     items = changed(revs, top)
     old = anchor_history(top)
     listed = known(top) & old  # `exempt`, with the history read once
-    v = scan(items, skip=listed, x1_old=old, top=top)
+    # `published`: blobs main's history already has (the hook only): main's own runs checked them
+    v = scan(items, skip=listed | published, x1_old=old, top=top)
     refused, warned = list(v.refused), list(v.warned)
     if tip:
         found = tree(tip, top)
@@ -272,7 +306,7 @@ def run_tree(treeish: str, *, no_skip: bool, top: Path = TOP) -> Verdict:
 
 def list_known(rev: str, top: Path = TOP) -> list[str]:
     """Every card and email blob in `rev`'s history that trigger 10 flags (no exemption)."""
-    items = changed([rev], top)
+    items = changed([rev], top, want=wanted)
     data = cat(sorted({b for b, _ in items}), top)
     flagged: set[str] = set()
     for b, p in items:
@@ -360,6 +394,16 @@ def pushed(remote: str, lines: list[str], cwd: Path,
     return refused, ranges
 
 
+def _published(remote: str, top: Path) -> frozenset[str]:
+    """Blobs in the remote's main history: public already and scanned by main's own runs, so
+    the hook doesn't rebuild them when a branch merges main (review round 2, P7; the CI run of
+    the push still scans the whole range)."""
+    ref = f"refs/remotes/{remote}/main"
+    if not peels_to_commit(ref, top):
+        return frozenset()
+    return frozenset(b for b, _ in changed([ref], top))
+
+
 def check_private(blob: str, path: str, data: bytes) -> list[str]:
     """A private card: it must parse and pass the hygiene scan (fake data only). Its markers and
     trigger 10 are expected there (every private card is an injection card)."""
@@ -377,12 +421,17 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
     (the pushed blobs only): the private one only to its recorded remote, with the hygiene scan
     on its cards; the public one with the full card scan."""
     here = Path(git("rev-parse", "--show-toplevel", top=cwd).strip())
-    private = here.resolve() == (TOP / "eval" / "private").resolve()
-    if private:
-        want = git("config", "--default", "", "ecf.privateRemote", top=here).strip()
-        if not want or remote_id(url) != remote_id(want):
-            return Verdict([f"eval/private pushes only to its recorded remote ({want or 'none'})"
-                            f", not {url}"], [])  # fmt: skip
+    # which repository this is, from the repository itself (review round 2, M3): a private
+    # clone records its remote in `ecf.privateRemote` wherever it sits and whichever checkout's
+    # hook folder it uses; anything else must be the public checkout this script belongs to
+    want = git("config", "--default", "", "ecf.privateRemote", top=here).strip()
+    private = bool(want)
+    if not private and here.resolve() != TOP.resolve():
+        return Verdict([f"this hook guards {TOP} and private clones that record"
+                        f" ecf.privateRemote; {here} is neither"], [])  # fmt: skip
+    if private and remote_id(url) != remote_id(want):
+        return Verdict([f"eval/private pushes only to its recorded remote ({want}), not {url}"],
+                       [])  # fmt: skip
     refused, ranges = pushed(remote, lines, cwd)
     warned: list[str] = []
     for rref, lsha, revs in ranges:
@@ -393,7 +442,8 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
                 refused += check_private(b, p, data[b])
             continue
         main_ref = "refs/heads/main" if rref == "refs/heads/main" else rref
-        v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd)
+        v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd,
+                      published=_published(remote, cwd))  # fmt: skip
         refused += v.refused
         warned += v.warned
     return Verdict(refused, warned)

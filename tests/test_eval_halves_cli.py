@@ -197,3 +197,20 @@ def test_review_goes_through_both_halves(pub: Path, monkeypatch: pytest.MonkeyPa
     r = runner.invoke(app, ["eval", "label", "--review", "all", "--root", str(pub)])
     assert r.exit_code == 0, r.output
     assert seen == mg.halves(pub) and len(seen) == 2
+
+
+def test_a_writers_refresh_waits_out_a_brief_read(pub: Path) -> None:
+    """P9: the service holds the shared lock for a moment while it reads the set (the gate,
+    status); a CLI writer's refresh waits it out rather than failing."""
+    import threading  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    _build(pub)
+    card = (mg.paths(pub).private or pub) / "cases" / "inj-test.md"
+    card.write_text(card.read_text() + "\n")
+    fd = mg.take_shared(pub)
+    threading.Timer(0.3, lambda: mg.release(fd)).start()  # a 0.3 s read
+    t0 = time.monotonic()
+    assert mg.refresh_after_write(pub) is None  # refreshed, no note
+    assert 0.25 < time.monotonic() - t0 < mg.CLI_WAIT_S
+    assert mg.resolve(pub) == mg.paths(pub).merged

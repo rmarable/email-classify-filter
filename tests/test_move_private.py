@@ -165,3 +165,39 @@ def test_a_move_is_refused_before_any_write_when_a_private_row_exists(tmp_path: 
         mv.apply(tmp_path, "synthetic", ids)
     assert (pub / "labels.jsonl").read_bytes() == before
     assert all((pub / "cases" / f"{i}.md").is_file() for i in ids)
+
+
+def test_a_comment_above_a_moved_key_moves_with_it_and_mentions_are_caught(tmp_path: Path) -> None:
+    """L10: a comment about a card sits directly above its key and moves with it; any public
+    mention of a moved ID, in any text, is caught by the guard."""
+    pub = _copy(tmp_path, "drafts")
+    text = (pub / "checks.yaml").read_text()
+    key = mv._blocks(text)[1][3][0]  # pyright: ignore[reportPrivateUsage]
+    at = text.index(f"\n{key}:") + 1
+    (pub / "checks.yaml").write_text(text[:at] + f"# about {key}: the second draft\n" + text[at:])
+    mv.apply(tmp_path, "drafts", [key])
+    priv = tmp_path / "eval" / "private" / "drafts"
+    assert f"# about {key}" in (priv / "checks.yaml").read_text()
+    assert f"# about {key}" not in (pub / "checks.yaml").read_text()
+    with (pub / "checks.yaml").open("a") as f:
+        f.write(f"# see also {key}\n")
+    found = mv.public_check(tmp_path, {mv._h(key)})  # pyright: ignore[reportPrivateUsage]
+    assert any("checks.yaml: mentions" in x and key in x for x in found)
+
+
+def test_a_split_that_doesnt_merge_back_is_refused_before_any_write(tmp_path: Path) -> None:
+    pub = _copy(tmp_path, "synthetic")
+    priv = tmp_path / "eval" / "private" / "synthetic"
+    ids = _pick(pub, "first")
+    writes, _n = mv._contents(pub, priv, set(ids))  # pyright: ignore[reportPrivateUsage]
+    lost = {k: v.split("\n", 1)[1] if k.name == "reviews.jsonl" and v else v
+            for k, v in writes.items()}  # fmt: skip
+    if any(k.name == "reviews.jsonl" for k in writes):
+        with pytest.raises(InvalidInputError, match=r"reviews\.jsonl: the split loses"):
+            mv._verify(pub, priv, lost)  # pyright: ignore[reportPrivateUsage]
+    dropped = dict(writes)
+    lab = next(k for k in writes if k.name == "labels.jsonl" and "private" in str(k))
+    dropped[lab] = ""
+    with pytest.raises(InvalidInputError, match=r"labels\.jsonl: the split doesn't merge back"):
+        mv._verify(pub, priv, dropped)  # pyright: ignore[reportPrivateUsage]
+    assert not priv.exists()

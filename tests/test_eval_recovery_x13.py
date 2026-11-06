@@ -57,6 +57,13 @@ def _restart(db_path: Path, clock: FakeClock) -> list[str]:
     return claude_eval.recover(connector(db_path), clock, db_path.parent, spawn=_inline)
 
 
+def _saved(db_path: Path, run_id: str) -> bool:
+    """The run's results are written: its draft record beside the result files."""
+    from ecf.eval import drafts  # noqa: PLC0415
+
+    return (db_path.parent / "evals" / f"{run_id}{drafts.DRAFTS_SUFFIX}").is_file()
+
+
 def _rec(db_path: Path, run_id: str) -> draftruns.Registration:
     rec = draftruns.load(db_path.parent).get(run_id)
     assert rec is not None
@@ -90,8 +97,9 @@ def test_a_stale_set_is_refreshed_results_saved_and_the_resume_refused(
     assert mg.is_fresh(mg.paths(pub))  # refreshed at start
     assert label_file.set_version(mg.paths(pub).merged or pub) != before
     rec = _rec(db_path, run_id)
-    assert not rec.open and rec.attempt_over  # results saved; the resume refused (new version)
+    assert not rec.open and rec.attempt_over  # the resume refused (new version)
     assert rec.resumed_by is None
+    assert _saved(db_path, run_id)  # its results saved after the start-up refresh
 
 
 def test_a_set_held_by_another_installs_run_closes_with_the_fixed_detail(
@@ -110,7 +118,8 @@ def test_a_set_held_by_another_installs_run_closes_with_the_fixed_detail(
     try:
         t0 = time.monotonic()
         lines = _restart(db_path, clock)
-        assert time.monotonic() - t0 < 3
+        took = time.monotonic() - t0
+        assert claude_eval.SET_WAIT_S <= took < 3  # closed after the wait, not before
     finally:
         os.close(fd)
     rec = _rec(db_path, run_id)
@@ -173,7 +182,7 @@ def _installs(
     refreshed = [0]
     guard = threading.Lock()
 
-    def slow_fresh(sp: mg.SetPaths, restat: list[str] | None = None) -> bool:
+    def slow_fresh(sp: mg.SetPaths, restat: list[tuple[str, str, str]] | None = None) -> bool:
         time.sleep(resolve_s * SCALE)
         return real_fresh(sp, restat)
 
@@ -317,7 +326,9 @@ def test_a_record_whose_root_is_gone_closes_as_today(db_path: Path, clock: FakeC
     lines = _restart(db_path, clock)
     rec = _rec(db_path, run_id)
     assert not rec.open and rec.attempt_over
-    assert "couldn't be read back" in rec.end_detail or "couldn't be read" in rec.end_detail
+    # today's handler (its cases can't be restored), not X13's "couldn't be read at service start"
+    assert "its cases couldn't be read back" in rec.end_detail
+    assert "at service start" not in rec.end_detail
     assert lines
 
 
@@ -432,3 +443,22 @@ def test_an_open_run_past_48_hours_on_a_stale_set_still_has_its_result_saved(
     rec = _rec(db_path, run_id)
     assert not rec.open and rec.ended_at is not None and rec.end in ("lost", "expired")
     assert rec.resumed_by is None
+    assert _saved(db_path, run_id)
+
+
+def test_a_freshness_check_that_raises_leaves_no_lock(
+    pub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L8: if the check raises while recovery holds the shared lock, the lock is released, so a
+    later refresh isn't refused as busy."""
+
+    def boom(_sp: mg.SetPaths, _restat: Any = None) -> bool:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(mg, "is_fresh", boom)
+    held, why = claude_eval._set_for_recovery(pub)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.undo()
+    assert held is None and why == "PermissionError"
+    card = (mg.paths(pub).private or pub) / "cases" / "d-inject.md"
+    card.write_text(card.read_text() + "\n")
+    assert mg.refresh_merged(pub, wait=0.0) == "refreshed"  # no lock left behind

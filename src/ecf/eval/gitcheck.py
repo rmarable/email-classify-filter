@@ -11,6 +11,7 @@ and M1's upload."""
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 import time
@@ -21,7 +22,7 @@ from typing import Any
 
 GIT = "/usr/bin/git"
 TIMEOUT_S = 5.0  # for the whole check: every git call in one pass shares it
-BACKOFF = 5  # calls skipped after a timeout
+BACKOFF_S = 300.0  # after a timeout, no git for five minutes (five ticks), however often asked
 IGNORED_NAMES = (".DS_Store",)
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
 _FLAGS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
@@ -30,7 +31,7 @@ _FLAGS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooks
 _lock = threading.Lock()
 _run_git = subprocess.run  # a seam for tests (a fixed binary, no shell)
 _now = time.monotonic  # likewise
-_backoff = 0
+_backoff_until = 0.0
 _deadline: ContextVar[float | None] = ContextVar("gitcheck_deadline", default=None)
 
 
@@ -61,8 +62,9 @@ def _git(top: Path, *args: str, timeout: float = TIMEOUT_S) -> subprocess.Comple
             raise GitFailed(f"git timed out ({TIMEOUT_S:g} s for the check)", timed_out=True)
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | _ENV
     try:
-        return _run_git(argv(top, *args), capture_output=True, text=True, env=env,
-                        timeout=timeout, check=False)  # fmt: skip
+        return _run_git(argv(top, *args), capture_output=True, text=True, encoding="utf-8",
+                        errors="surrogateescape", env=env, timeout=timeout,
+                        check=False)  # fmt: skip
     except subprocess.TimeoutExpired as exc:
         raise GitFailed(f"git timed out after {timeout:g} s", timed_out=True) from exc
     except OSError as exc:
@@ -78,19 +80,25 @@ def _ok(top: Path, *args: str) -> str:
 
 
 def dirty(top: Path, pathspec: str) -> list[str]:
-    """The uncommitted paths under `pathspec`: modified, staged, untracked, and ignored files under
-    its `cases/` or `eml/` (an uncommitted ignore rule could hide a card), except `*.tmp` and
-    `.DS_Store` (a crashed atomic write, Finder)."""
-    out = _ok(top, "status", "--porcelain", "--ignore-submodules", "--ignored=matching", "--",
-              pathspec)  # fmt: skip
+    """The uncommitted paths under `pathspec`: modified, staged, untracked, and ignored ones (an
+    uncommitted ignore rule could hide a card or a label file that sets the version), except
+    `.build/` (built, ignored by design), `*.tmp` and `.DS_Store` (a crashed atomic write,
+    Finder)."""
+    out = _ok(top, "status", "--porcelain", "-z", "--ignore-submodules", "--ignored=matching",
+              "--", pathspec)  # fmt: skip
     found: list[str] = []
-    for line in out.splitlines():
-        code, path = line[:2], line[3:].strip('"')
+    entries = iter(out.split("\0"))
+    for entry in entries:  # NUL-separated: paths exactly as stored, never quoted
+        if not entry:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in "RC":
+            next(entries, None)  # a rename's or copy's old path follows
         name = path.rstrip("/").rsplit("/", 1)[-1]
         if code in ("??", "!!") and (name.endswith(".tmp") or name in IGNORED_NAMES):
             continue
         rel = path[len(pathspec) :].lstrip("/") if path.startswith(pathspec) else path
-        if code == "!!" and not rel.startswith(("cases/", "eml/")):
+        if code == "!!" and (rel == ".build/" or rel.startswith(".build/")):
             continue
         found.append(path)
     return found
@@ -151,17 +159,45 @@ def _check(top: Path, set_name: str) -> Clean:  # noqa: PLR0911 - one return per
     r = _git(priv, "merge-base", "--is-ancestor", "HEAD", "@{u}")
     if r.returncode != 0:
         return Clean(False, "eval/private has commits not pushed to its upstream")
-    head = _ok(priv, "rev-parse", "HEAD").strip()
+    head = read_head(priv)  # from the HEAD and ref files, never `git rev-parse` (the plan)
+    if head is None:
+        return Clean(False, "eval/private's HEAD can't be read from its ref files")
     return Clean(True, f"private {head[:8]} committed and pushed", head)
+
+
+SHA = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
+
+
+def read_head(top: Path) -> str | None:
+    """The commit HEAD names, read from the files: HEAD, then its loose ref or `packed-refs`."""
+    dirs = git_dir(top)
+    head = _read(dirs[0] / "HEAD") if dirs is not None else None
+    if dirs is None or head is None:
+        return None
+    if not head.startswith("ref:"):
+        return head if SHA.fullmatch(head) else None
+    ref = head[4:].strip()
+    sha = _read(dirs[1] / ref)
+    if sha is None:  # not loose: packed
+        packed = _read(dirs[1] / "packed-refs") or ""
+        sha = next((p[0] for p in (ln.split() for ln in packed.splitlines())
+                    if len(p) == 2 and p[1] == ref), None)  # fmt: skip
+    return sha if sha is not None and SHA.fullmatch(sha) else None
+
+
+def _read(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
 
 
 def clean_and_pushed(top: Path, set_name: str) -> Clean:
     """Whether `tests/eval/<set>` and `eval/private/<set>` have no uncommitted changes, and the
     private HEAD is on a branch whose remote-tracking upstream contains it. Never raises."""
-    global _backoff  # noqa: PLW0603 - process-wide, shared by the tick, status and address_gate
+    global _backoff_until  # noqa: PLW0603 - process-wide, shared by the tick, status, address_gate
     with _lock:
-        if _backoff > 0:
-            _backoff -= 1
+        if _now() < _backoff_until:
             return Clean(False, "git timed out recently; the check is retried shortly", error=True)
     token = _deadline.set(_now() + TIMEOUT_S)
     try:
@@ -169,16 +205,16 @@ def clean_and_pushed(top: Path, set_name: str) -> Clean:
     except GitFailed as exc:
         if exc.timed_out:
             with _lock:
-                _backoff = BACKOFF
+                _backoff_until = _now() + BACKOFF_S
         return Clean(False, f"git: {exc}", error=True)
     finally:
         _deadline.reset(token)
 
 
 def reset_backoff() -> None:
-    global _backoff  # noqa: PLW0603
+    global _backoff_until  # noqa: PLW0603
     with _lock:
-        _backoff = 0
+        _backoff_until = 0.0
 
 
 def _stat(p: Path) -> tuple[int, int, int] | None:

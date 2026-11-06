@@ -74,6 +74,11 @@ def _since(conn: sqlite3.Connection, address_id: str) -> str:
 
 
 def status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
+    with gate.one_pass():  # the set's key worked out once for every address
+        return _status(conn, now)
+
+
+def _status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
@@ -267,6 +272,11 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
     override, the effective schema's digest, C's `prompt` (with `agents/classifier.md` from
     v3.0.2, OD-524) or `agents/actor.md` (OD-523)."""
     gate.note_version(conn, to_ts(clock.now()))  # a new gate definition, on record (P30)
+    with gate.one_pass():  # the set's key worked out once for every address
+        _tick(conn, clock)
+
+
+def _tick(conn: sqlite3.Connection, clock: Clock) -> None:
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
         digest = claude_pins.address_key(conn, aid)

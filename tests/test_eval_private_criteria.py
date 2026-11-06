@@ -37,10 +37,22 @@ def _table() -> dict[str, list[dict[str, Any]]]:
     return tomllib.loads(TABLE.read_text(encoding="utf-8"))
 
 
+def _always_skipped(fn: ast.FunctionDef) -> bool:
+    """`@pytest.mark.skip` (unconditional) on the test."""
+    for d in fn.decorator_list:
+        target = d.func if isinstance(d, ast.Call) else d
+        if isinstance(target, ast.Attribute) and target.attr == "skip":
+            return True
+    return False
+
+
 @cache
-def _defined(path: str) -> frozenset[str]:
+def _tests(path: str) -> frozenset[str]:
+    """The module-level `test_` functions pytest collects from `path` and runs (helpers, nested
+    functions and always-skipped tests don't count)."""
     tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
-    return frozenset(n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    return frozenset(n.name for n in tree.body if isinstance(n, ast.FunctionDef)
+                     and n.name.startswith("test_") and not _always_skipped(n))  # fmt: skip
 
 
 def test_every_pass_criterion_is_in_the_table_in_the_plans_words() -> None:
@@ -64,11 +76,17 @@ def test_the_build_items_cover_the_build_list_and_nothing_else() -> None:
 
 
 def test_every_entry_names_real_tests_or_says_where_it_lands() -> None:
+    """Each entry names collected tests; one with none must quote the plan's own words for
+    where it lands instead (a quoted phrase found in the plan)."""
+    plan = _norm(PLAN.read_text(encoding="utf-8"))
     table = _table()
     for row in [*table["item"], *table["criterion"]]:
         tests: list[str] = row["tests"]
-        assert tests or row.get("note") or row.get("deferred"), row["id"]
+        if not tests:
+            why = str(row.get("note") or row.get("deferred") or "")
+            quoted = re.findall(r'"([^"]{12,})"', why)
+            assert quoted and all(_norm(q) in plan for q in quoted), (row["id"], why)
         for ref in tests:
             path, name = ref.split("::", 1)
             assert (ROOT / path).is_file(), (row["id"], path)
-            assert name.split("[", 1)[0] in _defined(path), (row["id"], ref)
+            assert name.split("[", 1)[0] in _tests(path), (row["id"], ref)

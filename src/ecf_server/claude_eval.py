@@ -895,7 +895,7 @@ def _check_root(conn: sqlite3.Connection, root: Path) -> None:
     stored = slack_admin.setting(conn, evalrun.EVAL_ROOT)
     if (
         stored
-        and Path(stored).resolve() != Path(evalrun.logical(root))
+        and Path(evalrun.logical(Path(stored))) != Path(evalrun.logical(root))
         and (Path(stored) / "labels.jsonl").is_file()
     ):
         raise InvalidInputError(f"the go-live gate's set is at {stored}: a run for the gate on"
@@ -2154,18 +2154,27 @@ def _set_for_recovery(root: Path) -> tuple[merged.SetLock | None, str | None]:
             finally:
                 waited(time.monotonic() - t0)
 
-        held = shared()
-        if held is not None and held.held and merged.is_fresh(sp):
-            return held, None
-        if held is not None:
+        def fresh_under_lock() -> merged.SetLock | None:
+            """The shared lock, kept only when the set is fresh; released on every other way
+            out, a raise in the freshness check included (review round 2, L8)."""
+            held = shared()
+            if held is None:
+                return None
+            try:
+                if held.held and merged.is_fresh(sp):
+                    return held
+            except BaseException:
+                held.release()
+                raise
             held.release()
+            return None
+
+        if (held := fresh_under_lock()) is not None:
+            return held, None
         with contextlib.suppress(merged.RefreshBusy):
             merged.refresh_merged(root, wait=left[0], on_wait=waited)
-        held = shared()
-        if held is not None and held.held and merged.is_fresh(sp):
+        if (held := fresh_under_lock()) is not None:
             return held, None
-        if held is not None:
-            held.release()
         return None, "its lock stayed busy or it is still stale"
     except Exception as exc:  # the set's own: steps 1-2 and the release only
         return None, f"{type(exc).__name__}"

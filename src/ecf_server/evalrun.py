@@ -82,6 +82,7 @@ from ecf.eval.results import (
     spawn_figures,
     window_figures,
 )
+from ecf.eval.setio import canonical
 from ecf.ids import new_random_id
 from ecf.schema import (
     CURRENT_VERSION,
@@ -882,7 +883,7 @@ def null_classification(schema: Any) -> dict[str, Any]:
 def logical(root: Path) -> str:
     """The set's public path as stored, symlinks followed so an alias is the same set: never the
     merged view `merged.resolve` gives readers (EVAL-PRIVATE.md, "The stored root")."""
-    return str(root.resolve())
+    return str(canonical(root))
 
 
 def remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root: Path) -> None:

@@ -101,10 +101,14 @@ def test_git_failing_is_not_clean_and_a_timeout_backs_off(
         raise subprocess.TimeoutExpired(cmd, 5)
 
     monkeypatch.setattr(gitcheck, "_run_git", slow)
+    now = [1000.0]
+    monkeypatch.setattr(gitcheck, "_now", lambda: now[0])
     assert "timed out" in gitcheck.clean_and_pushed(top, "heldout3").detail
-    for _ in range(gitcheck.BACKOFF):
+    for _ in range(20):  # however often it is asked within the backoff: no git
+        now[0] += gitcheck.BACKOFF_S / 25
         assert "retried shortly" in gitcheck.clean_and_pushed(top, "heldout3").detail
     assert len(calls) == 1  # one timeout, then no git while backing off
+    now[0] += gitcheck.BACKOFF_S
     gitcheck.clean_and_pushed(top, "heldout3")
     assert len(calls) == 2
 
@@ -185,3 +189,59 @@ def test_the_fingerprint_follows_every_change_in_a_worktree(top: Path, tmp_path:
     git(top, "clone", "-q", "-b", "main", str(top / "remote.git"), str(priv))
     assert (priv / "heldout3").is_dir()
     _changes(wt, priv, "heldout3")
+    pub_remote = tmp_path / "pub.git"
+    git(top, "init", "-q", "--bare", str(pub_remote))
+    git(wt, "remote", "add", "pub", str(pub_remote))
+    for name, step in (
+        ("a commit in the worktree", lambda: git(wt, "commit", "-q", "--allow-empty", "-m", "w")),
+        ("a push from the worktree", lambda: git(wt, "push", "-q", "pub", "HEAD:refs/heads/w")),
+    ):
+        seen = gitcheck.fingerprint(wt, "heldout3")
+        step()
+        assert gitcheck.fingerprint(wt, "heldout3") != seen, name
+
+
+@pytest.mark.parametrize("name", ["fixed_labels.jsonl", "labels.jsonl", "checks.yaml",
+                                  "reviews.jsonl", "notes.md"])  # fmt: skip
+def test_an_ignored_set_file_is_dirty(top: Path, name: str) -> None:
+    """M4: an ignored label or check file defines the set's version, so a local ignore rule
+    can't make it look committed; only `.build/`, `*.tmp` and `.DS_Store` are left out."""
+    p = _priv(top)
+    f = p / "heldout3" / name
+    f.write_text(f.read_text() + "\n" if f.is_file() else "{}\n")
+    git(p, "rm", "-q", "--cached", "--ignore-unmatch", f"heldout3/{name}")
+    git(p, "commit", "-q", "-m", "untracked now", "--allow-empty")
+    git(p, "push", "-q")
+    (p / ".git" / "info" / "exclude").write_text(f"heldout3/{name}\n")
+    gitcheck.reset_backoff()
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and name in got.detail
+
+
+def test_build_files_tmp_files_and_ds_store_stay_clean(top: Path) -> None:
+    p = _priv(top) / "heldout3"
+    (p / ".build").mkdir(exist_ok=True)
+    (p / ".build" / "x.eml").write_text("x")
+    (p / ".DS_Store").write_text("x")
+    (p / ".labels.jsonl.tmp").write_text("x")
+    gitcheck.reset_backoff()
+    assert gitcheck.clean_and_pushed(top, "heldout3").ok
+
+
+def test_an_oddly_named_uncommitted_card_is_reported_by_its_real_name(top: Path) -> None:
+    (_priv(top) / "heldout3" / "cases" / 'a "quoted"é.md').write_text("x")
+    gitcheck.reset_backoff()
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and 'a "quoted"é.md' in got.detail
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_the_private_head_is_read_from_the_ref_files(top: Path, packed: bool) -> None:
+    """P3: HEAD from its files (loose ref or packed-refs), equal to what git says."""
+    p = _priv(top)
+    if packed:
+        git(p, "pack-refs", "--all")
+    assert gitcheck.read_head(p) == git(p, "rev-parse", "HEAD").strip()
+    gitcheck.reset_backoff()
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert got.ok and got.private_commit == gitcheck.read_head(p)

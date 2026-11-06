@@ -6,13 +6,46 @@ public and a private set (`eval/private/.merged/<set>/`), which only `refresh_me
 
 from __future__ import annotations
 
+import fcntl
 import os
 from pathlib import Path
 
 from ecf.errors import InvalidInputError
 
+# macOS: the path with each name's stored case; absent on Linux, where names are case-sensitive
+# and realpath is already canonical
+_GETPATH: int | None = getattr(fcntl, "F_GETPATH", None)
+
 MERGED_DIR = ".merged"
 MERGE_FILE = "merge.json"
+
+
+def canonical(path: Path) -> Path:
+    """What a path is, not how it was typed: symlinks followed and, on a case-insensitive file
+    system, every name in the case it is stored in. Every layout check compares canonical paths,
+    so `Tests/Eval/synthetic` is `tests/eval/synthetic` (EVAL-PRIVATE.md, "Finding the private
+    set"). A path that doesn't exist yet is its nearest existing parent's canonical path plus
+    the rest as given."""
+    p = Path(os.path.abspath(path))
+    rest: list[str] = []
+    while not os.path.lexists(p) and p != p.parent:
+        rest.insert(0, p.name)
+        p = p.parent
+    real = Path(os.path.realpath(p))
+    if _GETPATH is not None:
+        try:
+            fd = os.open(real, os.O_RDONLY)
+        except OSError:
+            pass
+        else:
+            try:
+                got = fcntl.fcntl(fd, _GETPATH, bytes(1024))
+                real = Path(os.fsdecode(bytes(got).split(b"\0", 1)[0]))
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
+    return real.joinpath(*rest)
 
 
 def tmp_path(path: Path) -> Path:
@@ -36,7 +69,7 @@ def atomic_write(path: Path, data: bytes | str) -> None:
 def is_merged(root: Path) -> bool:
     """Whether `root`, or any folder above it, is a merged view: a folder named `.merged`, or one
     holding `merge.json`."""
-    p = root.resolve()
+    p = canonical(root)
     return any(d.name == MERGED_DIR or (d / MERGE_FILE).is_file() for d in (p, *p.parents))
 
 

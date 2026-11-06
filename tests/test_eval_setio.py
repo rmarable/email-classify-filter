@@ -114,8 +114,10 @@ ALLOWED = {
     ("eval/merged.py", "_place_link"),
     ("eval/merged.py", "_build"),
     ("eval/merged.py", "_restat"),  # merge.json's stats, under refresh_merged's lock
+    ("eval/merged.py", "_tmp"),  # removes a stale temporary file in the merged view
 }
-_PATH_WRITES = {"write_text", "write_bytes", "rename", "link", "copy", "copy2", "copyfile",
+_PATH_WRITES = {"write_text", "write_bytes", "rename", "link", "copy", "copy2", "copyfile", "move",
+                "unlink", "rmtree", "touch",
                 "copytree", "clonefile", "atomic_write"}  # fmt: skip
 
 

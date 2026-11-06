@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -171,7 +172,7 @@ def test_a_refresh_waits_for_or_refuses_a_held_lock(tmp_path: Path) -> None:
     fd = mg.take_shared(pub)
     try:
         (mg.paths(pub).private or pub).joinpath("cases", "new.md").write_text("x")
-        with pytest.raises(mg.RefreshBusy, match="a run is reading this set"):
+        with pytest.raises(mg.RefreshBusy, match="the set is being read"):
             mg.refresh_merged(pub, wait=0.1)
     finally:
         mg.release(fd)
@@ -322,3 +323,112 @@ def test_each_committed_public_set_owns_its_rows_and_keys() -> None:
             assert not stray, (root.name, kind, stray[:5])
         _text, keys = mg._checks(root / mg.CHECKS)  # pyright: ignore[reportPrivateUsage]
         assert not sorted(set(keys) - ids), (root.name, "checks.yaml")
+
+
+# A writer that takes no lock (a review log append, a checks.yaml edit, a card edit) landing at
+# any step of a refresh: the view may be stale afterwards, but never stale and called fresh
+# (review round 2, M5).
+
+WRITERS = ["reviews append", "checks edit", "card edit"]
+STEPS = ["before content", "after content", "after copies", "before restat"]
+
+
+def _write(priv: Path, how: str) -> None:
+    if how == "reviews append":
+        rows = mg._jsonl_rows(priv / mg.REVIEWS)  # pyright: ignore[reportPrivateUsage]
+        line = rows[0][1] if rows else json.dumps({"id": mg.card_ids(priv)[0]})
+        with (priv / mg.REVIEWS).open("a") as f:
+            f.write(line + "\n")
+    elif how == "checks edit":
+        p = priv / mg.CHECKS
+        p.write_text(p.read_text() + "# edited\n")
+    else:
+        card = next((priv / "cases").glob("*.md"))
+        card.write_text(card.read_text() + "\n")
+
+
+def _honest(sp: mg.SetPaths) -> bool:
+    """Fresh implies the view holds what its sources give now (all four files, every card)."""
+    if not mg.is_fresh(sp):
+        return True
+    assert sp.private is not None and sp.merged is not None
+    want = mg.merge_sources(sp.public, sp.private)
+    for kind, data in want.items():
+        p = sp.merged / kind
+        if (data is None) != (not p.is_file()) or (data is not None and p.read_bytes() != data):
+            return False
+    for half in (sp.public, sp.private):
+        for c in (half / "cases").glob("*.md"):
+            if (sp.merged / "cases" / c.name).read_bytes() != c.read_bytes():
+                return False
+    return True
+
+
+@pytest.mark.parametrize("how", WRITERS)
+@pytest.mark.parametrize("step", STEPS)
+def test_a_writer_at_any_step_of_a_refresh_never_leaves_a_stale_view_called_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str, step: str
+) -> None:
+    from tests.test_move_private import mv  # noqa: PLC0415 - the move script splits rows and keys
+
+    pub = _copy_set("drafts", tmp_path)
+    priv = tmp_path / "eval" / "private" / "drafts"
+    mv.apply(tmp_path, "drafts", mg.card_ids(pub)[::4])
+    if not (priv / mg.CHECKS).is_file():
+        (priv / mg.CHECKS).write_text("")
+    if not (priv / mg.REVIEWS).is_file():
+        (priv / mg.REVIEWS).write_text("")
+    mg.refresh_merged(pub)
+    sp = mg.paths(pub)
+    first = next((priv / "cases").glob("*.md"))
+    first.write_text(first.read_text() + "\n")  # stale, so the next refresh builds
+    if step == "before restat":
+        mg.refresh_merged(pub)
+        os.utime(first)  # touched, unchanged: the next refresh only restats
+    done = [False]
+
+    def once() -> None:
+        if not done[0]:
+            done[0] = True
+            _write(priv, how)
+
+    if step == "before content":
+        real_ms = mg.merge_sources
+
+        def ms(*a: Any, **k: Any) -> Any:
+            once()
+            return real_ms(*a, **k)
+
+        monkeypatch.setattr(mg, "merge_sources", ms)
+    elif step == "after content":
+        real_ms2 = mg.merge_sources
+
+        def ms2(*a: Any, **k: Any) -> Any:
+            out = real_ms2(*a, **k)
+            once()
+            return out
+
+        monkeypatch.setattr(mg, "merge_sources", ms2)
+    elif step == "after copies":
+        real_cc = mg._copy_cards  # pyright: ignore[reportPrivateUsage]
+
+        def cc(*a: Any, **k: Any) -> Any:
+            out = real_cc(*a, **k)
+            once()
+            return out
+
+        monkeypatch.setattr(mg, "_copy_cards", cc)
+    else:
+        real_rs = mg._restat  # pyright: ignore[reportPrivateUsage]
+
+        def rs(*a: Any, **k: Any) -> Any:
+            once()
+            return real_rs(*a, **k)
+
+        monkeypatch.setattr(mg, "_restat", rs)
+    mg.refresh_merged(pub)
+    monkeypatch.undo()
+    assert done[0], "the writer never ran at that step"
+    assert _honest(sp)
+    mg.refresh_merged(pub)  # the next refresh repairs it
+    assert mg.is_fresh(sp) and _honest(sp)

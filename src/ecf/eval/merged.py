@@ -27,7 +27,7 @@ from typing import Any, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
-from ecf.eval.setio import MERGE_FILE, MERGED_DIR, is_merged
+from ecf.eval.setio import MERGE_FILE, MERGED_DIR, canonical, is_merged
 from ecf.yamlio import load_yaml
 
 FORMAT = 1
@@ -43,8 +43,9 @@ COPIED = ("cases", "eml")  # plain copies, made read-only
 LINKED = ".build"  # large: a clone, else a hard link, else a copy
 POLL_S = 0.02
 
-BUSY = ("a run is reading this set (see `ecf eval status`); run `ecf eval build` after it ends,"
-        " or `ecf eval stop` it")  # fmt: skip
+BUSY = ("the set is being read (by an eval run: see `ecf eval status`; or for a moment by the"
+        " service): try again, or run `ecf eval build` after the run ends")  # fmt: skip
+CLI_WAIT_S = 2.0  # a writer's refresh waits out the service's brief reads (57-190 ms measured)
 
 
 class RefreshBusy(InvalidInputError):
@@ -79,31 +80,39 @@ def _logical(root: Path) -> Path:
 
 
 def repo_top(root: Path) -> Path | None:
-    """`<top>` for a logical `<top>/tests/eval/<set>` path, else None. No `git` call."""
-    p = _logical(root)
-    if p.parent.name == "eval" and p.parent.parent.name == "tests":
-        return p.parents[2]
+    """`<top>` when `root` is a checkout's `<top>/tests/eval/<set>`, by what the folder is
+    (`setio.canonical`: symlinks followed, stored letter case), never by how it was typed;
+    else None. No `git` call."""
+    c = canonical(root)
+    if c.parent.name == "eval" and c.parent.parent.name == "tests":
+        return c.parents[2]
     return None
 
 
 def paths(root: Path) -> SetPaths:
-    p = _logical(root)
-    top = repo_top(p)
-    priv = None if top is None else top / "eval" / "private" / p.name
-    return SetPaths(p, top, priv if priv is not None and priv.is_dir() else None)
+    """A set's halves. A set in a checkout is named by its canonical path; any other set (a
+    temporary folder) by its path as given."""
+    top = repo_top(root)
+    if top is None:
+        return SetPaths(_logical(root), None, None)
+    pub = canonical(root)
+    priv = top / "eval" / "private" / pub.name
+    return SetPaths(pub, top, priv if priv.is_dir() else None)
 
 
 def is_private_root(root: Path) -> bool:
-    """Whether `root` is the private half of a set, `<top>/eval/private/<set>`."""
-    p = _logical(root)
-    return p.parent.name == "private" and p.parent.parent.name == "eval"
+    """Whether `root` is the private half of a set, `<top>/eval/private/<set>` (canonical)."""
+    c = canonical(root)
+    return c.parent.name == "private" and c.parent.parent.name == "eval"
 
 
 def public_of(root: Path) -> Path:
-    """The logical (public) path of either half: `<top>/eval/private/<set>` gives
-    `<top>/tests/eval/<set>`; a public path is returned as it is."""
-    p = _logical(root)
-    return p.parents[2] / "tests" / "eval" / p.name if is_private_root(p) else p
+    """The public path of either half: `<top>/eval/private/<set>` gives `<top>/tests/eval/<set>`;
+    a public path is returned as it is."""
+    if is_private_root(root):
+        c = canonical(root)
+        return c.parents[2] / "tests" / "eval" / c.name
+    return _logical(root)
 
 
 def card_ids(root: Path) -> list[str]:
@@ -137,19 +146,22 @@ def refresh_after_write(root: Path) -> str | None:
     if paths(root).private is None:
         return None
     try:
-        refresh_merged(root)
+        refresh_merged(root, wait=CLI_WAIT_S)
     except Exception as exc:  # never masks the writer's own result or error (C89)
         return f"note: the merged set wasn't refreshed: {exc or type(exc).__name__}"
     return None
 
 
 def membership(root: Path) -> tuple[frozenset[str], frozenset[str]] | None:
-    """Each half's card IDs, from its label file (no card is read), for a logical set root with a
-    private half; None without one (EVAL-PRIVATE.md, "The gate guard": counts by membership)."""
+    """Each half's card IDs, from its label file (no card is read), for a set in a checkout; the
+    private half is empty when it is absent, so a run there records `private_cases` 0 and the
+    gate refuses it. None for a set outside a checkout (EVAL-PRIVATE.md, "The gate guard")."""
     sp = paths(root)
-    if sp.private is None:
+    if sp.top is None:
         return None
     pub = frozenset(i for i, _ in _jsonl_rows(sp.public / LABELS))
+    if sp.private is None:
+        return pub, frozenset()
     priv = frozenset(i for i, _ in _jsonl_rows(sp.private / LABELS))
     return pub, priv
 
@@ -186,6 +198,27 @@ def _checks(path: Path) -> tuple[str, dict[str, Any]]:
     return text, dict(cast("dict[str, Any]", data))
 
 
+def _merged_checks(public: Path, private: Path, pub_ids: set[str], priv_ids: set[str], *,
+                   validate: bool) -> bytes | None:  # fmt: skip
+    """checks.yaml merged: the public file, then the private one's keys (its header dropped)."""
+    if validate:
+        (ta, da), (tb, db) = _checks(public / CHECKS), _checks(private / CHECKS)
+        _owned([(k, "") for k in da], pub_ids, "public", CHECKS)
+        _owned([(k, "") for k in db], priv_ids, "private", CHECKS)
+    else:
+        ta, tb = _text(public / CHECKS), _text(private / CHECKS)
+    if not ta and not tb:
+        return None
+    text = ta + ("" if not ta or ta.endswith("\n") else "\n") + _body(tb)
+    if validate:
+        load_yaml(text, source="merged checks.yaml")  # duplicate keys refuse
+    return text.encode()
+
+
+def _text(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
 def _body(text: str) -> str:
     """A checks.yaml without its leading comment lines (the merged file keeps the public header)."""
     lines = text.splitlines(keepends=True)
@@ -195,10 +228,11 @@ def _body(text: str) -> str:
     return "".join(lines[i:])
 
 
-def merge_sources(public: Path, private: Path,
-                  kinds: tuple[str, ...] = FILES) -> dict[str, bytes | None]:  # fmt: skip
+def merge_sources(public: Path, private: Path, kinds: tuple[str, ...] = FILES, *,
+                  validate: bool = True) -> dict[str, bytes | None]:  # fmt: skip
     """The merged content of each file in `kinds` (None when neither half has the file).
-    `refresh_merged` asks for all four; the gate and the resolver only for the two label files."""
+    `validate` (the build) refuses rows and keys of the other half and duplicate keys; the
+    freshness check only compares bytes, so it skips the YAML parse."""
     pub_ids, priv_ids = set(card_ids(public)), set(card_ids(private))
     both = sorted(pub_ids & priv_ids)
     if both:
@@ -215,16 +249,7 @@ def merge_sources(public: Path, private: Path,
             rows = sorted(a + b, key=lambda r: r[0])
             out[kind] = "".join(line + "\n" for _, line in rows).encode()
         elif kind == CHECKS:
-            (ta, da), (tb, db) = _checks(public / kind), _checks(private / kind)
-            _owned([(k, "") for k in da], pub_ids, "public", kind)
-            _owned([(k, "") for k in db], priv_ids, "private", kind)
-            if not ta and not tb:
-                out[kind] = None
-                continue
-            body = _body(tb)
-            text = ta + ("" if not ta or ta.endswith("\n") else "\n") + body
-            load_yaml(text, source="merged checks.yaml")  # duplicate keys refuse
-            out[kind] = text.encode()
+            out[kind] = _merged_checks(public, private, pub_ids, priv_ids, validate=validate)
         elif kind == REVIEWS:
             pa, pb = public / kind, private / kind
             a, b = _jsonl_rows(pa), _jsonl_rows(pb)
@@ -271,16 +296,15 @@ def _sha(p: Path) -> str:
     return h.hexdigest()
 
 
-def _entry(p: Path, prev: list[Any] | None) -> list[Any]:
-    size, mtime, ino = _stat(p)
-    if prev is not None and prev[:3] == [size, mtime, ino]:
-        return prev
-    return [size, mtime, ino, _sha(p)]
-
-
 def _manifest(root: Path, prev: dict[str, list[Any]]) -> dict[str, list[Any]]:
-    return {str(p.relative_to(root)): _entry(p, prev.get(str(p.relative_to(root))))
-            for p in _walk(root)}  # fmt: skip
+    """Each file's [size, mtime, inode, sha256], from one scandir per folder; a file whose stat
+    matches its previous entry keeps that entry's sha256 unhashed."""
+    out: dict[str, list[Any]] = {}
+    for rel, (p, size, mtime, ino) in _stats(root).items():
+        old = prev.get(rel)
+        out[rel] = old if old is not None and old[:3] == [size, mtime, ino] else [
+            size, mtime, ino, _sha(p)]  # fmt: skip
+    return out
 
 
 def _read_merge(merged: Path) -> dict[str, Any] | None:
@@ -292,6 +316,12 @@ def _read_merge(merged: Path) -> dict[str, Any] | None:
         return None
     d = cast("dict[str, Any]", doc)
     return d if d.get("format") == FORMAT else None
+
+
+def file_stats(root: Path) -> dict[str, tuple[Path, int, int, int]]:
+    """Every card, email and set file of a set, with (path, size, mtime, inode): one scandir per
+    folder (the gate's cache key and the freshness check)."""
+    return _stats(root)
 
 
 def _stats(root: Path) -> dict[str, tuple[Path, int, int, int]]:
@@ -315,7 +345,8 @@ def _stats(root: Path) -> dict[str, tuple[Path, int, int, int]]:
     return out
 
 
-def _same(root: Path, recorded: dict[str, list[Any]], restat: list[str] | None = None) -> bool:
+def _same(root: Path, recorded: dict[str, list[Any]],
+          restat: list[tuple[str, str, str]] | None = None, side: str = "") -> bool:  # fmt: skip
     """Whether `root`'s files are the ones `recorded`: same names, and each file's stat or, on a
     stat mismatch, its sha256. A file matched by its sha256 alone is added to `restat`, so a
     refresh can record its new stat and stop hashing it."""
@@ -332,27 +363,29 @@ def _same(root: Path, recorded: dict[str, list[Any]], restat: list[str] | None =
         except OSError:
             return False
         if restat is not None:
-            restat.append(rel)
+            restat.append((side, rel, rec[3]))
     return True
 
 
-def is_fresh(sp: SetPaths, restat: list[str] | None = None) -> bool:
-    """Whether the merged view equals what its two sources would give now. The two label files
-    are recomputed in memory and compared byte for byte, so a consistent hand edit of the merged
-    files and `merge.json` is still refused. `restat` collects files matched by hash alone."""
+def is_fresh(sp: SetPaths, restat: list[tuple[str, str, str]] | None = None) -> bool:
+    """Whether the merged view equals what its two sources would give now. All four derived files
+    (label files, checks.yaml, reviews.jsonl) are recomputed in memory and compared byte for
+    byte, so neither a consistent hand edit of the merged files and `merge.json` nor a source
+    changed while a refresh ran passes. `restat` collects (side, file, sha) matched by hash
+    alone."""
     if sp.private is None or sp.merged is None:
         return False
     doc = _read_merge(sp.merged)
     if doc is None:
         return False
     man = doc.get("manifest", {})
-    if not (_same(sp.public, man.get("public", {}), restat)
-            and _same(sp.private, man.get("private", {}), restat)
-            and _same(sp.merged, man.get("merged", {}), restat)):  # fmt: skip
+    if not (_same(sp.public, man.get("public", {}), restat, "public")
+            and _same(sp.private, man.get("private", {}), restat, "private")
+            and _same(sp.merged, man.get("merged", {}), restat, "merged")):  # fmt: skip
         return False
     try:
-        want = merge_sources(sp.public, sp.private, LABEL_FILES)
-    except InvalidInputError:
+        want = merge_sources(sp.public, sp.private, FILES, validate=False)
+    except (InvalidInputError, OSError, ValueError, KeyError):
         return False
     for kind, data in want.items():
         p = sp.merged / kind
@@ -446,14 +479,16 @@ def _copy_cards(m: Path, halves: tuple[tuple[Path, dict[str, list[Any]]], ...],
 def _build(sp: SetPaths) -> None:
     if sp.private is None or sp.merged is None:
         raise InvalidInputError(f"{sp.public}: no private set to merge")
-    content = merge_sources(sp.public, sp.private)
     m = sp.merged
     _writable(m)
     prev = _read_merge(m) or {}
     (m / MERGE_FILE).unlink(missing_ok=True)  # stale until written again, last
     prev_man: dict[str, dict[str, list[Any]]] = prev.get("manifest", {})
+    # the sources' manifests before their content: a writer changing a source after this point
+    # leaves it newer than its manifest, so the view reads stale and is rebuilt, never fresh
     pub_man = _manifest(sp.public, prev_man.get("public", {}))
     priv_man = _manifest(sp.private, prev_man.get("private", {}))
+    content = merge_sources(sp.public, sp.private)
     prev_merged = prev_man.get("merged", {})
     keep = _copy_cards(m, ((sp.public, pub_man), (sp.private, priv_man)), prev_merged)
     for kind, data in content.items():
@@ -488,15 +523,23 @@ def _build(sp: SetPaths) -> None:
     os.replace(tmp, m / MERGE_FILE)
 
 
-def _restat(sp: SetPaths) -> None:
-    """Rewrite merge.json with the current stats of a fresh view (contents unchanged)."""
+def _restat(sp: SetPaths, restat: list[tuple[str, str, str]]) -> None:
+    """Record the new stat of each file `is_fresh` matched by hash alone, if its hash still is the
+    recorded one (it is hashed again here, so a write since then leaves the entry stale)."""
     doc = None if sp.private is None or sp.merged is None else _read_merge(sp.merged)
     if doc is None or sp.private is None or sp.merged is None:
         return
-    man = doc["manifest"]
-    doc["manifest"] = {"public": _manifest(sp.public, man.get("public", {})),
-                       "private": _manifest(sp.private, man.get("private", {})),
-                       "merged": _manifest(sp.merged, man.get("merged", {}))}  # fmt: skip
+    roots = {"public": sp.public, "private": sp.private, "merged": sp.merged}
+    man: dict[str, dict[str, list[Any]]] = doc["manifest"]
+    for side, rel, sha in restat:
+        p = roots[side] / rel
+        try:
+            size, mtime, ino = _stat(p)
+            if _sha(p) != sha:
+                continue
+        except OSError:
+            continue
+        man[side][rel] = [size, mtime, ino, sha]
     tmp = _tmp(sp.merged / MERGE_FILE)
     tmp.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, sp.merged / MERGE_FILE)
@@ -535,10 +578,10 @@ def refresh_merged(root: Path, *, wait: float = 0.0,
         if not got:
             raise RefreshBusy(BUSY)
         try:
-            restat: list[str] = []
+            restat: list[tuple[str, str, str]] = []
             if is_fresh(sp, restat):
                 if restat:  # touched, unchanged: record the new stats (manifest only)
-                    _restat(sp)
+                    _restat(sp, restat)
                 return "fresh"
             _build(sp)
             return "refreshed"
@@ -594,10 +637,11 @@ class SetLock:
 def _under_private(p: Path) -> bool:
     """At or under some `<top>/eval/private` (letter case ignored: APFS is case-insensitive), or
     inside a merged view."""
-    for d in (p, *p.parents):
-        if d.name.lower() == "private" and d.parent.name.lower() == "eval":
+    c = canonical(p)
+    for d in (c, *c.parents):
+        if d.name == "private" and d.parent.name == "eval":
             return True
-    return is_merged(p)
+    return is_merged(c)
 
 
 def _same_dir(a: Path, b: Path) -> bool:
