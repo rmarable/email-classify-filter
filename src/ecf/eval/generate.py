@@ -49,6 +49,7 @@ from ecf.eval import mix as mixmod
 from ecf.eval.builder import build_all, scan_card
 from ecf.eval.cards import PROFILE_TO, Card, parse_card
 from ecf.eval.hygiene import Finding
+from ecf.eval.setio import atomic_write, writable_root
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import FieldKind, load_schema
 from ecf.text import escaped
@@ -589,7 +590,7 @@ class Run:
             return f"near-duplicate ({why})", None, None
         self.case_no[b.group] += 1
         (self.root / "cases").mkdir(exist_ok=True)
-        (self.root / "cases" / f"{case_id}.md").write_text(text, encoding="utf-8")
+        atomic_write(writable_root(self.root) / "cases" / f"{case_id}.md", text)
         self.work.append("proposals", [{"id": case_id, "seed": seed["id"],
                                         "labels": email["labels"]}])  # fmt: skip
         return "kept", None, case_id

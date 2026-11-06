@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
@@ -25,6 +24,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval import review
+from ecf.eval.setio import atomic_write, writable_root
 from ecf.schema import FIXED_ITEMS
 
 FILE = "fixed_labels.jsonl"
@@ -47,13 +47,10 @@ def read(root: Path) -> list[dict[str, Any]]:
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
     """Replace the file atomically (a temporary file, then `os.replace`): a crash leaves the
     old file or the new one, never half of it."""
-    path = root / FILE
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
+    atomic_write(
+        writable_root(root) / FILE,
         "".join(json.dumps(r, sort_keys=True) + "\n" for r in sorted(rows, key=lambda r: r["id"])),
-        encoding="utf-8",
     )
-    os.replace(tmp, path)
 
 
 def is_confirmed(row: Mapping[str, Any], sha256: str | None) -> bool:

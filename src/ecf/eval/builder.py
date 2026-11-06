@@ -20,6 +20,7 @@ from typing import cast
 from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, load_cards
 from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
+from ecf.eval.setio import atomic_write, writable_root
 
 COMMIT_LIMIT = 1024 * 1024
 LONG_FIELDS = ("signature", "quoted_thread", "footer")  # a long card's text besides its body
@@ -142,8 +143,20 @@ class BuildReport:
     )
 
 
+def _same(path: Path, data: bytes, digest: str) -> bool:
+    """Whether `path` already holds exactly `data` (its size, then its sha256): never judged by
+    the old label row alone, so `ecf eval build` still repairs a damaged set."""
+    try:
+        if path.stat().st_size != len(data):
+            return False
+        return hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    except FileNotFoundError:
+        return False
+
+
 def build_all(root: Path) -> BuildReport:
     """Build every card under `root/cases`. Stops before writing anything if hygiene fails."""
+    writable_root(root)
     cards = load_cards(root / "cases")
     findings = [f for c in cards for f in scan_card(c, f"{c.id}.md")]
     if findings:
@@ -157,13 +170,15 @@ def build_all(root: Path) -> BuildReport:
         data = build_bytes(card)
         target = (big_dir if len(data) > COMMIT_LIMIT else eml_dir) / f"{card.id}.eml"
         target.parent.mkdir(exist_ok=True)
-        target.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        if not _same(target, data, digest):  # a missing or damaged file is rewritten
+            atomic_write(target, data)
         (large if target.parent == big_dir else built).append(card.id)
         labels.append(
             {
                 "id": card.id,
                 "file": str(target.relative_to(root)),
-                "sha256": hashlib.sha256(data).hexdigest(),
+                "sha256": digest,
                 "bytes": len(data),
                 "author": card.author,
                 **({"generator": card.generator} if card.generator else {}),

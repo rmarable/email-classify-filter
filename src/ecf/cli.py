@@ -919,6 +919,7 @@ def eval_new_case(
 ) -> None:
     """Write a new case card from a template (edit it, then `ecf eval build`)."""
     from ecf.eval.case_templates import TEMPLATES  # noqa: PLC0415
+    from ecf.eval.setio import atomic_write, writable_root  # noqa: PLC0415
 
     if template not in TEMPLATES:
         raise typer.BadParameter(f"one of {', '.join(TEMPLATES)}", param_hint="--template")
@@ -928,7 +929,7 @@ def eval_new_case(
     if target.exists():
         raise typer.BadParameter(f"{target} already exists", param_hint="CASE_ID")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(TEMPLATES[template].format(id=case_id), encoding="utf-8")
+    atomic_write(writable_root(target), TEMPLATES[template].format(id=case_id))
     typer.echo(f"wrote {target}")
 
 

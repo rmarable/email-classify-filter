@@ -27,6 +27,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, parse_card
+from ecf.eval.setio import atomic_write, writable_root
 from ecf.schema import (
     NOT_DERIVED_LABELS,
     REMOVED_BY_FIELD,
@@ -62,7 +63,7 @@ def read_log(root: Path) -> list[dict[str, Any]]:
 
 
 def append_log(root: Path, rows: list[dict[str, Any]]) -> None:
-    with (root / LOG).open("a", encoding="utf-8") as f:
+    with (writable_root(root) / LOG).open("a", encoding="utf-8") as f:
         f.writelines(json.dumps(r, sort_keys=True) + "\n" for r in rows)
 
 
@@ -172,7 +173,7 @@ def set_labels(path: Path, new: dict[str, Any]) -> None:
     changed = _LABELS_LINE.sub(lambda m: f"{m.group(1)}{{{body}}}", text, count=1)
     if parse_card(changed, source=path.name).expected.labels != new:
         raise InvalidInputError(f"{path.name}: the labels didn't read back as written")
-    path.write_text(changed, encoding="utf-8")
+    atomic_write(writable_root(path), changed)
 
 
 def merged(old: dict[str, Any], finals: dict[str, Any]) -> dict[str, Any]:
@@ -322,7 +323,7 @@ def write_expected(path: Path, rule: str | None, safety: dict[str, bool]) -> boo
     if new == text:
         return False
     parse_card(new, source=path.name)  # still a valid card
-    path.write_text(new, encoding="utf-8")
+    atomic_write(writable_root(path), new)
     return True
 
 
