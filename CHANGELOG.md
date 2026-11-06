@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Decided: merges and direct changes to the main branch are made in one long-lived separate working copy rather than the shared one, and the GitHub check for prompt-injection test emails is simplified: the operator approves a change to it at merge, recorded in the merge message (OD-688).
 - Decided: merges to the main branch are checked on a separate branch before they are pushed, old test emails that a stricter format no longer reads are listed rather than blocking the change, and at startup each eval test set gets a few seconds of its own when several installs start together (OD-687).
 - Decided: the operator's approval for a change to the GitHub check for prompt-injection test emails is checked before the change is pushed, can be given in a later commit if it was forgotten, and the daily run also re-checks that the known test emails are still flagged; at startup ecf waits briefly for another install's refresh of a test set (OD-686).
 - Decided: any change on the main branch to the GitHub check for prompt-injection test emails needs the operator's approval recorded in that commit, checked daily too; the freeze on the main branch during the move starts from a fixed point, and at startup ecf keeps retrying a stale test set for up to 15 seconds (OD-685).
