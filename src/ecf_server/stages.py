@@ -168,7 +168,7 @@ def _live_allowed(conn: sqlite3.Connection, aid: str, *, override: bool, reason:
                   held: str) -> gate.Gate:  # fmt: skip
     if held not in HELD_CHOICES:
         raise InvalidInputError(f"held is one of {', '.join(HELD_CHOICES)}")
-    g = gate.compute(conn, aid)
+    g = gate.compute(conn, aid, fresh=True)  # the live git check, never the cached one
     if not g.safety_met:
         failed = "; ".join(c.detail for c in g.checks if not c.ok and not c.waivable)
         raise PolicyDeniedError(f"the go-live safety gates aren't met, and no override can waive"

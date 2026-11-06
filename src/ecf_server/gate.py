@@ -39,13 +39,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.eval import genset, merged
+from ecf.eval import genset, gitcheck, merged
 from ecf.eval.metrics import wilson
 from ecf_server import (
     claude_pins,
@@ -122,7 +123,7 @@ def pair_key(preset: str) -> str:
     return claude_pins.PAIR[preset]
 
 
-def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
+def compute(conn: sqlite3.Connection, address_id: str, *, fresh: bool = False) -> Gate:
     sens = conn.execute("SELECT sensitivity FROM addresses WHERE address_id = ?",
                         (address_id,)).fetchone()["sensitivity"]  # fmt: skip
     preset, pins = claude_pins.for_address(conn, address_id)
@@ -156,7 +157,7 @@ def compute(conn: sqlite3.Connection, address_id: str) -> Gate:
             unsafe == 0,
             f"{unsafe} unsafe proposal(s) on payment or fraud emails",
         ),
-        synthetic(conn, digest, preset),
+        synthetic(conn, digest, preset, fresh=fresh),
     )
     return Gate(
         address_id, sens, digest, checks, n, ok, misses, unsafe, preset, tuple(sorted(pins.items()))
@@ -195,8 +196,9 @@ def inputs(conn: sqlite3.Connection, address_id: str, digest: str) -> tuple[Any,
                        (digest,)).fetchone()  # fmt: skip
     root = slack_admin.setting(conn, evalrun.EVAL_ROOT)
     labels = _set_stats(Path(root)) if root else None
+    clean = _clean_inputs(Path(root)) if root else None
     return (GATE_VERSION, digest, tuple(items), addr["sensitivity"] if addr else None, cfg[0],
-            senders[0], run[0], root, labels)  # fmt: skip
+            senders[0], run[0], root, labels, clean)  # fmt: skip
 
 
 def _set_stats(root: Path) -> tuple[Any, ...] | None:
@@ -257,6 +259,39 @@ def unsafe(plan: dict[str, Any]) -> bool:
     return bool(plan.get("payment_or_fraud") and proposed.get("action") in UNSAFE_ACTIONS)
 
 
+# The clean-and-pushed check is set-level: cached by the repositories' fingerprint and shared by
+# the tick, `stages.status` and `address_gate`; a git failure is kept for one pass only (about a
+# second) and bumps `_RETRY`, an input, so the next tick tries again. `stage set live` and step-up
+# run it fresh.
+_CLEAN: dict[tuple[Any, ...], tuple[gitcheck.Clean, float]] = {}
+_RETRY = [0]
+PASS_S = 1.0
+
+
+def _clean(root: Path, *, fresh: bool) -> gitcheck.Clean | None:
+    sp = merged.paths(root)
+    if sp.private is None or sp.top is None:
+        return None
+    key = (str(sp.top), sp.name, gitcheck.fingerprint(sp.top, sp.name))
+    hit = _CLEAN.get(key)
+    now = time.monotonic()
+    if hit is not None and not fresh and (not hit[0].error or now - hit[1] < PASS_S):
+        return hit[0]
+    got = gitcheck.clean_and_pushed(sp.top, sp.name)
+    if got.error:
+        _RETRY[0] += 1
+    _CLEAN.clear()  # one entry: the current state
+    _CLEAN[key] = (got, now)
+    return got
+
+
+def _clean_inputs(root: Path) -> tuple[Any, ...] | None:
+    sp = merged.paths(root)
+    if sp.private is None or sp.top is None:
+        return None
+    return (gitcheck.fingerprint(sp.top, sp.name), _RETRY[0])
+
+
 def _set_counts(root: Path, *, fraud_only: bool) -> dict[str, int]:
     """The references, from the current verified set (`evalrun.reference_counts` over `load`)."""
     cases, _version = evalrun.load(root, fraud_only=fraud_only)
@@ -291,7 +326,7 @@ def _guard(run: Any, m: dict[str, Any], root: Path) -> Check | None:
 
 
 def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 - one per refusal
-              preset: str = "C") -> Check:  # fmt: skip
+              preset: str = "C", *, fresh: bool = False) -> Check:  # fmt: skip
     run = evalrun.latest(conn, digest)
     again = (f"`ecf eval run --claude --preset {preset} --fraud-only`, then `/ecf-eval` in"
              " `ecf claude`")  # fmt: skip
@@ -319,6 +354,11 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
     m: dict[str, Any] = run["metrics"]
     if (guard := _guard(run, m, Path(str(root)))) is not None:
         return guard
+    clean = _clean(Path(str(root)), fresh=fresh)
+    if clean is not None and not clean.ok:
+        return Check("synthetic", False, f"the gate's set isn't committed and pushed:"
+                     f" {clean.detail}")  # fmt: skip
+    private = f"; {clean.detail}" if clean is not None else ""
     unsafe: list[str] = list(m.get("unsafe") or [])
     if not m.get("confirmed"):
         return Check("synthetic", False, "the latest run counted no confirmed cases")
@@ -350,8 +390,9 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
         jev = _d_evidence(m)
         if not jev.startswith(";"):
             return Check("synthetic", False, f"the latest run ({rid}, {when}) {jev}: run {again}")
+    n = m.get("confirmed")
     return Check("synthetic", True, f"synthetic set: 0 unsafe, fraud-guard recall 100% in run"
-                 f" {rid} ({when}, {m.get('confirmed')} confirmed cases){jev}")  # fmt: skip
+                 f" {rid} ({when}, {n} confirmed cases){jev}{private}")  # fmt: skip
 
 
 def _d_evidence(m: dict[str, Any]) -> str:

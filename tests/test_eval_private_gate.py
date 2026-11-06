@@ -4,12 +4,15 @@ the version first, then counts by membership, then the references from the set i
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from ecf.eval import gitcheck
 from ecf.eval import labels as label_file
 from ecf.eval import merged as mg
 from ecf_server import claude_pins, evalrun, gate, slack_admin
@@ -19,10 +22,42 @@ from tests.test_eval_resolver_wiring import _split_set  # pyright: ignore[report
 from tests.test_gate import DIGEST
 
 
+def git(cwd: Path, *args: str) -> str:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+        "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}  # fmt: skip
+    r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, env=env,
+                       check=False)  # fmt: skip
+    assert r.returncode == 0, f"git {' '.join(args)}: {r.stderr}"
+    return r.stdout
+
+
+def repos(top: Path) -> Path:
+    """`top` as a committed public repository, and its `eval/private` as a private one whose
+    branch tracks a pushed upstream on a local bare remote."""
+    (top / ".gitignore").write_text("eval/private/\nremote.git/\n")
+    git(top, "init", "-q", "-b", "main")
+    git(top, "add", "-A")
+    git(top, "commit", "-q", "-m", "set")
+    priv = top / "eval" / "private"
+    (priv / ".gitignore").write_text(".merged/\n.build/\n*.tmp\n")
+    git(priv, "init", "-q", "-b", "main")
+    git(priv, "add", "-A")
+    git(priv, "commit", "-q", "-m", "private")
+    bare = top / "remote.git"
+    git(top, "init", "-q", "--bare", str(bare))
+    git(priv, "remote", "add", "origin", str(bare))
+    git(priv, "push", "-q", "-u", "origin", "main")
+    return priv
+
+
 @pytest.fixture
 def split(tmp_path: Path) -> Path:
     pub, _priv, _total = _split_set(tmp_path)
+    repos(tmp_path)
     mg.refresh_merged(pub)
+    gitcheck.reset_backoff()
     return pub
 
 
@@ -140,3 +175,23 @@ def test_the_fingerprint_follows_both_halves_and_merge_json(
     card.write_text(card.read_text() + "\n")
     assert mg.refresh_merged(split) == "refreshed"  # merge.json rewritten
     assert gate.inputs(conn, "ap", DIGEST) != before
+
+
+def test_the_gate_and_a_for_gate_run_need_the_set_committed_and_pushed(
+    conn: sqlite3.Connection, clock: FakeClock, split: Path
+) -> None:
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    _run(conn, clock, split, _counts(split))
+    check = gate.synthetic(conn, DIGEST)
+    assert check.ok and "committed and pushed" in check.detail
+    clean = claude_eval._check_clean(split)  # pyright: ignore[reportPrivateUsage]
+    assert clean is not None and clean.private_commit
+    priv = mg.paths(split).private or split
+    git(priv.parent, "commit", "-q", "--allow-empty", "-m", "unpushed")
+    gitcheck.reset_backoff()
+    check = gate.synthetic(conn, DIGEST, fresh=True)
+    assert not check.ok and "not pushed" in check.detail
+    with pytest.raises(InvalidInputError, match="committed and pushed"):
+        claude_eval._check_clean(split)  # pyright: ignore[reportPrivateUsage]

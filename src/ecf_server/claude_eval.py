@@ -73,7 +73,7 @@ from ecf.errors import (
     NotFoundError,
     ServiceUnavailableError,
 )
-from ecf.eval import drafts, genset, merged
+from ecf.eval import drafts, genset, gitcheck, merged
 from ecf.eval.drafts import DraftCase
 from ecf.eval.results import (
     CaseResult,
@@ -275,6 +275,7 @@ class Run:
     source_run: str | None = None
     source: dict[str, Any] = field(default_factory=dict[str, Any])  # D: its SOURCE_KEYS
     source_key: str | None = None  # the source run's `eval_runs.digest`
+    private_commit: str | None = None  # a for-gate run's private HEAD at its start (EVAL-PRIVATE)
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -591,9 +592,11 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
     got: dict[str, dict[str, Any]] = {}
     source: dict[str, Any] = {}
     derived: dict[str, jev_mapping.Derived] = {}
+    clean: gitcheck.Clean | None = None
     try:
         if opts.for_gate:
             _check_root(conn, opts.root)
+            clean = _check_clean(opts.root)
         schema = config.current_schema(conn)
         if opts.preset == "D":
             source_run, got, source, derived = _jev_run(conn, version, schema,
@@ -639,6 +642,7 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             run.repeat_ids = frozenset(evalrun.determinism_sample(cases))
             _j(run, {"e": "registered", "slot": rec.slot, "attempt": rec.attempt,
                      "kind": rec.kind, "resumed_from": rec.resumed_from})  # fmt: skip
+        run.private_commit = clean.private_commit if clean is not None else None
         _SLOT.run = run
     if opts.for_gate:  # only here (P16); never an experiment's or a generated set's (eval P1)
         evalrun.remember_root(connect, clock, opts.root)
@@ -814,6 +818,19 @@ def _register_draft(data_dir: Path, clock: Clock, run_id: str,  # noqa: PLR0912,
 def _carried(p: draftruns.Registration, digests: dict[str, str], ids: set[str]) -> set[str]:
     """The cases of an earlier pilot run whose card is unchanged in the set as it is now."""
     return {k for k in ids if p.card_digests.get(k) == digests.get(k)}
+
+
+def _check_clean(root: Path) -> gitcheck.Clean | None:
+    """A for-gate run on a set with a private half needs both halves committed and the private
+    one pushed, checked live at its start (EVAL-PRIVATE.md, "The gate guard")."""
+    sp = merged.paths(root)
+    if sp.private is None or sp.top is None:
+        return None
+    got = gitcheck.clean_and_pushed(sp.top, sp.name)
+    if not got.ok:
+        raise InvalidInputError(f"a run for the gate needs the set committed and pushed:"
+                                f" {got.detail}")  # fmt: skip
+    return got
 
 
 def _check_root(conn: sqlite3.Connection, root: Path) -> None:
@@ -1045,6 +1062,9 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  
                                                 fraud_only=run.opts.fraud_only,
                                                 membership=merged.membership(
                                                     run.opts.root))  # fmt: skip
+    # a for-gate run on a set with a private half: what it read (EVAL-PRIVATE.md, gate guard)
+    summary |= {} if run.private_commit is None else {
+        "private_commit": run.private_commit, "merged_version": run.version}  # fmt: skip
     if frozen:  # what the classifier was asked, and with: the source run's
         summary.update(run.source)
         summary["classifier_source"] = {"run_id": run.source_run,
