@@ -195,3 +195,34 @@ def test_the_gate_and_a_for_gate_run_need_the_set_committed_and_pushed(
     assert not check.ok and "not pushed" in check.detail
     with pytest.raises(InvalidInputError, match="committed and pushed"):
         claude_eval._check_clean(split)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_public_only_for_gate_run_is_refused(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """D2b: a set in a checkout's tests/eval/ without its private half (a worktree or clone
+    without the private repository) can't be a gate run; --not-for-gate still runs."""
+    from datetime import date  # noqa: PLC0415
+
+    from ecf.errors import InvalidInputError  # noqa: PLC0415
+    from ecf.eval.builder import build_all  # noqa: PLC0415
+    from ecf_server import claude_eval  # noqa: PLC0415
+    from tests.test_claude_eval import CASES, SYNTHETIC  # noqa: PLC0415
+    from tests.test_claude_eval import start as claude_start  # noqa: PLC0415
+
+    pub = tmp_path / "tests" / "eval" / "synthetic"
+    (pub / "cases").mkdir(parents=True)
+    for name in CASES:
+        src = SYNTHETIC / "cases" / f"{name}.md"
+        (pub / "cases" / f"{name}.md").write_bytes(src.read_bytes())
+    assert not build_all(pub).findings
+    label_file.confirm(pub, "starter-bec", date(2026, 10, 1))
+    del conn  # the database, migrated
+    claude_eval.reset()
+    try:
+        with pytest.raises(InvalidInputError, match="no eval/private/synthetic"):
+            claude_start(db_path, clock, pub, preset="C")
+        assert claude_eval.current() is None
+        assert claude_start(db_path, clock, pub, preset="C", for_gate=False)["state"] == "ready"
+    finally:
+        claude_eval.reset()

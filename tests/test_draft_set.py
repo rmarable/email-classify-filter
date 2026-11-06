@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from ecf.eval import drafts
+from ecf.eval import drafts, merged
 from ecf.eval.hygiene import scan_text
 from ecf.schema import load_schema
 from ecf.yamlio import load_yaml
@@ -25,7 +25,6 @@ from ecf_server import actor, evalrun, policy, rules, ruletest, triggers
 from ecf_server.clock import FakeClock
 
 ROOT = Path(__file__).resolve().parent / "eval" / "drafts"
-CHECKS = ROOT / "checks.yaml"
 WORDS = Path(__file__).resolve().parent / "fixtures" / "common_words_en_20k.txt"
 BUILT = (ROOT / "labels.jsonl").is_file()
 pytestmark = pytest.mark.skipif(not BUILT, reason="no draft set yet")
@@ -57,7 +56,9 @@ def _inputs(case_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def _checks() -> dict[str, dict[str, list[str]]]:
-    return load_yaml(CHECKS.read_text(), source=str(CHECKS)) or {}
+    """The reply checks as a reader sees them: merged with the private half's when it is here."""
+    path = merged.resolve(ROOT) / "checks.yaml"
+    return load_yaml(path.read_text(), source=str(path)) or {}
 
 
 def _ids(group: str | None = None, *, allowed: bool | None = None) -> list[str]:
@@ -187,16 +188,21 @@ def test_long_cards_put_the_question_late(case_id: str) -> None:
     assert measured["signal_offset"] is not None and lo <= measured["signal_offset"] <= hi
 
 
-def test_make_up() -> None:
-    """Never over the plan's counts; exact once the set is complete."""
+def test_make_up_never_over() -> None:
+    """Never over the plan's counts, on what this checkout holds (the public half alone in CI)."""
     groups = Counter(s.group for _c, s in _set())
     kinds = Counter((s.group, s.kind) for _c, s in _set())
     assert all(groups[g] <= n for g, n in SIZE.items()), groups
     assert all(k in BAIT_KINDS for g, k in kinds if g == "bait")
     assert all(n <= PER_BAIT_KIND for (g, _k), n in kinds.items() if g == "bait")
     assert all(s.sender == "known" for _c, s in _set() if s.group == "bait")
-    if sum(groups.values()) < sum(SIZE.values()):
-        pytest.skip(f"set not complete: {sum(groups.values())} of {sum(SIZE.values())} cards")
+
+
+@pytest.mark.private("drafts")
+def test_make_up() -> None:
+    """Exact on the whole set: the injection cards are in the private half (EVAL-PRIVATE.md)."""
+    groups = Counter(s.group for _c, s in _set())
+    kinds = Counter((s.group, s.kind) for _c, s in _set())
     assert groups == Counter(SIZE)
     assert all(kinds["bait", k] == PER_BAIT_KIND for k in BAIT_KINDS)
     assert all(kinds["injection", t] >= PER_INJECTION_TYPE for t in drafts.INJECTION_TYPES)

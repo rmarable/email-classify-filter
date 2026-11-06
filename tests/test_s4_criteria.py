@@ -257,12 +257,21 @@ def test_the_s3b_fixture_holds_only_ids_and_bits() -> None:
 
     doc: dict[str, Any] = json.loads(S3B.read_text())
     assert set(doc) == {"about", "fields", "runs"}
-    labels = Path(__file__).resolve().parent / "eval" / "synthetic" / "labels.jsonl"
-    ids = {json.loads(line)["id"] for line in labels.read_text().splitlines()}
     for r in doc["runs"].values():
         assert set(r) == {"run_id", "pair", "set_version", "created_at", "rows"}
         assert all(re.fullmatch(ROW, row) for row in r["rows"])
-        assert {row.split()[0] for row in r["rows"]} <= ids  # card ids of the committed set
+
+
+@pytest.mark.private("synthetic")
+def test_the_s3b_fixture_names_only_cards_of_the_set() -> None:
+    """Card IDs of the committed set, both halves (some are private, EVAL-PRIVATE.md)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    halves = merged.membership(Path(__file__).resolve().parent / "eval" / "synthetic")
+    assert halves is not None
+    ids = halves[0] | halves[1]
+    for r in json.loads(S3B.read_text())["runs"].values():
+        assert {row.split()[0] for row in r["rows"]} <= ids
 
 
 def test_the_noise_reference_reproduces_plan_s7() -> None:

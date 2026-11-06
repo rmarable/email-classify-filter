@@ -861,10 +861,15 @@ def _carried(p: draftruns.Registration, digests: dict[str, str], ids: set[str]) 
 
 def _check_clean(root: Path) -> gitcheck.Clean | None:
     """A for-gate run on a set with a private half needs both halves committed and the private
-    one pushed, checked live at its start (EVAL-PRIVATE.md, "The gate guard")."""
+    one pushed, checked live at its start; a set in a checkout's `tests/eval/` without its private
+    half is refused (EVAL-PRIVATE.md, "The gate guard"; scope: operator decision 2026-11-06)."""
     sp = merged.paths(root)
-    if sp.private is None or sp.top is None:
+    if sp.top is None:
         return None
+    if sp.private is None:
+        raise InvalidInputError(f"a run for the gate needs the private set: this checkout has no"
+                                f" eval/private/{sp.name} (public set only). Pass --not-for-gate"
+                                " for an experiment")  # fmt: skip
     got = gitcheck.clean_and_pushed(sp.top, sp.name)
     if not got.ok:
         raise InvalidInputError(f"a run for the gate needs the set committed and pushed:"

@@ -96,11 +96,32 @@ def card(top: Path, cid: str, *, extra: str = "", body: str = "Body line",
     return p
 
 
-def copy(top: Path, cid: str) -> None:
+def copy(top: Path, cid: str, src: Path = SYN) -> None:
     for d, ext in (("cases", "md"), ("eml", "eml")):
         dst = top / "tests" / "eval" / "synthetic" / d / f"{cid}.{ext}"
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes((SYN / d / f"{cid}.{ext}").read_bytes())
+        dst.write_bytes((src / d / f"{cid}.{ext}").read_bytes())
+
+
+# A listed injection card, made up and built here: a moving card's text never sits in a test
+# (EVAL-PRIVATE.md, "Releases and CI"). OLD is its ID.
+OLD = "inj-old"
+
+
+def made_set(tmp: Path) -> Path:
+    """A set holding OLD (marked, and flagged by trigger 10), built."""
+    from ecf.eval.builder import build_all  # noqa: PLC0415
+
+    root = tmp / "made"
+    if not (root / "eml" / f"{OLD}.eml").is_file():
+        card(tmp / "made-top", OLD, body=INJ,
+             extra="expected:\n  safety: {injection_target: archive}\n")  # fmt: skip
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "cases").mkdir(exist_ok=True)
+        src = tmp / "made-top" / "tests" / "eval" / "synthetic" / "cases" / f"{OLD}.md"
+        (root / "cases" / f"{OLD}.md").write_bytes(src.read_bytes())
+        assert not build_all(root).findings
+    return root
 
 
 def commit(top: Path, msg: str) -> str:
@@ -111,20 +132,22 @@ def commit(top: Path, msg: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """main's history holds a listed injection card (inj-spanish) at the X1 anchor (`v1.0.0`);
+    """main's history holds a listed injection card (OLD) at the X1 anchor (`v1.0.0`);
     then the move takes it off main's tip. origin/main points at the move."""
     top = tmp_path / "r"
     top.mkdir()
     git(top, "init", "-q", "-b", "main")
     card(top, "plain")
-    copy(top, "inj-spanish")
+    copy(top, OLD, made_set(tmp_path))
+    blobs = sorted(git(top, "hash-object", f"tests/eval/synthetic/{d}/{OLD}.{e}")
+                   for d, e in (("cases", "md"), ("eml", "eml")))  # fmt: skip
     (top / cs.LIST).parent.mkdir(parents=True, exist_ok=True)
-    (top / cs.LIST).write_text(LIST.read_text())
+    (top / cs.LIST).write_text("".join(f"{b}\n" for b in blobs))
     base = commit(top, "base")
     git(top, "tag", "v1.0.0")
     monkeypatch.setattr(cs, "X1_ANCHOR", base)
     for d, ext in (("cases", "md"), ("eml", "eml")):
-        (top / "tests" / "eval" / "synthetic" / d / f"inj-spanish.{ext}").unlink()
+        (top / "tests" / "eval" / "synthetic" / d / f"{OLD}.{ext}").unlink()
     git(top, "update-ref", "refs/remotes/origin/main", commit(top, "the move"))
     return top
 
@@ -153,20 +176,20 @@ def test_a_new_card_x1_marks_but_trigger_10_misses_is_refused(repo: Path) -> Non
 
 
 def test_an_old_marked_card_passes_x1_on_a_branch(repo: Path) -> None:
-    """A branch carrying inj-spanish's old bytes (it merged main from before the move): the blob
+    """A branch carrying OLD's bytes (it merged main from before the move): the blob
     is in main's history at the anchor, so X1 doesn't apply, and it is listed."""
-    copy(repo, "inj-spanish")
+    copy(repo, OLD, repo.parent / "made")
     commit(repo, "carried in")
     assert _range(repo) == []
 
 
 def test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip(repo: Path) -> None:
-    copy(repo, "inj-spanish")  # restored onto the tip
+    copy(repo, OLD, repo.parent / "made")  # restored onto the tip
     commit(repo, "restore")
     assert _range(repo) == []
-    assert any("inj-spanish" in r for r in _range(repo, "refs/heads/main"))
+    assert any(OLD in r for r in _range(repo, "refs/heads/main"))
     assert cs.run_tree("HEAD", no_skip=False, top=repo).refused == []
-    assert any("inj-spanish" in r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused)
+    assert any(OLD in r for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused)
 
 
 def test_a_card_added_and_removed_in_one_range_is_still_refused(repo: Path) -> None:
@@ -220,7 +243,7 @@ def test_the_pinned_starter_is_exempt(repo: Path) -> None:
 def test_list_known_finds_the_flagged_blobs(repo: Path) -> None:
     got = cs.list_known("HEAD", repo)  # in history, though off the tip
     want = {git(repo, "rev-parse", f"v1.0.0:tests/eval/synthetic/{p}")
-            for p in ("cases/inj-spanish.md", "eml/inj-spanish.eml")}  # fmt: skip
+            for p in (f"cases/{OLD}.md", f"eml/{OLD}.eml")}  # fmt: skip
     assert set(got) == want
 
 
@@ -289,15 +312,15 @@ def test_the_daily_run(repo: Path) -> None:
     assert v.refused == [] and any("new-field" in w and "doesn't build" in w for w in v.warned)
 
 
-def test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter() -> None:
+def test_the_sdist_check_refuses_an_injection_card_and_passes_the_starter(tmp_path: Path) -> None:
     """The check the sdist test runs from the move commit on, here on fixture files."""
     starter = [(f"tests/eval/synthetic/{d}/starter-injection.{e}",
                 (SYN / d / f"starter-injection.{e}").read_bytes())
                for d, e in (("cases", "md"), ("eml", "eml"))]  # fmt: skip
     assert cs.check_files(starter).refused == []
-    spanish = [(f"tests/eval/synthetic/{d}/inj-spanish.{e}",
-                (SYN / d / f"inj-spanish.{e}").read_bytes())
-               for d, e in (("cases", "md"), ("eml", "eml"))]  # fmt: skip
-    got = cs.check_files(spanish).refused
-    assert any("cases/inj-spanish.md" in r for r in got)
-    assert any("eml/inj-spanish.eml" in r for r in got)
+    made = made_set(tmp_path)
+    old = [(f"tests/eval/synthetic/{d}/{OLD}.{e}", (made / d / f"{OLD}.{e}").read_bytes())
+           for d, e in (("cases", "md"), ("eml", "eml"))]  # fmt: skip
+    got = cs.check_files(old).refused
+    assert any(f"cases/{OLD}.md" in r for r in got)
+    assert any(f"eml/{OLD}.eml" in r for r in got)

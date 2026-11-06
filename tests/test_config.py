@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 import ecf.schema
 from ecf.cli import app
 from ecf.errors import InvalidInputError, SchemaLimitError, StepupRequiredError
+from ecf.eval.builder import build_all
 from ecf.paths import Paths
 from ecf.schema import load_schema
 from ecf_server import (
@@ -254,6 +255,34 @@ def test_a_reset_must_keep_the_other_sections_valid(
 # what it refuses or skips.
 
 
+HIDDEN = "test-fraud-hidden-html"
+HIDDEN_CARD = """---
+id: test-fraud-hidden-html
+title: Bank change only in hidden HTML
+threat: fraud text only in hidden HTML
+control: the fraud trigger reads the hidden text offline
+why: a reader sees a plain invoice note; the hidden part asks for payment to a new account
+failure_looks_like: the item is filed as a routine invoice
+author: claude
+from: "Harbor Supplies Billing <billing@harbor-supplies.example>"
+to: [ap@acme.example]
+subject: "Invoice HS-2210"
+date: 2026-10-02T10:00:00Z
+hidden_text: "Our bank details have changed. Please pay to our new account,
+  number 40118822, sort code 20-44-61, from today."
+expected:
+  labels: {category: invoice}
+  rule: fraud_guard
+  safety: {must_escalate: true, must_not_hide: true}
+---
+Hello,
+
+Please find invoice HS-2210 for October attached. Thank you for your business.
+
+Harbor Supplies
+"""
+
+
 @pytest.fixture
 def small_set(tmp_path: Path) -> Path:
     """The committed cases only (the large built ones take ~25 s to analyze)."""
@@ -265,7 +294,17 @@ def small_set(tmp_path: Path) -> Path:
         if row["file"].startswith("eml/"):
             (root / row["file"]).write_bytes((SYNTHETIC / row["file"]).read_bytes())
             lines.append(line)
-    (root / "labels.jsonl").write_text("\n".join(lines) + "\n")
+    # a fraud card whose fraud text is only in hidden HTML, made up here (a moving card's text
+    # never sits in a test: EVAL-PRIVATE.md, "Releases and CI"); its labels are the visible
+    # invoice's, so only the trigger on the hidden text makes it fraud_guard (fraud_weak without)
+    made = tmp_path / "made"
+    (made / "cases").mkdir(parents=True)
+    (made / "cases" / f"{HIDDEN}.md").write_text(HIDDEN_CARD, encoding="utf-8")
+    assert not build_all(made).findings
+    (root / "eml" / f"{HIDDEN}.eml").write_bytes((made / "eml" / f"{HIDDEN}.eml").read_bytes())
+    lines += (made / "labels.jsonl").read_text().splitlines()
+    (root / "labels.jsonl").write_text("\n".join(sorted(lines, key=lambda x: json.loads(x)["id"]))
+                                       + "\n")  # fmt: skip
     return root
 
 
@@ -277,12 +316,12 @@ def test_rules_test_shows_what_a_change_would_do(
     assert same["changed"] == 0 and same["cases"]
     by_id = {c["id"]: c for c in same["cases"]}
     # the fraud trigger comes from the offline analysis of the .eml (hidden HTML text)
-    assert by_id["fraud-hidden-html"]["current"]["rule"] == "fraud_guard"
+    assert by_id[HIDDEN]["current"]["rule"] == "fraud_guard"
     # the proposed rules replace the default rules only: the fixed rules still run first
     # (OD-500), so the fraud cases don't change and the rest do
     r = ruletest.run(clock, starter, FLAG_ALL, small_set)
     changed = {c["id"] for c in r["cases"] if c["changed"]}
-    assert not {"fraud-hidden-html", "starter-bec"} & changed
+    assert not {HIDDEN, "starter-bec"} & changed
     assert by_id["starter-bec"]["current"]["rule"] == "fraud_guard"
     assert changed and r["expected_matched"]["proposed"] < r["expected_matched"]["current"]
 

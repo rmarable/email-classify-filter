@@ -23,10 +23,15 @@ runner = CliRunner()
 def pub(tmp_path: Path) -> Path:
     p = tmp_path / "tests" / "eval" / "synthetic"
     priv = tmp_path / "eval" / "private" / "synthetic"
-    for half, ids in ((p, ("starter-bec", "starter-control")), (priv, ("inj-spanish",))):
+    for half, ids in ((p, ("starter-bec", "starter-control")), (priv, ())):
         (half / "cases").mkdir(parents=True)
         for i in ids:
             (half / "cases" / f"{i}.md").write_bytes((SYN / "cases" / f"{i}.md").read_bytes())
+    # the private card: the public starter-injection card under another ID (no moving card's
+    # text sits in a test, EVAL-PRIVATE.md "Releases and CI")
+    text = (SYN / "cases" / "starter-injection.md").read_text(encoding="utf-8")
+    (priv / "cases" / "inj-test.md").write_text(
+        text.replace("id: starter-injection\n", "id: inj-test\n", 1), encoding="utf-8")  # fmt: skip
     return p
 
 
@@ -42,7 +47,7 @@ def test_build_builds_both_halves_and_refreshes(pub: Path) -> None:
     assert "commit tests/eval/synthetic and eval/private/synthetic" in out
     assert mg.resolve(pub) == mg.paths(pub).merged
     assert [r["id"] for r in label_file.read(mg.resolve(pub))] == [
-        "inj-spanish", "starter-bec", "starter-control"]  # fmt: skip
+        "inj-test", "starter-bec", "starter-control"]  # fmt: skip
 
 
 def test_build_refuses_an_unmarked_private_card(pub: Path) -> None:
@@ -62,7 +67,7 @@ def test_new_case_routes_an_injection_card_to_the_private_half(pub: Path, tmp_pa
     assert (tmp_path / "eval" / "private" / "synthetic" / "cases" / "inj-new.md").is_file()
     r = runner.invoke(app, ["eval", "new-case", "bec-new", "--template", "bec", "--root", str(pub)])
     assert r.exit_code == 0 and (pub / "cases" / "bec-new.md").is_file()
-    r = runner.invoke(app, ["eval", "new-case", "inj-spanish", "--template", "bec", "--root",
+    r = runner.invoke(app, ["eval", "new-case", "inj-test", "--template", "bec", "--root",
                             str(pub)])  # fmt: skip
     assert r.exit_code != 0 and "already exists" in r.output
 
@@ -91,13 +96,13 @@ def _page(tmp_path: Path, answers: dict[str, object]) -> Path:
 def test_import_fixed_writes_each_part_to_its_own_half(pub: Path, tmp_path: Path) -> None:
     _build(pub)
     yes = {"label": True, "how": "single"}
-    page = _page(tmp_path, {"starter-bec": yes, "inj-spanish": yes})
+    page = _page(tmp_path, {"starter-bec": yes, "inj-test": yes})
     r = runner.invoke(app, ["eval", "label", "--root", str(pub), "--import-fixed", str(page)])
     assert r.exit_code == 0, r.output
     priv = mg.paths(pub).private
     assert priv is not None
     assert [x["id"] for x in fixed_labels.read(pub)] == ["starter-bec"]
-    assert [x["id"] for x in fixed_labels.read(priv)] == ["inj-spanish"]
+    assert [x["id"] for x in fixed_labels.read(priv)] == ["inj-test"]
     assert mg.resolve(pub) == mg.paths(pub).merged  # refreshed at the end
 
 
@@ -105,11 +110,11 @@ def test_import_fixed_writes_each_part_to_its_own_half(pub: Path, tmp_path: Path
 def test_import_fixed_with_one_bad_part_writes_neither(pub: Path, tmp_path: Path, bad: str) -> None:
     _build(pub)
     yes = {"label": True, "how": "single"}
-    answers: dict[str, object] = {"starter-bec": yes, "inj-spanish": yes}
+    answers: dict[str, object] = {"starter-bec": yes, "inj-test": yes}
     if bad == "an unknown id":
         answers["nope"] = yes
     else:
-        answers["inj-spanish"] = {"label": "maybe", "how": "single"}
+        answers["inj-test"] = {"label": "maybe", "how": "single"}
     r = runner.invoke(app, ["eval", "label", "--root", str(pub), "--import-fixed",
                             str(_page(tmp_path, answers))])  # fmt: skip
     assert r.exit_code != 0

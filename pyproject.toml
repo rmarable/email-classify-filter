@@ -117,6 +117,7 @@ markers = [
     "linux_only: needs Linux (Secret Service, systemd, PAM)",
     "imap: needs a Docker socket for the Dovecot container (Colima on macOS; OD-186)",
     "perf: CPU-time bounds on the trigger hot path, against an in-test baseline",
+    "private(set): needs this checkout's eval/private/<set>; skipped without it (CI, a worktree without the private repository; EVAL-PRIVATE.md)",
 ]
 
 # Coverage report, local and on demand only (CONTRIBUTING); never in CI or the merge gate.
