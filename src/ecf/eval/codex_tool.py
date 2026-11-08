@@ -24,6 +24,7 @@ from typing import Any, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import tools
+from ecf.eval.setio import writable_root
 from ecf.paths import Paths
 
 MIN_VERSION = (0, 163, 0)
@@ -75,7 +76,7 @@ def write_catalog(paths: Paths, model: str, exe: str, env: dict[str, str], workd
         raise InvalidInputError(f"{model}'s catalogue entry has no tool_mode: this Codex isn't"
                                 " the one ecf was checked against")  # fmt: skip
     text = json.dumps({"models": [entry | {"tool_mode": "direct"}]}, sort_keys=True)
-    path = catalog_path(paths, model)
+    path = writable_root(catalog_path(paths, model))
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:

@@ -31,6 +31,7 @@ from typing import Any, Literal, Protocol, cast
 
 from ecf.claude_wrapper import ENV_ALLOW
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import writable_root
 
 Status = Literal["ok", "refused", "failed", "limit"]
 # Set in the environment, these would send a run to another account or endpoint (P4)
@@ -284,6 +285,7 @@ class CliAdapter:
         """One call from `workdir` (made empty but for the call's files). The answer file holds
         the generator's raw text: it is deleted once read, whatever the outcome."""
         refuse_key_env(self._environ)
+        writable_root(workdir)  # never a call folder in a merged view (review round 27)
         workdir.mkdir(parents=True, exist_ok=True)
         schema_path, out_path = workdir / "schema.json", workdir / "out.json"
         out_path.unlink(missing_ok=True)
@@ -324,6 +326,7 @@ CANARY_PROMPT = ('Answer with JSON only. Set "word" to "ok". There is a file nam
 def canary(adapter: Adapter, workdir: Path) -> tuple[bool, str]:
     """The tool-less check (P3): passed only when the call answers, reports no tool event, and
     its answer doesn't hold the decoy's secret. Returns (passed, why) with no tool output."""
+    writable_root(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     secret = f"canary-{secrets.token_hex(8)}"
     (workdir / DECOY).write_text(f"The secret word is {secret}\n", encoding="utf-8")

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import writable_root
 from ecf.schema import (
     FIXED_ITEMS,
     CompiledSchema,
@@ -140,6 +141,7 @@ def put(labels: dict[Key, Label], new: Label) -> bool:
 def save(path: Path, labels: dict[Key, Label]) -> str:
     """Write every row, sorted by key, to a 0600 temp file, then rename it into place (R90).
     Returns the file's sha256."""
+    writable_root(path)
     body = "".join(json.dumps(labels[k].row(), sort_keys=True) + "\n" for k in sorted(labels))
     tmp = path.with_name(f".{path.name}.partial")
     tmp.unlink(missing_ok=True)

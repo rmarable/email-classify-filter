@@ -148,6 +148,9 @@ def _write_private(path: Path, text: str) -> None:
     """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6)."""
     import os  # noqa: PLC0415
 
+    from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+    writable_root(path)  # an --export folder, never in a merged view (review round 27)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -219,6 +222,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import mix as mixmod  # noqa: PLC0415
         from ecf.eval import providers  # noqa: PLC0415
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
 
         if write_mix is not None:
             mixmod.write_default(write_mix)
@@ -227,6 +231,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
         root = root.expanduser().resolve()  # a CLI tool's answer file is named from it
+        writable_root(root)  # before the canary or any call is bought (review round 27)
         mode = "dev" if dev else "prod"
         if show_findings:
             _may_show(dev)
@@ -292,7 +297,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import grade as grading  # noqa: PLC0415
         from ecf.eval import mistral_api, models, providers  # noqa: PLC0415
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
 
+        writable_root(root)  # before the estimate, the canary or any call (review round 27)
         doc = gen.read_manifest(root)
         mode = str(doc.get("mode"))
         adapter = providers.resolve(grader, "grader", mode, paths())

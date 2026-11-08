@@ -120,6 +120,7 @@ class Work:
         return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
 
     def append(self, name: str, rows: list[dict[str, Any]]) -> None:
+        writable_root(self.root)  # never into a merged view (review round 27)
         self.folder.mkdir(parents=True, exist_ok=True)
         with self._path(name).open("a", encoding="utf-8") as f:
             f.writelines(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in rows)
@@ -589,8 +590,9 @@ class Run:
         if (why := self.dups.seen(card.body)) is not None:
             return f"near-duplicate ({why})", None, None
         self.case_no[b.group] += 1
-        (self.root / "cases").mkdir(exist_ok=True)
-        atomic_write(writable_root(self.root) / "cases" / f"{case_id}.md", text)
+        root = writable_root(self.root)  # before its cases/ folder is made (review round 27)
+        (root / "cases").mkdir(exist_ok=True)
+        atomic_write(root / "cases" / f"{case_id}.md", text)
         self.work.append("proposals", [{"id": case_id, "seed": seed["id"],
                                         "labels": email["labels"]}])  # fmt: skip
         return "kept", None, case_id
@@ -767,6 +769,7 @@ def case_hashes(root: Path) -> dict[str, dict[str, str]]:
 
 
 def write_manifest(run: Run, state: str) -> None:
+    writable_root(run.root)  # never into a merged view (review round 27)
     mix_doc = run.mix.as_dict()
     groups: dict[str, dict[str, int]] = {}
     for b in run.buckets.values():
@@ -870,7 +873,9 @@ def verify(root: Path) -> dict[str, Any]:
 
 
 def start(root: Path, *, resume: bool) -> None:
-    """A new run needs an empty folder; `--resume` needs a stopped one (P17)."""
+    """A new run needs an empty folder; `--resume` needs a stopped one (P17). Never a folder
+    inside a merged view, checked before anything is written or bought (review round 27)."""
+    writable_root(root)
     if resume:
         doc = read_manifest(root) if (root / genset.MANIFEST).exists() else None
         if doc is not None and doc.get("state") != "stopped":

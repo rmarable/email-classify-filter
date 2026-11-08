@@ -31,6 +31,7 @@ from ecf.eval import labels as label_file
 from ecf.eval import review
 from ecf.eval.builder import build_all
 from ecf.eval.cards import parse_card
+from ecf.eval.setio import writable_root
 from ecf.schema import FieldKind, load_schema
 
 SETTLED = "settled"
@@ -71,6 +72,7 @@ def questions(root: Path) -> list[dict[str, Any]]:
 
 def export(root: Path, out: Path) -> tuple[Path, Path]:
     """The page data (no case ids) and its token map, for a phone page."""
+    writable_root(out)  # a page folder, never in a merged view (review round 27)
     items = questions(root)
     out.mkdir(parents=True, exist_ok=True)
     page = {

@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import fcntl
+import json
 import os
 import re
 import secrets
@@ -185,7 +186,7 @@ def sweep_old_temps(root: Path) -> tuple[list[Path], list[str]]:
     try:
         writable_root(root)
     except (InvalidInputError, OSError) as exc:
-        return [], [f"{escaped(str(root))}: old temporary files not checked ({escaped(str(exc))})"]
+        return [], [f"{escaped(str(root))}: old temporary files not checked ({_why(exc)})"]
     return _old_temps(root, remove=True)
 
 
@@ -236,18 +237,25 @@ def _sweep_folder(fd: int, where: Path, cutoff: float, gone: list[Path], left: l
             continue
         try:
             st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-            if not (stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff):
-                continue
-            if not remove:
-                left.append(f"{escaped(str(where / name))}: an old temporary file of a crashed"
-                            " write; remove it when you can")  # fmt: skip
-                continue
+        except FileNotFoundError:
+            continue  # another write renamed or removed it meanwhile
+        except OSError as exc:
+            left.append(f"{escaped(str(where / name))}: a temporary file's name, couldn't check it"
+                        f" ({_why(exc)}); left in place")  # fmt: skip
+            continue
+        if not (stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff):
+            continue
+        if not remove:
+            left.append(f"{escaped(str(where / name))}: an old temporary file of a crashed write;"
+                        " remove it when you can")  # fmt: skip
+            continue
+        try:
             os.unlink(name, dir_fd=fd)
         except FileNotFoundError:
             continue  # another write renamed or removed it meanwhile
         except OSError as exc:
             left.append(f"{escaped(str(where / name))}: an old temporary file of a crashed write,"
-                        f" left in place ({exc.strerror}); remove it when you can")  # fmt: skip
+                        f" left in place ({_why(exc)}); remove it when you can")  # fmt: skip
             continue
         gone.append(where / name)
 
@@ -257,19 +265,55 @@ def atomic_write(path: Path, data: bytes | str) -> None:
     replace_file(path, lambda tmp: write_new(tmp, data))
 
 
+def _why(exc: Exception) -> str:
+    """An error's reason for a note line: its system message, else its text, else its type (an
+    OSError raised without a message has no strerror; review round 27)."""
+    return escaped(getattr(exc, "strerror", None) or str(exc) or type(exc).__name__)
+
+
 def is_merged(root: Path) -> bool:
     """Whether `root`, or any folder above it, is a merged view: a folder named `.merged`, or one
-    holding `merge.json`."""
+    holding a merged view's own `merge.json` (a copy of a view kept elsewhere)."""
     p = canonical(root)
-    return any(d.name == MERGED_DIR or (d / MERGE_FILE).is_file() for d in (p, *p.parents))
+    folders = (p, *p.parents)
+    # the names first: inside a real view no merge.json (all its manifests) is read (round 27)
+    return any(d.name == MERGED_DIR for d in folders) or any(
+        _view_record(d / MERGE_FILE) for d in folders
+    )
+
+
+def _view_record(path: Path) -> bool:
+    """Whether a `merge.json` is a merged view's own: any file of that name counts unless it
+    reads, without following a link, as JSON with no `merged_version` (another tool's file of
+    the same name; review round 27). A link, a pipe or an unreadable file counts: refusing a
+    write is the safe side."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return os.path.lexists(path)  # a link (ELOOP), or unreadable
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return True
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 1 << 20):
+            chunks.append(chunk)
+        doc = json.loads(b"".join(chunks))
+    except (OSError, ValueError):
+        return True
+    finally:
+        os.close(fd)
+    return isinstance(doc, dict) and "merged_version" in doc
 
 
 def writable_root(root: Path) -> Path:
-    """Refuse a set root inside a merged view; return the root unchanged otherwise. Every set
-    writer calls this before it writes."""
+    """Refuse a path inside a merged view; return it unchanged otherwise. Every set writer, and
+    every helper that writes where its caller says, calls this before it writes."""
     if is_merged(root):
         raise InvalidInputError(
-            f"{root} is a merged eval set, which is rebuilt from its sources;"
-            " write to the public or private set that owns the card"
+            f"{root} is in a merged eval set, which is rebuilt from its sources and never"
+            " written: choose a folder outside it (a card or label goes in the public or"
+            " private set that owns the card)"
         )
     return root

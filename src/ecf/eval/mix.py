@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import writable_root
 from ecf.yamlio import load_yaml
 
 SHIPPED = "eval_mix.yaml"
@@ -171,6 +172,7 @@ def load(path: Path) -> Mix:
 
 def write_default(path: Path) -> None:
     """The shipped default mix as a file to edit (`ecf eval generate --write-mix`)."""
+    writable_root(path)
     if path.exists():
         raise InvalidInputError(f"{path} already exists")
     m = default().as_dict()

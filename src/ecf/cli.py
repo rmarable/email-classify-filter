@@ -938,9 +938,9 @@ def eval_new_case(
         home = priv
     if any((h / "cases" / f"{case_id}.md").exists() for h in merged.halves(root)):
         raise typer.BadParameter(f"{case_id} already exists", param_hint="CASE_ID")
-    target = home / "cases" / f"{case_id}.md"
+    target = writable_root(home / "cases" / f"{case_id}.md")  # before its folder is made
     target.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(writable_root(target), TEMPLATES[template].format(id=case_id))
+    atomic_write(target, TEMPLATES[template].format(id=case_id))
     typer.echo(f"wrote {target}")
 
 

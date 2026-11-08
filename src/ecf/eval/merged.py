@@ -854,6 +854,7 @@ def _clonefile() -> Any:
 
 
 _CLONE = _clonefile()
+_CLONE_NOFOLLOW = 0x0001  # <sys/clonefile.h>
 
 
 def _place_copy(src: Path, dst: Path, data: bytes | None = None) -> None:
@@ -861,16 +862,21 @@ def _place_copy(src: Path, dst: Path, data: bytes | None = None) -> None:
         replace_file(dst, lambda tmp: copy_new(src, tmp))
     else:
         replace_file(dst, lambda tmp: write_new(tmp, data))
-    dst.chmod(0o444)
+    _mode(dst, 0o444)
 
 
 def _clone_or_link(src: Path, tmp: Path) -> None:
     """An APFS clone where available, else a hard link, else a copy; each refuses an existing
     `tmp` (FileExistsError)."""
-    if _CLONE is not None and _CLONE(str(src).encode(), str(tmp).encode(), 0) == 0:
+    # CLONE_NOFOLLOW and follow_symlinks=False: a source swapped for a link after it was listed
+    # is placed as a link, which every reader refuses, never its target (review round 27). They
+    # cover the last name only: a source folder swapped for a link is followed, and what it
+    # places is caught by content, as every copy is (the `moved` check after the copy hashes the
+    # view against the sources' manifests; a refresh it fails stays stale)
+    if _CLONE is not None and _CLONE(str(src).encode(), str(tmp).encode(), _CLONE_NOFOLLOW) == 0:
         return  # (refused onto an existing `tmp`: the link below is refused the same way)
     try:
-        os.link(src, tmp)
+        os.link(src, tmp, follow_symlinks=False)
     except FileExistsError:
         raise
     except OSError:
@@ -888,9 +894,17 @@ def _writable(d: Path) -> None:
 
 def _mode(p: Path, mode: int) -> None:
     """Give `p` its mode only when it differs: a chmod changes the ctime the gate's key reads,
-    so a refresh that changes nothing leaves every stat as it was (review round 19, B1)."""
-    if stat.S_IMODE(p.stat().st_mode) != mode:
-        p.chmod(mode)
+    so a refresh that changes nothing leaves every stat as it was (review round 19, B1). A link
+    is left alone and never followed, so a folder or file swapped for one never has its target's
+    mode changed (review round 27; on Linux, which has no lchmod, a swap between the lstat and
+    the chmod is still followed: Linux is unsupported until M5, ADR 0020)."""
+    st = os.lstat(p)
+    if stat.S_ISLNK(st.st_mode) or stat.S_IMODE(st.st_mode) == mode:
+        return
+    if os.chmod in os.supports_follow_symlinks:
+        os.chmod(p, mode, follow_symlinks=False)
+    else:
+        os.chmod(p, mode)
 
 
 def _fold(name: str) -> str:
@@ -973,25 +987,50 @@ def _clear_extras(m: Path) -> None:
             raise InvalidInputError(f"{why}; remove it and run `ecf eval build` again") from exc
 
 
+_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _chmod_at(fd: int, name: str, mode: int) -> None:
+    """chmod `name` in the folder open as `fd`, never following a link where the system can
+    (macOS; Linux, unsupported until M5 (ADR 0020), has no lchmod)."""
+    if os.chmod in os.supports_follow_symlinks:
+        os.chmod(name, mode, dir_fd=fd, follow_symlinks=False)
+    else:
+        os.chmod(name, mode, dir_fd=fd)
+
+
 def _remove(p: Path) -> None:
-    """Remove a file, link or folder inside the merged view, never following a link. Walked with
-    a stack, not recursion, so no depth makes it fail other than with an OSError (round 15)."""
+    """Remove a file, link or folder inside the merged view, never following a link: each
+    folder is opened without following one and emptied through its handle, so a folder swapped
+    for a link part way is refused, never walked (review round 27). Walked with a stack, not
+    recursion, so no depth makes it fail other than with an OSError (round 15)."""
     if not stat.S_ISDIR(os.lstat(p).st_mode):
         p.unlink()
         return
-    stack: list[tuple[Path, bool]] = [(p, False)]
-    while stack:
-        d, emptied = stack.pop()
-        if emptied:
-            d.rmdir()
-            continue
-        d.chmod(0o700)  # a real folder (lstat): list and empty it whatever its mode
-        stack.append((d, True))
-        for e in os.scandir(d):
-            if e.is_dir(follow_symlinks=False):
-                stack.append((Path(e.path), False))
-            else:
-                os.unlink(e.path)
+    top = os.open(p.parent, _DIR)
+    opened = [top]
+    stack: list[tuple[int, str, int | None]] = [(top, p.name, None)]  # (folder, name, own fd)
+    try:
+        while stack:
+            pfd, name, fd = stack.pop()
+            if fd is not None:  # emptied
+                os.close(opened.pop(opened.index(fd)))
+                os.rmdir(name, dir_fd=pfd)
+                continue
+            _chmod_at(pfd, name, 0o700)  # list and empty it whatever its mode
+            fd = os.open(name, _DIR, dir_fd=pfd)
+            opened.append(fd)
+            stack.append((pfd, name, fd))
+            with os.scandir(fd) as it:
+                entries = list(it)
+            for e in entries:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append((fd, e.name, None))
+                else:
+                    os.unlink(e.name, dir_fd=fd)
+    finally:
+        for fd in opened:
+            os.close(fd)
 
 
 def _build(sp: SetPaths) -> None:

@@ -27,6 +27,7 @@ from ecf.eval import generate as gen
 from ecf.eval import labels as label_file
 from ecf.eval import models
 from ecf.eval.results import RESULT_FORMAT, CaseResult, ResultFile
+from ecf.eval.setio import writable_root
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import load_schema
 
@@ -105,7 +106,9 @@ class Grading:
     echo: Callable[[str], None] = field(default=lambda _s: None)
 
     def run(self, *, resume: bool) -> tuple[Path | None, dict[str, int], str]:
-        """(the result file, counts by outcome, detail). No file while the run is stopped."""
+        """(the result file, counts by outcome, detail). No file while the run is stopped, and
+        nothing written or asked in a merged view (review round 27)."""
+        writable_root(self.root)
         doc = gen.verify(self.root)
         models.check_judge(doc, (self.adapter.provider, self.adapter.model))
         work = gen.Work(self.root)
@@ -159,7 +162,7 @@ class Grading:
                      "schema_digest": load_schema().digest},
             format=RESULT_FORMAT,
         )  # fmt: skip
-        folder = self.root / GRADES
+        folder = writable_root(self.root) / GRADES
         folder.mkdir(exist_ok=True)
         path = folder / f"{_slug(self.adapter.model)}-{result.run_id}.json"
         path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")

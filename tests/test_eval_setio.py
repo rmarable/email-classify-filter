@@ -8,6 +8,7 @@ import contextlib
 import errno
 import json
 import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -69,13 +70,22 @@ def test_writable_root_refuses_a_merged_view(tmp_path: Path) -> None:
     merged.mkdir(parents=True)
     held = tmp_path / "copy"
     held.mkdir()
-    (held / "merge.json").write_text("{}")
-    for root in (merged, merged / "cases", held, held / "cases"):
+    (held / "merge.json").write_text('{"format": 2, "merged_version": "abc"}')
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "merge.json").write_text('{"format": 2, "merged_ver')  # cut short: counts
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    (linked / "merge.json").symlink_to(held / "merge.json")
+    for root in (merged, merged / "cases", held, held / "cases", broken, linked / "cases"):
         assert is_merged(root)
         with pytest.raises(InvalidInputError, match="merged eval set"):
             writable_root(root)
     plain = tmp_path / "tests" / "eval" / "synthetic"
     plain.mkdir(parents=True)
+    assert writable_root(plain) == plain
+    # another tool's merge.json above a set isn't a merged view (review round 27, delta check)
+    (tmp_path / "tests" / "merge.json").write_text('{"strategy": "ours"}')
     assert writable_root(plain) == plain
 
 
@@ -111,9 +121,11 @@ def test_build_skips_an_unchanged_file_and_repairs_a_damaged_one(tmp_path: Path)
     assert not list(root.rglob("*.tmp"))
 
 
-# Writes outside any set, or into a generated set's root only (guarded at entry by `generate`'s
-# own check or `gen.verify`), plus the helper itself. Every other write in these files, and every
-# `atomic_write`, sits in a function that calls `writable_root`, so a new writer can't skip it.
+# The write helpers themselves and the merged view's own writers (the view is written only by
+# refresh_merged). Every other write in these files, and every call of a write helper, comes
+# after a `writable_root` call in its function, so a new writer can't skip it; a helper that
+# writes to a path its caller passes checks that path itself. No whole module is listed: an
+# entry here is checked against the code, not taken from a comment (review round 27).
 ALLOWED = {
     ("eval/setio.py", "atomic_write"),
     ("eval/setio.py", "replace_file"),  # the one way a set file is written (round 23)
@@ -122,16 +134,6 @@ ALLOWED = {
     ("eval/setio.py", "_drop"),  # removes only this write's own temporary file
     ("eval/setio.py", "sweep_old_temps"),  # crashed writes' temporary files (round 24)
     ("eval/setio.py", "_sweep_folder"),  # the same, one folder (round 25)
-    ("eval/settle.py", "*"),
-    ("eval/mix.py", "*"),
-    ("eval/tools.py", "*"),
-    ("eval/codex_tool.py", "*"),
-    ("eval/corpus_labels.py", "*"),
-    ("eval/grade.py", "*"),
-    ("cli_evalgen.py", "_write_private"),
-    ("eval/generate.py", "Work.append"),
-    ("eval/generate.py", "write_manifest"),
-    ("eval/generate.py", "start"),  # makes a new generated set's empty folder (round 26)
     # refresh_merged, the one writer of the merged folder (EVAL-PRIVATE.md, "The merged set")
     ("eval/merged.py", "_place_copy"),
     ("eval/merged.py", "_place_link"),
@@ -140,10 +142,13 @@ ALLOWED = {
     ("eval/merged.py", "_sweep"),  # orphans (review round 12)
     ("eval/merged.py", "_clear_extras"),  # anything else in the view, before copying (round 13)
     ("eval/merged.py", "_remove"),  # an extra inside the view, no link followed (round 14)
+    ("eval/merged.py", "_chmod_at"),  # a view folder's mode, through its folder's handle (r27)
     ("eval/merged.py", "_clone_or_link"),  # a built email's temporary clone (round 23)
     ("eval/merged.py", "_open_lock"),  # the view's lock file, its flags passed in (round 25)
     ("eval/merged.py", "_writable"),  # the view's folders, made and given 0755 (round 26)
     ("eval/merged.py", "_mode"),  # a view file's or folder's mode (round 26)
+    ("eval/merged.py", "_readable_view"),  # the view's own folders given 0755 (round 27)
+    ("eval/merged.py", "refresh_merged"),  # the lock's folder in .merged/ (round 27)
 }
 _PATH_WRITES = {
     "write_text",
@@ -171,21 +176,41 @@ _PATH_WRITES = {
     "symlink",
     "symlink_to",
     "hardlink_to",
-}  # fmt: skip (rounds 24, B2, and 26)
+    "copymode",
+    "copystat",
+    "mkstemp",
+    "mkdtemp",
+    "NamedTemporaryFile",
+    "extract",
+    "extractall",
+    "make_archive",
+    "unpack_archive",
+    # the merged view's own write helpers: their callers are writers too (review round 27)
+    "_writable",
+    "_mode",
+    "_remove",
+    "_chmod_at",
+    "_place_copy",
+    "_place_link",
+    "_clone_or_link",
+}  # fmt: skip (rounds 24, B2, 26 and 27)
 # os functions that write only when called through the os module (a list's `remove` doesn't)
-_OS_WRITES = {"replace", "rename", "link", "remove", "rmdir", "removedirs", "truncate", "open"}
+_OS_WRITES = {"replace", "rename", "renames", "link", "remove", "rmdir", "removedirs", "truncate",
+              "utime", "chown", "lchown", "mkfifo", "mknod", "open", "write", "pwrite", "writev",
+              "ftruncate", "fchmod", "fchown", "chflags", "lchflags", "posix_fallocate",
+              "sendfile", "copy_file_range"}  # fmt: skip
 _READ_FLAGS = {"O_RDONLY", "O_NOFOLLOW", "O_NONBLOCK", "O_DIRECTORY", "O_CLOEXEC", "O_EVTONLY"}
 
 
 def _os_aliases(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
-    """The names `os` is bound to in a module (`import os`, `import os as _os`), and the os and
-    shutil functions imported by name (`from os import open as o` gives o -> open; review
-    round 26)."""
+    """The names `os` and `shutil` are bound to in a module (`import os`, `import os as _os`,
+    `import shutil`), and the os and shutil functions imported by name (`from os import open as
+    o` gives o -> open; review rounds 26-27)."""
     mods: set[str] = {"os"}
     funcs: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            mods |= {a.asname for a in node.names if a.name == "os" and a.asname}
+            mods |= {a.asname or a.name for a in node.names if a.name in {"os", "shutil"}}
         elif isinstance(node, ast.ImportFrom) and node.module in {"os", "shutil"}:
             funcs |= {a.asname or a.name: a.name for a in node.names}
     return mods, funcs
@@ -213,60 +238,82 @@ def _read_only(flags: ast.expr | None, mods: frozenset[str] = frozenset({"os"}))
 
 
 def _is_write(
-    call: ast.Call, mods: frozenset[str] = frozenset({"os"}), funcs: dict[str, str] | None = None
+    call: ast.Call,
+    mods: frozenset[str] = frozenset({"os"}),
+    funcs: dict[str, str] | None = None,
+    modules: frozenset[str] = frozenset(),
 ) -> bool:
     f = call.func
     name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
     via_os = getattr(getattr(f, "value", None), "id", "") in mods
     if isinstance(f, ast.Name) and name in (funcs or {}):  # from os import x [as y]
         name, via_os = (funcs or {})[name], True
-    if name in _PATH_WRITES:
-        return True
-    if (  # Path.replace(target): one argument, where str.replace takes two (review round 26)
+    path_replace = (  # Path.replace(target): one argument; str.replace takes two (round 26)
         name == "replace"
         and isinstance(f, ast.Attribute)
         and getattr(f.value, "id", "") not in {"dataclasses", *mods}
         and len(call.args) == 1
         and not call.keywords
-    ):
-        return True
-    if via_os and name in _OS_WRITES - {"open"}:
+    )
+    if name in _PATH_WRITES or path_replace or (via_os and name in _OS_WRITES - {"open"}):
         return True
     if via_os and name == "open":  # os.open(flags)
         flags = call.args[1] if len(call.args) > 1 else None
         flags = next((k.value for k in call.keywords if k.arg == "flags"), flags)
         return not _read_only(flags, mods)
-    if name in {"open", "fdopen"}:
-        modes = [a.value for a in call.args[1:2] if isinstance(a, ast.Constant)]
-        modes += [k.value.value for k in call.keywords
-                  if k.arg == "mode" and isinstance(k.value, ast.Constant)]  # fmt: skip
-        if not modes and isinstance(f, ast.Attribute):  # Path.open(mode)
-            modes = [a.value for a in call.args[:1] if isinstance(a, ast.Constant)]
-        return any(isinstance(m, str) and any(c in m for c in "wax") for m in modes)
+    if name in {"open", "fdopen", "ZipFile"}:
+        given = [*call.args[1:2], *(k.value for k in call.keywords if k.arg == "mode")]
+        receiver = getattr(f.value, "id", "") if isinstance(f, ast.Attribute) else ""
+        if not given and name == "open" and receiver and receiver not in modules:
+            # Path.open(mode): a mode in a variable counts (round 27); a module's open(name)
+            # (io, gzip, tarfile...) reads by default
+            given = call.args[:1]
+        # a mode that isn't written out counts as a write, as os.open's flags do (round 27)
+        return any(not (isinstance(m, ast.Constant) and isinstance(m.value, str))
+                   or any(c in m.value for c in "wax+") for m in given)  # fmt: skip
     return False
 
 
 def _writes(path: Path) -> list[tuple[str, int, bool]]:
-    """(enclosing function's qualified name, line, whether that function calls writable_root)
-    for every file write in `path`."""
+    """(enclosing function's qualified name, line, whether that function calls writable_root
+    before the write) for every file write in `path` (the order: review round 27)."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     mods, funcs = _os_aliases(tree)
+    modules = frozenset(  # every module name bound by an import
+        (a.asname or a.name).split(".")[0]
+        for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
+    )  # fmt: skip
     found: list[tuple[str, int, bool]] = []
 
-    def visit(node: ast.AST, scope: list[str], guarded: bool) -> None:
+    def guards(fn: ast.AST) -> list[ast.Call]:
+        """The `writable_root` calls in a function's own body (a nested def's are its own)."""
+        out: list[ast.Call] = []
+        todo = list(ast.iter_child_nodes(fn))
+        while todo:
+            n = todo.pop()
+            if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                continue  # a nested def's or lambda's guard runs only if it is called
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "writable_root":
+                out.append(n)
+            todo.extend(ast.iter_child_nodes(n))
+        return out
+
+    def visit(node: ast.AST, scope: list[str], held: list[ast.Call]) -> None:
         for child in ast.iter_child_nodes(node):
-            s, g = scope, guarded
+            s, h = scope, held
             if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 s = [*scope, child.name]
-                g = isinstance(child, ast.ClassDef) is False and any(
-                    isinstance(n, ast.Call) and getattr(n.func, "id", "") == "writable_root"
-                    for n in ast.walk(child)
-                )
-            if isinstance(child, ast.Call) and _is_write(child, frozenset(mods), funcs):
-                found.append((".".join(scope), child.lineno, guarded))
-            visit(child, s, g)
+                h = [] if isinstance(child, ast.ClassDef) else guards(child)
+            if isinstance(child, ast.Call) and _is_write(child, frozenset(mods), funcs, modules):
+                # guarded when a check comes first by line order: on an earlier line, or inside
+                # the write's own arguments. Line order only, not path or variable analysis: a
+                # guard in another branch, or of another path, still counts (review round 27)
+                inside = {id(n) for n in ast.walk(child)}
+                ok = any(g.lineno < child.lineno or id(g) in inside for g in h)
+                found.append((".".join(scope), child.lineno, ok))
+            visit(child, s, h)
 
-    visit(tree, [], False)
+    visit(tree, [], [])
     return found
 
 
@@ -277,7 +324,7 @@ def test_no_set_writer_skips_the_guard() -> None:
     for f in files:
         rel = str(f.relative_to(SRC))
         for scope, line, guarded in _writes(f):
-            if guarded or (rel, "*") in ALLOWED or (rel, scope) in ALLOWED:
+            if guarded or (rel, scope) in ALLOWED:
                 continue
             stray.append(f"{rel}:{line} ({scope or 'module'})")
     assert not stray, "write without writable_root: " + ", ".join(stray)
@@ -323,6 +370,95 @@ def test_the_writer_check_sees_os_under_any_name(tmp_path: Path) -> None:
         "def j(p):\n    o(p, _os.O_RDONLY)\n"
     )
     assert sorted({w[0] for w in _writes(mod) if not w[2]}) == ["a", "b", "c", "d", "e", "f", "g"]
+
+
+def test_the_writer_check_sees_more_writes_and_the_view_helpers(tmp_path: Path) -> None:
+    """os renames/utime/chown/lchown/mkfifo/mknod, shutil copymode/copystat/chown, tempfile
+    files, a zip opened for writing, an open whose mode isn't written out, and a call of the
+    merged view's write helpers count as writes; a plain read doesn't. A one-argument open of
+    another object (`zf.open(name)`) counts too: it can't be told from `Path.open(mode)` with the
+    mode in a variable (review round 27, delta check)."""
+    mod = tmp_path / "w.py"
+    mod.write_text(
+        "import os, shutil, tempfile, zipfile\n"
+        "def a(p, q):\n    os.renames(p, q)\n"
+        "def b(p):\n    os.utime(p)\n"
+        "def c(p):\n    os.chown(p, 1, 1)\n"
+        "def d(p):\n    os.mkfifo(p)\n"
+        "def e(p, q):\n    shutil.copystat(p, q)\n"
+        "def f(p):\n    shutil.chown(p, 'x')\n"
+        "def g(d):\n    tempfile.mkstemp(dir=d)\n"
+        "def h(d):\n    tempfile.NamedTemporaryFile(dir=d, delete=False)\n"
+        "def i(p):\n    zipfile.ZipFile(p, 'w')\n"
+        "def j(p, m):\n    open(p, m)\n"
+        "def k(p, m):\n    p.open(mode=m)\n"
+        "def l(d):\n    _writable(d)\n"
+        "def m(s, d):\n    _place_copy(s, d)\n"
+        "def n(p):\n    _mode(p, 0o777)\n"
+        "def o(p):\n    open(p, 'r+')\n"
+        "def r1(p):\n    return open(p).read()\n"
+        "def r2(p):\n    return p.open('rb')\n"
+        "def p(zf, name):\n    return zf.open(name)\n"
+        "def r4(p):\n    return zipfile.ZipFile(p)\n"
+    )
+    assert sorted({w[0] for w in _writes(mod) if not w[2]}) == [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_generate_refuses_a_merged_view_before_writing(tmp_path: Path, resume: bool) -> None:
+    """A generated set's folder inside a merged view is refused by `start` before anything is
+    made or bought, and the work log refuses it too (review round 27)."""
+    from ecf.eval import generate as gen  # noqa: PLC0415
+
+    root = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "new"
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        gen.start(root, resume=resume)
+    assert not root.exists()
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        gen.Work(root).append("seeds", [{"id": "s-1"}])
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("way", ["clone", "hard link"])
+def test_a_view_copy_never_follows_a_swapped_source_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, way: str
+) -> None:
+    """A `.build/` source swapped for a link after it was listed is placed as a link (which
+    every reader refuses), never as its target's bytes, by a clone or the hard-link fallback
+    (review round 27)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    if way == "hard link":
+        monkeypatch.setattr(merged, "_CLONE", None)
+
+    target = tmp_path / "secret.eml"
+    target.write_bytes(b"target bytes")
+    src = tmp_path / "src.eml"
+    src.symlink_to(target)
+    tmp = tmp_path / "out.eml"
+    merged._clone_or_link(src, tmp)  # pyright: ignore[reportPrivateUsage]
+    assert tmp.is_symlink() or tmp.read_bytes() != b"target bytes"
+
+
+def test_a_temp_the_sweep_cannot_check_is_named_as_such(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A temporary file's name the sweep can't stat is reported as not checked, not as an old
+    file of a crashed write (review round 27)."""
+    root = _set(tmp_path / "tests" / "eval" / "synthetic", "t-1")
+    t = _old_temp(root / "cases")
+    real_stat = os.stat
+
+    def denied(path: object, *args: object, **kw: object) -> os.stat_result:
+        if path == t.name:
+            raise PermissionError(errno.EACCES, "denied", path)
+        return real_stat(path, *args, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "stat", denied)
+    [line] = sweep_old_temps(root)[1]
+    assert line.startswith(f"{t}: a temporary file's name, couldn't check it") and t.exists()
 
 
 def test_the_writer_check_sees_path_and_shutil_writes(tmp_path: Path) -> None:
@@ -516,7 +652,7 @@ def test_the_sweep_never_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     line, and its old temporary files are left (review round 26)."""
     root = _set(tmp_path / "tests" / "eval" / "synthetic", "t-1")
     old = _old_temp(root / "cases")
-    (root / "merge.json").write_text("{}")
+    (root / "merge.json").write_text('{"merged_version": "abc"}')  # a view's own record
     [line] = sweep_old_temps(root)[1]
     assert line.startswith(f"{root}: old temporary files not checked")
     (root / "merge.json").unlink()
@@ -571,3 +707,174 @@ def test_a_write_whose_temporary_file_was_swept_says_so(tmp_path: Path) -> None:
     with pytest.raises(InvalidInputError, match="temporary file was removed while it was being"):
         replace_file(path, make_then_swept)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_the_writer_check_sees_descriptor_writes_archives_and_the_order(tmp_path: Path) -> None:
+    """Writes through a descriptor (os.write, ftruncate, fchmod, fchown), chflags, archive
+    extraction and creation, and Path.open with its mode in a variable count as writes; a guard
+    counts only when it comes before the write in the function's own body, not after it and not
+    in a nested def or a lambda; a file object's write, os.read and a module's open(name) (io,
+    gzip, tarfile) don't count (review round 27, delta checks)."""
+    mod = tmp_path / "w.py"
+    mod.write_text(
+        "import os, shutil, io, gzip, tarfile as tf\n"
+        "def a(fd):\n    os.write(fd, b'x')\n"
+        "def b(fd):\n    os.ftruncate(fd, 0)\n"
+        "def c(fd):\n    os.fchmod(fd, 0o644)\n"
+        "def d(fd):\n    os.fchown(fd, 1, 1)\n"
+        "def e(p):\n    os.chflags(p, 0)\n"
+        "def f(zf, d):\n    zf.extractall(d)\n"
+        "def g(b, d):\n    shutil.make_archive(b, 'zip', d)\n"
+        "def h(p, m):\n    p.open(m)\n"
+        "def i(r):\n    r.mkdir()\n    writable_root(r)\n"
+        "def j(r):\n    def inner():\n        writable_root(r)\n    r.mkdir()\n"
+        "def ok1(r):\n    writable_root(r)\n    r.mkdir()\n"
+        "def ok2(r):\n    atomic_write(\n        writable_root(r) / 'x', 'y')\n"
+        "def k(r):\n    later = lambda: writable_root(r)\n    r.mkdir()\n"
+        "def ok3(f, fd):\n    f.write('x')\n    os.read(fd, 1)\n"
+        "def ok4(p):\n    io.open(p)\n    gzip.open(p)\n    tf.open(p)\n"
+    )
+    assert sorted({w[0] for w in _writes(mod) if not w[2]}) == [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"
+    ]  # fmt: skip
+
+
+def test_grading_refuses_a_merged_view_before_any_call(tmp_path: Path) -> None:
+    """`Grading.run` refuses a set in a merged view before a call is made or a file written
+    (review round 27, delta check)."""
+    from ecf.eval import grade as grading  # noqa: PLC0415
+
+    class NoCall:
+        provider, model = "fake", "fake-model-1"
+
+        def ask(self, *_a: object) -> None:
+            raise AssertionError("a call was made")
+
+    root = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "g"
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        grading.Grading(root, NoCall()).run(resume=True)  # type: ignore[arg-type]
+    assert not root.exists()
+
+
+def test_a_helper_that_writes_where_told_checks_the_path(tmp_path: Path) -> None:
+    """A call, the canary, the settle page, the mix file, the corpus labels and an exported page
+    refuse a path in a merged view themselves, before anything is made or asked (review round
+    27, delta checks)."""
+    from ecf.cli_evalgen import _write_private  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+    from ecf.eval import corpus_labels, tools  # noqa: PLC0415
+    from ecf.eval import mix as mixmod  # noqa: PLC0415
+    from ecf.eval import settle as st  # noqa: PLC0415
+    from tests.test_eval_generate import fake_tool  # noqa: PLC0415
+
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic"
+    tool, environ = fake_tool(tmp_path, {})
+    adapter = tools.CliAdapter(tool, "fake-model-1", environ)
+    for write in (
+        lambda: adapter.ask("p", {}, view / "work" / "call"),
+        lambda: tools.canary(adapter, view / "canary"),
+        lambda: st.export(tmp_path / "unused", view / "page"),
+        lambda: mixmod.write_default(view / "mix.yaml"),
+        lambda: corpus_labels.save(view / "labels.jsonl", {}),
+        lambda: _write_private(view / "page" / "calibration.json", "{}"),
+    ):
+        with pytest.raises(InvalidInputError, match="merged eval set"):
+            write()
+    assert not view.exists()
+    assert not (tmp_path / "calls.log").exists()  # no call made
+
+
+@pytest.mark.parametrize("command", ["generate", "grade"])
+def test_the_commands_refuse_a_merged_view_before_any_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    """`ecf eval generate` and `grade` refuse a set in a merged view before the provider is
+    checked or the canary call made (review round 27, delta check)."""
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from ecf import cli_evalgen  # noqa: PLC0415
+    from ecf.cli import app  # noqa: PLC0415
+
+    def no_canary(_adapter: object) -> None:
+        raise AssertionError("the canary ran")
+
+    monkeypatch.setattr(cli_evalgen, "_checked", no_canary)
+    monkeypatch.setenv("PATH", str(tmp_path / "no-tools"))
+    monkeypatch.setenv("ECF_HOME", str(tmp_path / "home"))
+    root = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "new"
+    r = CliRunner().invoke(app, ["eval", command, "--root", str(root), "--yes"])
+    assert r.exit_code != 0
+    assert "merged eval set" in r.output + str(r.exception), r.output
+    assert not root.exists()
+
+
+def test_a_view_mode_change_never_follows_a_link(tmp_path: Path) -> None:
+    """The merged view's mode change leaves a link alone, so a folder or file swapped for one
+    never has its target's mode changed (review round 27, delta check)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    (tmp_path / "f").write_text("x")
+    (tmp_path / "f").chmod(0o600)
+    for target, mode in ((outside, 0o755), (tmp_path / "f", 0o444)):
+        link = tmp_path / f"link-{target.name}"
+        link.symlink_to(target)
+        merged._mode(link, mode)  # pyright: ignore[reportPrivateUsage]
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o700
+    assert stat.S_IMODE((tmp_path / "f").stat().st_mode) == 0o600
+
+
+def test_removing_a_view_folder_never_walks_a_swapped_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A folder inside the view swapped for a link after it was found is refused, never walked:
+    the files it points at stay (review round 27, delta check)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.eml").write_text("keep")
+    view = tmp_path / "view"
+    (view / "extra" / "sub").mkdir(parents=True)
+    real_chmod_at = merged._chmod_at  # pyright: ignore[reportPrivateUsage]
+
+    def swap(fd: int, name: str, mode: int) -> None:
+        if name == "sub":  # swapped between the listing and the open
+            (view / "extra" / "sub").rmdir()
+            (view / "extra" / "sub").symlink_to(outside)
+        real_chmod_at(fd, name, mode)
+
+    monkeypatch.setattr(merged, "_chmod_at", swap)
+    with pytest.raises(OSError):
+        merged._remove(view / "extra")  # pyright: ignore[reportPrivateUsage]
+    assert (outside / "keep.eml").read_text() == "keep"
+
+
+def test_a_note_never_reads_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An OSError with no message is named by its type in a sweep's note, not as "None"
+    (review round 27, delta check)."""
+    root = _set(tmp_path / "tests" / "eval" / "synthetic", "t-1")
+    t = _old_temp(root / "cases")
+    real_unlink = os.unlink
+
+    def bare(path: object, *args: object, **kw: object) -> None:
+        if path == t.name:
+            raise OSError
+        real_unlink(path, *args, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "unlink", bare)
+    [line] = sweep_old_temps(root)[1]
+    assert line.endswith("left in place (OSError); remove it when you can") and t.exists()
+
+
+def test_a_path_inside_the_view_never_reads_its_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path under a folder named `.merged` is refused by name, with no `merge.json` read (a
+    real view's holds all its manifests; review round 27, delta check)."""
+
+    def no_read(_path: Path) -> bool:
+        raise AssertionError("a merge.json was read")
+
+    monkeypatch.setattr(setio, "_view_record", no_read)
+    assert is_merged(tmp_path / "eval" / "private" / ".merged" / "synthetic" / "cases" / "x.md")
