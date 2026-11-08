@@ -118,8 +118,12 @@ class Case:
 
 def load_cases(root: Path) -> tuple[list[Case], list[str]]:
     """The cases listed in `labels.jsonl` under `root` (the set the resolver gives for the logical
-    path), and the IDs whose file isn't built."""
-    root = merged.resolve(root).resolve()
+    path), and the IDs whose file isn't built. Anything unreadable is refused by name."""
+    with merged.named_errors():  # the one rule (review round 17)
+        return _load_cases(merged.resolve(root).resolve())
+
+
+def _load_cases(root: Path) -> tuple[list[Case], list[str]]:
     index = root / "labels.jsonl"
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root} (the synthetic set's folder)")

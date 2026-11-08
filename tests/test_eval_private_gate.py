@@ -171,11 +171,8 @@ def test_the_fingerprint_follows_both_halves_and_merge_json(
     lab = priv / "labels.jsonl"
     lab.write_text(lab.read_text())  # rewritten: a new mtime
     assert gate.inputs(conn, "ap", DIGEST) != before
-    # same bytes: nothing copied, but merge.json records the new stat once, so the file is no
-    # longer hashed on every freshness check
+    # same bytes: fresh, nothing copied, merge.json untouched (round 11: freshness is by content)
     assert mg.refresh_merged(split) == "fresh"
-    restat: list[tuple[str, str, str]] = []
-    assert mg.is_fresh(mg.paths(split), restat) and restat == []
     before = gate.inputs(conn, "ap", DIGEST)
     assert mg.refresh_merged(split) == "fresh"
     assert gate.inputs(conn, "ap", DIGEST) == before
@@ -234,3 +231,22 @@ def test_a_public_only_for_gate_run_is_refused(
         assert claude_start(db_path, clock, pub, preset="C", for_gate=False)["state"] == "ready"
     finally:
         claude_eval.reset()
+
+
+def test_a_cached_states_racy_files_drop_out_once_their_window_passes(
+    split: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 5, performance B-3: a state cached right after a build holds every file written
+    within the window and rehashes them on each hit; once a hit finds them unchanged past the
+    window, the entry keeps none, and a later write still changes the key."""
+    gate._STATE.clear()  # pyright: ignore[reportPrivateUsage]
+    first = gate.set_state(split)
+    ((_got, racy),) = gate._STATE.values()  # pyright: ignore[reportPrivateUsage]
+    assert racy
+    monkeypatch.setattr(mg, "RACY_NS", 0)  # the window has passed
+    assert gate.set_state(split) == first
+    ((_got, racy),) = gate._STATE.values()  # pyright: ignore[reportPrivateUsage]
+    assert racy == ()
+    card = next(((mg.paths(split).private or split) / "cases").glob("*.md"))
+    card.write_text(card.read_text() + "\n")
+    assert gate.set_state(split) != first

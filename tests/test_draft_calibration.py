@@ -414,3 +414,25 @@ def test_calibration_refuses_a_rewritten_card_not_yet_relabelled(
     with pytest.raises(InvalidInputError, match="d-benign aren't confirmed"):
         draftcalibration.build(data, pilot, SEEDS, "2026-10-28T00:00:00Z", minimums={},
                                real_min={}, real_total=1)  # fmt: skip
+
+
+def test_calibration_reads_a_moved_card_from_the_merged_set(
+    db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """Round 7, B3: the calibration page shows each seed's card as the mail client shows it; a
+    card moved to the private half is read from the merged set, not the public one."""
+    from ecf.eval import merged as mg  # noqa: PLC0415
+    from tests.test_draft_eval import make_droot  # noqa: PLC0415
+    from tests.test_eval_merged import _split  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    pub = make_droot(tmp_path / "tests" / "eval")
+    _split(pub, tmp_path / "eval" / "private" / "drafts", {"d-inject"})
+    mg.refresh_merged(pub)
+    data = db_path.parent
+    pilot = _finished(db_path, clock, pub)
+    seeds = {"seeds": [_seed(1, {"commits": "hard"}, card="d-inject"),
+                       _seed(2, {"specific": "no"})]}  # fmt: skip
+    built = draftcalibration.build(data, pilot, seeds, "2026-10-28T00:00:00Z", minimums={},
+                                   real_min={}, real_total=1)  # fmt: skip
+    page = draftcalibration.export(data, built["run_id"])
+    assert "Seed 1" in str(page["items"])

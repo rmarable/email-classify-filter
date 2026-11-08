@@ -939,3 +939,73 @@ def test_injection_text_in_a_set_files_value_is_refused(repo: Path) -> None:
     reviews.write_text(json.dumps({"id": "plain", "note": INJ}) + "\n")
     commit(repo, "a review note with an injection phrase")
     assert any("reviews.jsonl" in r and "flags it" in r for r in _range(repo, tip_build=False))
+
+
+def test_a_symbolic_link_or_submodule_under_tests_eval_is_refused(repo: Path) -> None:
+    """Round 5, B-1, B-5: only plain files sit under tests/eval: a link (the range and the tip)
+    and a submodule entry (the merge gate's tree scan too) are refused by name."""
+    s = repo / "tests" / "eval" / "synthetic"
+    (s / "labels.jsonl").symlink_to("../../../README.md")
+    commit(repo, "a link")
+    assert any("labels.jsonl" in r and "symbolic link" in r for r in _range(repo))
+    git(repo, "rm", "-q", "--cached", "tests/eval/synthetic/labels.jsonl")
+    (s / "labels.jsonl").unlink()
+    head = git(repo, "rev-parse", "HEAD")
+    git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},tests/eval/synthetic/sub")
+    git(repo, "commit", "-q", "-m", "a submodule entry")
+    got = cs.run_tree("HEAD", no_skip=True, top=repo).refused
+    assert any("tests/eval/synthetic/sub" in r and "submodule" in r for r in got)
+
+
+def test_the_private_hook_refuses_a_symbolic_link_anywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 5, B-1: the clean check would also refuse it, but the hook stops it being pushed."""
+    priv = _private_repo(tmp_path, monkeypatch)
+    url = "git@github.com:owner/ecf-private.git"
+    (priv / "synthetic").mkdir()
+    (priv / "synthetic" / "labels.jsonl").symlink_to("/tmp/elsewhere.jsonl")
+    git(priv, "add", "-A")
+    git(priv, "commit", "-q", "-m", "a linked label file")
+    head = git(priv, "rev-parse", "HEAD")
+    got = cs.run_hook("origin", url, [f"refs/heads/main {head} refs/heads/main {cs.ZERO}"], priv)
+    assert any("synthetic/labels.jsonl" in r and "symbolic link" in r for r in got.refused)
+
+
+def test_set_file_text_is_checked_once_per_string_and_not_for_mains_blobs(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 5, performance B-1: a value repeated in many rows is checked once, and a set file
+    blob main's history already has gets the ownership check but no text check."""
+    reviews = repo / "tests" / "eval" / "synthetic" / "reviews.jsonl"
+    reviews.write_text("".join(json.dumps({"id": "plain", "note": INJ, "n": i}) + "\n"
+                               for i in range(5)))  # fmt: skip
+    commit(repo, "repeated review notes")
+    seen: list[str] = []
+    real = cs.text_injection
+
+    def spy(s: str) -> list[str]:
+        seen.append(s)
+        return real(s)
+
+    monkeypatch.setattr(cs, "text_injection", spy)
+    found = cs.tree("HEAD", repo)
+    assert any("flags it" in r for r in cs.unowned(found, repo))
+    assert seen.count(INJ) == 1
+    blob = next(b for b, p in found if p.endswith("reviews.jsonl"))
+    seen.clear()
+    assert not any("flags it" in r for r in cs.unowned(found, repo, frozenset({blob})))
+    assert INJ not in seen
+
+
+@pytest.mark.parametrize("at", ["tests/eval", "tests"])
+def test_a_link_at_tests_eval_or_tests_itself_is_refused(repo: Path, at: str) -> None:
+    """Round 6, M2: a link there would put a whole set outside every scan."""
+    vendor = repo / "vendor" / at
+    vendor.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(repo / at, vendor)
+    (repo / at).symlink_to(os.path.relpath(vendor, (repo / at).parent))
+    commit(repo, "a linked folder")
+    assert any(at in r and "symbolic link" in r for r in _range(repo))
+    assert any(at in r and "symbolic link" in r
+               for r in cs.run_tree("HEAD", no_skip=True, top=repo).refused)  # fmt: skip

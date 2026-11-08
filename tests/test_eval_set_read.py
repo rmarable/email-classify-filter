@@ -263,20 +263,27 @@ def test_an_in_place_write_through_a_hard_link_refuses_a_run_for_the_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:  # fmt: skip
     """C5: with the hard-link path forced, writing in place through the merged folder changes the
-    source too; the set reads as stale or changed, and a run for the gate refuses."""
+    source too, so the view stays a copy of its sources (round 11: freshness is by content); the
+    loader reports the email changed against its label row's sha256, and a run for the gate
+    refuses. (A `.build/` file no label row names is read by nothing.)"""
     del conn
     pub, priv, _n = _split_set(tmp_path)
-    repos(tmp_path)
+    vid = mg.card_ids(priv)[0]  # a large card's shape: its email in `.build/`, named by its row
     (priv / ".build").mkdir(exist_ok=True)
-    big = priv / ".build" / f"{mg.card_ids(priv)[0]}.eml"
-    big.write_bytes(b"x" * 100)
+    (priv / "eml" / f"{vid}.eml").rename(priv / ".build" / f"{vid}.eml")
+    rows = [json.loads(x) for x in (priv / "labels.jsonl").read_text().splitlines()]
+    rows = [r | ({"file": f".build/{vid}.eml"} if r["id"] == vid else {}) for r in rows]
+    (priv / "labels.jsonl").write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+    repos(tmp_path)
     monkeypatch.setattr(mg, "_CLONE", None)
     mg.refresh_merged(pub)
+    big = priv / ".build" / f"{vid}.eml"
     linked = (mg.paths(pub).merged or pub) / ".build" / big.name
     assert linked.stat().st_ino == big.stat().st_ino
     with linked.open("r+b") as f:
         f.write(b"y")
-    with pytest.raises(InvalidInputError, match="out of date"):
+    gitcheck.reset_backoff()
+    with pytest.raises(InvalidInputError, match=f"{vid} \\(changed\\)"):
         claude_start(db_path, clock, pub, preset="C")
     assert claude_eval.current() is None
 
@@ -333,7 +340,7 @@ def test_a_same_stat_in_place_write_through_a_hard_link_is_reported_and_refused(
     with linked.open("r+b") as f:
         f.write(b"Y")
     os.utime(linked, ns=(st.st_atime_ns, st.st_mtime_ns))
-    assert mg.is_fresh(mg.paths(pub))  # same size, time and inode: the stat says fresh
+    assert mg.is_fresh(mg.paths(pub))  # one inode for source and copy: fresh by content
     got = dict(evalrun.read_set(pub).problems)
     assert got.get(victim.id) == evalrun.CHANGED
     gitcheck.reset_backoff()
@@ -349,3 +356,41 @@ def test_the_gates_confirmed_count_matches_a_runs_on_the_real_sets() -> None:
     for root in sorted(p for p in eval_dir.iterdir() if (p / "labels.jsonl").is_file()):
         cases = evalrun.read_set(root).cases
         assert all(c.expected for c in cases if c.confirmed), root.name
+
+
+def test_a_manifest_planted_in_the_merged_view_never_lets_judged_rows_count(
+    tmp_path: Path,
+) -> None:
+    """Round 12, B2: whether judges' labels count is read from the set's own public half."""
+    from ecf.eval import labels as label_file  # noqa: PLC0415
+
+    pub, _priv, _n = _split_set(tmp_path)
+    mg.refresh_merged(pub)
+    m = mg.paths(pub).merged
+    assert m is not None
+    assert not label_file.models_ok(pub)
+    seen: list[Path] = []
+    real = label_file.models_ok
+
+    def spy(root: Path) -> bool:
+        seen.append(root)
+        return real(root)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(label_file, "models_ok", spy)
+        evalrun.read_set(pub)
+    assert seen and all(not r.is_relative_to(m) for r in seen)
+
+
+def test_an_unreadable_email_is_a_problem_and_its_case_is_left_out(root: Path) -> None:
+    """Round 13, B4: never kept with an empty sha256 (which turns off the later content check)."""
+    rows = [json.loads(x) for x in (root / "labels.jsonl").read_text().splitlines() if x.strip()]
+    victim = rows[0]
+    path = root / victim["file"]
+    path.chmod(0o000)
+    try:
+        got = evalrun.read_set(root)
+    finally:
+        path.chmod(0o644)
+    assert dict(got.problems).get(victim["id"]) == evalrun.UNREADABLE
+    assert all(c.id != victim["id"] for c in got.cases)

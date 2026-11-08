@@ -21,6 +21,7 @@ from ecf.cli_corpus import make_corpus_app
 from ecf.cli_destroy import make_commands as make_destroy_commands
 from ecf.cli_drafts import make_drafts_app
 from ecf.cli_evalgen import make_commands as make_evalgen_commands
+from ecf.cli_evalgen import note_old_temps
 from ecf.cli_export import make_commands as make_export_commands
 from ecf.cli_import import make_commands as make_import_commands
 from ecf.cli_init import make_commands as make_init_commands
@@ -979,6 +980,8 @@ def eval_build(root: RootOpt = EVAL_ROOT) -> None:
             )
             raise typer.Exit(1)
         typer.echo(f"built {len(report.built)} committed + {len(report.large)} large (.build/)")
+        for line in report.left:
+            typer.echo(f"note: {line}", err=True)
         if report.placed:
             from ecf.eval.results import placement_line  # noqa: PLC0415
 
@@ -1013,6 +1016,7 @@ def _review_cards(root: Path, fields: str | None, *, add: bool, cases: str | Non
                                    add=add, globs=globs, redo=redo, recheck=recheck)  # fmt: skip
     for line in lines:
         typer.echo(line)
+    note_old_temps(root)
     typer.echo("commit reviews.jsonl, labels.jsonl and any changed cards to keep them")
 
 
@@ -1093,6 +1097,7 @@ def _import_fixed_half(root: Path, path: Path, part: dict[str, Any] | None, *,
         from ecf.cli_card_review import rebuild  # noqa: PLC0415
 
         got = review.record_page(root, item, given, on, rebuild)
+        note_old_temps(root)
         pending = cast(list[str], got["pending"])
         typer.echo(f"{item}: {got['answers']} cases recorded, {got['changed']} cards changed"
                    f" ({got['kept_items']} kept a fixed item the old value implied),"
@@ -1211,42 +1216,41 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0917 - typer options; three modes
     if corpus is not None or again or marked:
         _label_corpus(corpus, frozenset(again or ()), marked)
         return
-    if import_fixed is not None:
-        from ecf.eval import merged  # noqa: PLC0415
-
-        try:
-            _import_fixed(root, import_fixed)
-        finally:
-            if note := merged.refresh_after_write(root):
-                typer.echo(note)
-        return
-    if review is not None or add or cases or redo or recheck:
-        if case_id or show_flags or results or status_only:
-            raise InvalidInputError(
-                "--review takes no case id, --show-flags, --results or --status"
-            )
-        from ecf.eval import merged  # noqa: PLC0415
-
-        try:
-            for half in merged.halves(root):  # each change written to the card's own half
-                _review_cards(half, review, add=add, cases=cases, redo=redo, recheck=recheck)
-        finally:
-            if note := merged.refresh_after_write(root):
-                typer.echo(note)
-        return
     from ecf.eval import merged  # noqa: PLC0415
 
-    # one ID: its owning half; otherwise each half in turn (EVAL-PRIVATE.md, "The overlay")
-    targets = [merged.owner(root, case_id)] if case_id else merged.halves(root)
-    try:
-        for half in targets:
-            if len(targets) > 1:
-                typer.echo(f"[{'private' if merged.is_private_root(half) else 'public'} set]")
-            _label_half(half, case_id, status_only=status_only, show_flags=show_flags,
-                        results=results)  # fmt: skip
-    finally:
-        if note := merged.refresh_after_write(root):
-            typer.echo(note)
+    # a permission error anywhere below leaves naming the file, not as a traceback (review
+    # round 18, B3; the one rule of `merged.named`)
+    with merged.named_errors():
+        if import_fixed is not None:
+            try:
+                _import_fixed(root, import_fixed)
+            finally:
+                if note := merged.refresh_after_write(root):
+                    typer.echo(note)
+            return
+        if review is not None or add or cases or redo or recheck:
+            if case_id or show_flags or results or status_only:
+                raise InvalidInputError(
+                    "--review takes no case id, --show-flags, --results or --status"
+                )
+            try:
+                for half in merged.halves(root):  # each change written to the card's own half
+                    _review_cards(half, review, add=add, cases=cases, redo=redo, recheck=recheck)
+            finally:
+                if note := merged.refresh_after_write(root):
+                    typer.echo(note)
+            return
+        # one ID: its owning half; otherwise each half in turn (EVAL-PRIVATE.md, "The overlay")
+        targets = [merged.owner(root, case_id)] if case_id else merged.halves(root)
+        try:
+            for half in targets:
+                if len(targets) > 1:
+                    typer.echo(f"[{'private' if merged.is_private_root(half) else 'public'} set]")
+                _label_half(half, case_id, status_only=status_only, show_flags=show_flags,
+                            results=results)  # fmt: skip
+        finally:
+            if note := merged.refresh_after_write(root):
+                typer.echo(note)
 
 
 def _label_half(root: Path, case_id: str | None, *, status_only: bool,  # noqa: PLR0912, PLR0915 - the label loop

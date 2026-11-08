@@ -40,6 +40,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import os
 import sqlite3
 from collections.abc import Generator
 from dataclasses import dataclass, replace
@@ -315,32 +316,89 @@ def transient_in_pass() -> bool:
 
 
 def _set_key(root: Path) -> tuple[Any, ...]:
-    """What the set's state depends on, from stats and the git fingerprint (no hashing)."""
+    """What the set's state depends on, from stats and the git fingerprint (no hashing). Never
+    raises, whoever asks (the tick's `inputs` first; review round 17): a set that can't be read
+    gets a key naming why, and the read that follows fails the check."""
     p = _PASS.get()
     if p is not None and str(root) in p.keys:
         return p.keys[str(root)]
+    try:
+        key = _key_of(root)
+    except (InvalidInputError, OSError) as exc:
+        key = ("unreadable", str(root), str(exc))
+    if p is not None:
+        p.keys[str(root)] = key
+    return key
+
+
+def _key_of(root: Path) -> tuple[Any, ...]:
     sp = merged.paths(root)
     git = (None if sp.private is None or sp.top is None
            else gitcheck.fingerprint(sp.top, sp.name))  # fmt: skip
     halves = [sp.public] + ([sp.private, sp.merged] if sp.private and sp.merged else [])
     files = tuple(tuple(sorted((rel, s[1:]) for rel, s in merged.file_stats(h).items()))
                   for h in halves)  # fmt: skip
-    key = (str(root), _set_stats(root), files, git)
-    if p is not None:
-        p.keys[str(root)] = key
-    return key
+    return (str(root), _set_stats(root), files, git, _perms(sp))
+
+
+def _perms(sp: merged.SetPaths) -> tuple[Any, ...]:
+    """Mode, owner and inode of each folder and file whose permissions decide whether the set
+    can be read but whose own content stats don't show it: tests/eval (a checkout set only: a
+    set elsewhere has a parent anything may change; review round 19), both halves and their
+    folders, the merged view, its parent, merge.json and the lock; and their ctime, which an
+    access rule (ACL) changes while leaving the mode, except for tests/eval and the view's
+    parent. Those two hold other sets and their views, so their ctime moves whenever another
+    set's folder or lock comes or goes; an access rule on them that stops a reader also stops
+    the lstat of what is under them, which the key records as an error (review round 20, B2).
+    The refresh gives a part its mode only when it differs, so a refresh that changes nothing
+    changes no ctime."""
+    shared: tuple[Path, ...] = (sp.public.parent,)
+    places = [sp.public] if sp.top is None else [sp.public.parent, sp.public]
+    halves = [sp.public] + ([sp.private] if sp.private is not None else [])
+    places += halves[1:]
+    places += [h / d for h in halves for d in (*merged.COPIED, merged.LINKED)]
+    if sp.merged is not None and sp.lock is not None:
+        shared += (sp.merged.parent,)
+        places += [sp.merged.parent, sp.lock, sp.merged, sp.merged / merged.MERGE_FILE,
+                   *(sp.merged / d for d in (*merged.COPIED, merged.LINKED))]  # fmt: skip
+    out: list[Any] = []
+    for p in places:
+        try:
+            st = os.lstat(p)
+        except FileNotFoundError:
+            out.append(None)
+        except OSError as exc:  # never raises: the error is part of the key
+            out.append(("error", exc.errno))
+        else:
+            out.append((st.st_mode, st.st_uid, st.st_gid, st.st_ino,
+                        None if p in shared else st.st_ctime_ns))  # fmt: skip
+    return tuple(out)
 
 
 def set_state(root: Path, *, fresh: bool = False) -> SetState:
     p = _PASS.get()
     if not fresh and p is not None and str(root) in p.transient:
         return p.transient[str(root)]
-    key = _set_key(root)
-    hit = None if fresh else _STATE.get(key)
+    try:  # the key never raises out of the gate: a set that can't be read fails the check
+        key = _set_key(root)  # (review round 16; the service tick carries on)
+    except (InvalidInputError, OSError) as exc:
+        return SetState(None, f"the gate's set can't be read: {exc}", (), "", {}, None)
+    # an "unreadable" key names an error, not the set's files: a state is never stored or looked
+    # up under it (review round 18, performance B1)
+    unkeyed = key[0] == "unreadable"
+    hit = None if fresh or unkeyed else _STATE.get(key)
     if hit is not None and all(merged.sha256_of(f) == sha for f, sha in hit[1]):
+        keep = tuple(x for x in hit[1] if _still_racy(x[0]))
+        if len(keep) != len(hit[1]):  # their hash held after the window: the stat vouches now
+            _STATE[key] = (hit[0], keep)
         return hit[0]
-    racy = _racy(root)  # before the read: a write after this changes a stat or a hash
+    try:
+        racy = _racy(root)  # before the read: a write after this changes a stat or a hash
+    except (InvalidInputError, OSError) as exc:
+        return SetState(None, f"the gate's set can't be read: {exc}", (), "", {}, None)
     got = _read_state(root, fresh=fresh)
+    if unkeyed and not got.transient:
+        got = replace(got, transient=True)
     if got.transient:  # never cached: shared by this pass only, retried at the next
         if p is not None:
             p.transient[str(root)] = got
@@ -357,7 +415,19 @@ def _racy(root: Path) -> tuple[tuple[Path, str], ...]:
     sp = merged.paths(root)
     halves = [sp.public] + ([sp.private, sp.merged] if sp.private and sp.merged else [])
     return tuple((s[0], merged.sha256_of(s[0])) for h in halves
-                 for s in merged.file_stats(h).values() if merged.is_racy(s[2]))  # fmt: skip
+                 for s in merged.file_stats(h).values() if merged.is_racy(s[2], s[4]))  # fmt: skip
+
+
+def _still_racy(p: Path) -> bool:
+    """Whether a file's stat still can't vouch for it. One whose hash was just found unchanged
+    and whose mtime is now older than the window can drop out of the cache entry's list: a later
+    write gives it a later mtime and ctime, which change the key (review round 5, performance
+    B-3)."""
+    try:
+        st = os.lstat(p)
+        return merged.is_racy(st.st_mtime_ns, st.st_ctime_ns)
+    except OSError:
+        return True
 
 
 def _read_state(root: Path, *, fresh: bool = False) -> SetState:
@@ -368,8 +438,12 @@ def _read_state(root: Path, *, fresh: bool = False) -> SetState:
         read = evalrun.read_set(root)
     except evalrun.NoSet:
         return SetState(None, None, (), "", {}, None)
-    except merged.RefreshBusy as exc:
+    except (merged.RefreshBusy, merged.Unreadable) as exc:
+        # transient: a permission put back changes no content stat, so a cached failure would
+        # outlive its fix (review round 18, B1); retried every pass instead
         return failed(f"the gate's set can't be read: {exc}", transient=True)
+    except PermissionError as exc:
+        return failed(f"the gate's set can't be read ({type(exc).__name__})", transient=True)
     except InvalidInputError as exc:
         return failed(f"the gate's set can't be read: {exc}")
     except (OSError, ValueError, KeyError, TypeError) as exc:  # a malformed set fails the check
@@ -441,7 +515,8 @@ def synthetic(conn: sqlite3.Connection, digest: str,  # noqa: PLR0911, PLR0912 -
     # read as one fresh merged set (EVAL-PRIVATE.md, "The gate guard"); every other set fails here
     sp = merged.paths(Path(str(root)))
     if sp.top is None or sp.private is None:
-        where = (f"its checkout has no eval/private/{sp.name}" if sp.top is not None
+        where = (sp.refused if sp.refused is not None
+                 else f"its checkout has no eval/private/{sp.name}" if sp.top is not None
                  else "it isn't a checkout's tests/eval/<set>")  # fmt: skip
         return Check("synthetic", False, f"the gate's set ({root}) can't count: {where}; run"
                      f" {again} from a checkout with the private set")  # fmt: skip

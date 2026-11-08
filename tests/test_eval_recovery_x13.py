@@ -182,9 +182,9 @@ def _installs(
     refreshed = [0]
     guard = threading.Lock()
 
-    def slow_fresh(sp: mg.SetPaths, restat: list[tuple[str, str, str]] | None = None) -> bool:
+    def slow_fresh(sp: mg.SetPaths) -> bool:
         time.sleep(resolve_s * SCALE)
-        return real_fresh(sp, restat)
+        return real_fresh(sp)
 
     def slow_build(sp: mg.SetPaths) -> None:
         with guard:
@@ -452,7 +452,7 @@ def test_a_freshness_check_that_raises_leaves_no_lock(
     """L8: if the check raises while recovery holds the shared lock, the lock is released, so a
     later refresh isn't refused as busy."""
 
-    def boom(_sp: mg.SetPaths, _restat: Any = None) -> bool:
+    def boom(_sp: mg.SetPaths) -> bool:
         raise PermissionError("denied")
 
     monkeypatch.setattr(mg, "is_fresh", boom)

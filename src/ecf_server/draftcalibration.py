@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.eval import draftcalib, draftjudge, drafts
+from ecf.eval import draftcalib, draftjudge, drafts, merged
 from ecf.eval.drafts import DraftCase, DraftsFile
 from ecf_server import draftjudging, draftruns, evalrun
 
@@ -125,11 +125,12 @@ def build(data_dir: Path, pilot: str, seeds_doc: Any, now: str, *,  # noqa: PLR0
                                 " re-label them (`ecf eval label`) before calibration")  # fmt: skip
     random.Random(secrets.token_hex(8)).shuffle(items)  # noqa: S311 - an order, not a secret
     views: dict[str, dict[str, Any]] = {}
+    view_root = _view(root, version)  # the set read: moved cards live there (rounds 7, 9)
     for card in set(cards.values()):
         spec = specs[card]
         assert spec is not None  # noqa: S101 - checked above
         identity = None if spec.identity is None else spec.identity.name
-        views[card] = {"view": grading.case_view(root, card), "question": spec.question,
+        views[card] = {"view": grading.case_view(view_root, card), "question": spec.question,
                        "identity": identity}  # fmt: skip
     digests = {card: now_digests[card] for card in set(cards.values())}
     seeds_digest = hashlib.sha256(json.dumps([record.run_id, [s.model_dump() for s in sd]],
@@ -314,3 +315,15 @@ def score(data_dir: Path, run: str, null_run: str, reason: str | None = None) ->
         draftjudging.write_json(_ratings_path(data_dir, record.run_id),
                                 ratings_doc | {"scored": True})  # fmt: skip
     return result | {"digest": digest}
+
+
+def _view(root: Path, version: str) -> Path:
+    """The folder the set's read used (moved cards live in the merged view; review round 7, B3),
+    refused when its version is no longer the one read: a build between the read and the cards'
+    views would mix new card text with the old labels (round 9)."""
+    from ecf.eval import labels as label_file  # noqa: PLC0415
+
+    view = merged.view_of(root)
+    if label_file.set_version(view) != version:
+        raise InvalidInputError("the set changed while it was read: run the command again")
+    return view

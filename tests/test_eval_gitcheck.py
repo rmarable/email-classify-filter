@@ -282,3 +282,84 @@ def test_the_fingerprint_follows_every_set_file(top: Path, name: str) -> None:
     f = _priv(top) / "heldout3" / name
     f.write_text((f.read_text() if f.is_file() else "") + "x\n")
     assert gitcheck.fingerprint(top, "heldout3") != seen
+
+
+@pytest.mark.parametrize("what", ["file", "folder", "labels"])
+def test_a_committed_symbolic_link_in_a_set_is_never_clean(
+    top: Path, tmp_path_factory: pytest.TempPathFactory, what: str
+) -> None:
+    """Round 5, B-1: a link's committed text matches its blob, but readers would follow it to
+    content no commit holds, so any link in a set is dirty, committed and pushed or not."""
+    out = tmp_path_factory.mktemp("outside")
+    p = _priv(top)
+    s = p / "heldout3"
+    if what == "file":
+        (out / "c.md").write_text("x")
+        (s / "cases" / "linked.md").symlink_to(out / "c.md")
+    elif what == "folder":
+        (out / "e").mkdir()
+        (s / "eml").mkdir(exist_ok=True)
+        (s / "eml" / "sub").symlink_to(out / "e", target_is_directory=True)
+    else:
+        (out / "labels.jsonl").write_bytes((s / "labels.jsonl").read_bytes())
+        (s / "labels.jsonl").unlink()
+        (s / "labels.jsonl").symlink_to(out / "labels.jsonl")
+    git(p, "add", "-A")
+    git(p, "commit", "-q", "-m", "a link")
+    git(p, "push", "-q")
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and "uncommitted" in got.detail
+
+
+def test_a_pipe_in_a_set_is_dirty_and_never_blocks(top: Path) -> None:
+    import os  # noqa: PLC0415
+
+    card = next((_priv(top) / "heldout3" / "cases").glob("*.md"))
+    card.unlink()
+    os.mkfifo(card)  # a committed card's path: the check compares it, never reading a pipe
+    got = gitcheck.clean_and_pushed(top, "heldout3")  # an open that waited would hang here
+    assert not got.ok and card.name in got.detail
+
+
+def test_the_fingerprint_follows_a_rewrite_that_restores_the_mtime(top: Path) -> None:
+    """Round 5, B-4: same size, same inode, mtime put back; only ctime moves."""
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    card = next((top / "tests" / "eval" / "heldout3" / "cases").glob("*.md"))
+    st = card.stat()
+    before = gitcheck.fingerprint(top, "heldout3")
+    time.sleep(0.01)
+    with card.open("r+b") as f:
+        data = f.read()
+        f.seek(0)
+        f.write(data[:-1] + (b"y" if data[-1:] != b"y" else b"z"))
+    os.utime(card, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert card.stat().st_mtime_ns == st.st_mtime_ns and card.stat().st_size == st.st_size
+    assert gitcheck.fingerprint(top, "heldout3") != before
+
+
+def test_the_private_head_is_read_once_per_check(
+    top: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 5, B-3: the commit compared, checked pushed and recorded is one commit."""
+    calls: list[Path] = []
+    real = gitcheck.read_head
+
+    def counting(t: Path) -> str | None:
+        calls.append(t)
+        return real(t)
+
+    monkeypatch.setattr(gitcheck, "read_head", counting)
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert got.ok
+    assert sum(1 for c in calls if c == _priv(top)) == 1
+
+
+@pytest.mark.macos  # APFS is case-insensitive; CI (Linux) deselects macos tests
+def test_a_private_clone_stored_in_another_case_is_no_private_half(top: Path) -> None:
+    """Round 9: the clean check and the fingerprint use the one rule `merged.paths` uses."""
+    (top / "eval" / "private").rename(top / "eval" / "Private")
+    got = gitcheck.clean_and_pushed(top, "heldout3")
+    assert not got.ok and got.no_private
+    assert gitcheck.fingerprint(top, "heldout3")[3] is None

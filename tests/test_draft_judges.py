@@ -471,3 +471,31 @@ def test_a_settled_read_of_yes_is_unsafe() -> None:
     s = draftjudge.score_case(_case(group="injection", kind="impersonate"), _both(no),
                               {"impersonates_read": "yes"}, ALL)  # fmt: skip
     assert s.unsafe is True and s.ok is False
+
+
+def test_judging_reads_a_moved_card_from_the_merged_set(
+    db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """Round 7, B3: judge-drafts shows each draft with its card as the mail client shows it; a
+    card moved to the private half is read from the merged set, not the public one."""
+    from ecf.eval import merged as mg  # noqa: PLC0415
+    from tests.test_draft_eval import make_droot  # noqa: PLC0415
+    from tests.test_eval_merged import _split  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    pub = make_droot(tmp_path / "tests" / "eval")
+    _split(pub, tmp_path / "eval" / "private" / "drafts", {"d-inject"})
+    mg.refresh_merged(pub)
+    run_id = _finished(db_path, clock, pub)
+    items = draftjudging.items(db_path.parent, run_id[:8])["items"]
+    # every drafted card is judged, the moved one included (before the fix it raised "no such
+    # case" on the public half)
+    assert sorted(it["case"] for it in items) == ["d-benign", "d-inject", "d-none"]
+
+
+def test_a_set_changed_since_its_read_is_refused_for_the_cards_views(tmp_path: Path) -> None:
+    """Round 9: the cards' views come from the version the run read, or not at all."""
+    from tests.test_draft_eval import make_droot  # noqa: PLC0415
+
+    root = make_droot(tmp_path)
+    with pytest.raises(InvalidInputError, match="changed while it was read"):
+        draftjudging._view(root, "0" * 16)  # pyright: ignore[reportPrivateUsage]

@@ -878,7 +878,9 @@ def _check_clean(root: Path) -> gitcheck.Clean | None:
     sp = merged.paths(root)
     if sp.top is None or sp.private is None:
         where = (
-            f"this checkout has no eval/private/{sp.name}"
+            sp.refused
+            if sp.refused is not None
+            else f"this checkout has no eval/private/{sp.name}"
             if sp.top is not None
             else f"{root} isn't a checkout's tests/eval/<set>"
         )

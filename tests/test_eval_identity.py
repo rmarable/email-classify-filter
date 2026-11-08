@@ -86,11 +86,14 @@ def test_the_private_and_merged_folders_are_refused_however_spelled(
         writable_root(view)
 
 
-def test_a_symlink_to_a_checkouts_set_is_that_set(split: Path, tmp_path: Path) -> None:
+def test_a_symlink_to_a_checkouts_set_is_refused(split: Path, tmp_path: Path) -> None:
+    """Round 6, operator decision 2026-11-06 (reverses round 2's alias rule): a set's location
+    is never found through a link; an alias of the set folder is refused, not that set."""
     link = tmp_path / "alias"
     link.symlink_to(split)
-    assert mg.paths(link).private == mg.paths(split).private
-    assert mg.resolve(link) == mg.resolve(split)
+    assert mg.paths(link).refused is not None and mg.paths(link).private is None
+    with pytest.raises(InvalidInputError, match="symbolic link"):
+        mg.resolve(link)
 
 
 def test_canonical_keeps_a_missing_tail(tmp_path: Path) -> None:

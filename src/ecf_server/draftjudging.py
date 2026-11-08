@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError, NotFoundError
-from ecf.eval import draftjudge, drafts
+from ecf.eval import draftjudge, drafts, merged
 from ecf.eval.drafts import DraftCase, DraftsFile
 from ecf_server import draftruns, evalrun
 
@@ -110,6 +110,9 @@ def items(data_dir: Path, run: str, *, prompts: bool = True) -> dict[str, Any]: 
     else:
         root = root_of(data_dir, record.run_id)
         cases = {c.id: c for c in _set(root, record.set_version)}
+        view_root = _view(
+            root, record.set_version
+        )  # the set read: moved cards live there (rounds 7, 9)
         for dc in record.cases:
             c = cases.get(dc.id)
             if dc.text is None or c is None:
@@ -119,7 +122,7 @@ def items(data_dir: Path, run: str, *, prompts: bool = True) -> dict[str, Any]: 
                 continue
             if not c.confirmed:  # edited since its build, or never confirmed (J5C-2)
                 raise InvalidInputError(f"{c.id}: its card doesn't match its confirmed, built file")
-            view = grading.case_view(root, c.id)
+            view = grading.case_view(view_root, c.id)
             if view is None:
                 continue
             rows.append((dc, c.id, view, spec.question,
@@ -545,3 +548,15 @@ def record_scores(data_dir: Path, run: str) -> dict[str, Any]:
         "to_settle": sum(bool(c["to_settle"]) for c in s["cases"]),
         "calibration_digest": record.calibration_digest,
     }
+
+
+def _view(root: Path, version: str) -> Path:
+    """The folder the set's read used (moved cards live in the merged view; review round 7, B3),
+    refused when its version is no longer the one read: a build between the read and the cards'
+    views would mix new card text with the old labels (round 9)."""
+    from ecf.eval import labels as label_file  # noqa: PLC0415
+
+    view = merged.view_of(root)
+    if label_file.set_version(view) != version:
+        raise InvalidInputError("the set changed while it was read: run the command again")
+    return view

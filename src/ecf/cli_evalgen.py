@@ -92,6 +92,15 @@ def _estimate(root: Path, adapter: object, yes: bool) -> None:
         raise typer.Exit(1)
 
 
+def note_old_temps(root: Path) -> None:
+    """The crashed writes' old temporary files a rebuild left in `root`, one `note:` line each
+    (review round 26; `ecf eval build` prints its own)."""
+    from ecf.eval.setio import old_temps_left  # noqa: PLC0415
+
+    for line in old_temps_left(root):
+        typer.echo(f"note: {line}", err=True)
+
+
 def _settle_terminal(root: Path, today: Any) -> None:
     """The disputes one by one: the email, each disputed field, then the judges' answers."""
     from ecf.eval import settle as st  # noqa: PLC0415
@@ -130,6 +139,7 @@ def _settle_terminal(root: Path, today: Any) -> None:
             done[it["case"]] = answer
     n_done = st.apply(root, done, today) if done else 0
     typer.echo(f"settled {n_done} emails; {len(items) - n_done} still open")
+    note_old_temps(root)
     if n_done:
         typer.echo(f"Next: ecf eval expect --root {root}")
 
@@ -253,6 +263,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                       show=typer.echo if show_findings else None)  # fmt: skip
         s = run.run(resume=resume or shared is not None)
         typer.echo(closing_line(s))
+        note_old_temps(root)
         if s.detail:
             typer.echo(s.detail)
         if s.state == "seeded":
@@ -309,6 +320,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import agree as ag  # noqa: PLC0415
 
         o = ag.run(root.expanduser().resolve(), datetime.now(UTC).date())
+        note_old_temps(root.expanduser().resolve())
         typer.echo(f"agreed: {o.agreed} emails confirmed by the judges; for you: {o.disputed}"
                    f" ({o.whole} whole, a judge refused or skipped them); already confirmed:"
                    f" {o.skipped - o.yours_edited - o.waiting}; still waiting for you:"
@@ -359,6 +371,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                 raise InvalidInputError("--from needs --tokens, the page's token map")
             done, left = st.apply_page(where, answers.expanduser(), tokens.expanduser(), today)
             typer.echo(f"settled {done} emails; {left} not fully answered yet")
+            note_old_temps(where)
             if done:
                 typer.echo(f"Next: ecf eval expect --root {root}")
             return
@@ -384,6 +397,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         counts = ex.apply(where, list(r["cases"]), datetime.now(UTC).date(), plan=p,
                           digest=r.get("rules_digest"))  # fmt: skip
         typer.echo(", ".join(f"{k} {v}" for k, v in counts.items()))
+        note_old_temps(where)
         if p.edited:
             typer.echo(f"{len(p.edited)} judged emails were edited by hand since their"
                        f" confirmation: run `ecf eval agree --root {root}` first")  # fmt: skip

@@ -107,8 +107,10 @@ def test_a_hanging_git_costs_one_timeout_per_pass_then_backs_off(  # C9
 def test_stage_set_live_runs_the_check_fresh(  # C10
     conn: sqlite3.Connection, clock: FakeClock, split: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(mg, "RACY_NS", 0)  # past the window: the gate's cache keeps no racy files
     make_address(conn, clock, "assist")
     _run(conn, clock, split, _counts(split))
+    gate.compute(conn, "ap")
     gate.compute(conn, "ap")  # the cache is warm
     calls = _count_git(monkeypatch)
     gate.compute(conn, "ap")

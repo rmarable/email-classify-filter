@@ -51,6 +51,15 @@ SET_FILES = re.compile(r"^tests/eval/[a-z0-9][a-z0-9_-]*/(labels\.jsonl|fixed_la
                        r"|reviews\.jsonl|checks\.yaml)$")  # fmt: skip
 TOP_FILES = ("tests/eval/known-public-injection-blobs.txt", "tests/eval/moved-ids.sha256")
 PRIVATE_CARD = re.compile(rf"^[a-z0-9][a-z0-9_-]*/cases/{ID}\.md$")  # in the private repository
+# only plain files may sit under tests/eval or anywhere in the private repository: a symbolic
+# link or submodule there would lead a reader to content no commit holds (review round 5, B-1)
+REGULAR_MODES = ("100644", "100755")
+
+
+def above_eval(path: str) -> bool:
+    """`tests` or `tests/eval` itself, in any letter case: a link or submodule there would put a
+    whole set outside every scan (review round 6, M2)."""
+    return path.lower() in ("tests", "tests/eval")
 
 
 def git(*args: str, stdin: str | None = None, top: Path = TOP) -> str:
@@ -104,11 +113,15 @@ def unrecognised(path: str) -> bool:
             and path not in TOP_FILES)  # fmt: skip
 
 
-def changed(revs: list[str], top: Path = TOP,
-            want: Callable[[str], bool] = under_eval) -> list[tuple[str, str]]:  # fmt: skip
-    """(blob, path) for every file (`want`, default: everything under tests/eval/) each commit
-    in `revs` added or changed, merge commits included and deleted files skipped, through one
-    batched `git diff-tree --stdin -z` (NUL-separated: git never quotes a path there)."""
+def changed(revs: list[str], top: Path = TOP, want: Callable[[str], bool] = under_eval,
+            special: list[str] | None = None, special_want: Callable[[str], bool] | None = None,
+            ) -> list[tuple[str, str]]:  # fmt: skip
+    """(blob, path) for every plain file (`want`, default: everything under tests/eval/) each
+    commit in `revs` added or changed, merge commits included and deleted files skipped, through
+    one batched `git diff-tree --stdin -z` (NUL-separated: git never quotes a path there). An
+    entry that isn't a plain file (a symbolic link, a submodule) is never returned; its path is
+    added to `special` when `special_want` (default `want`) picks it."""
+    pick = want if special_want is None else special_want
     commits = git("rev-list", *revs, top=top)
     if not commits.strip():
         return []
@@ -120,29 +133,44 @@ def changed(revs: list[str], top: Path = TOP,
     while i < len(parts):
         tok = parts[i]
         if tok.startswith(":") and i + 1 < len(parts):  # ":<modes> <shas> <status>", then path
-            blob, path = tok.split()[3], parts[i + 1]
-            if want(path):
-                seen[(blob, path)] = None
+            fields, path = tok.split(), parts[i + 1]
+            if fields[1] not in REGULAR_MODES:
+                if special is not None and (pick(path) or above_eval(path)):
+                    special.append(path)
+            elif want(path):
+                seen[(fields[3], path)] = None
             i += 2
         else:  # a commit ID line, or the empty tail
             i += 1
     return list(seen)
 
 
-def tree(treeish: str, top: Path = TOP) -> list[tuple[str, str]]:
-    """Every blob under tests/eval/ in a tree, in any letter case (`ls-tree -z`: paths never
-    quoted; no pathspec, which git matches case-sensitively, so `under_eval` picks; review
-    round 4, B5)."""
+def tree(treeish: str, top: Path = TOP, special: list[str] | None = None,
+         ) -> list[tuple[str, str]]:  # fmt: skip
+    """Every plain file under tests/eval/ in a tree, in any letter case (`ls-tree -z`: paths
+    never quoted; no pathspec, which git matches case-sensitively, so `under_eval` picks; review
+    round 4, B5). Anything else there (a symbolic link, a submodule) goes to `special`."""
     out = git("ls-tree", "-r", "-z", treeish, top=top)
     found: list[tuple[str, str]] = []
     for entry in out.split("\0"):
         if not entry:
             continue
         meta, path = entry.split("\t", 1)
-        kind, blob = meta.split()[1:3]
-        if kind == "blob" and under_eval(path):
+        mode, _kind, blob = meta.split()
+        if not under_eval(path):
+            if mode not in REGULAR_MODES and above_eval(path) and special is not None:
+                special.append(path)
+            continue
+        if mode in REGULAR_MODES:
             found.append((blob, path))
+        elif special is not None:
+            special.append(path)
     return found
+
+
+def specials(paths: list[str]) -> list[str]:
+    return [f"{p}: a symbolic link or submodule; only plain files may sit here"
+            for p in dict.fromkeys(paths)]  # fmt: skip
 
 
 def orphans(found: list[tuple[str, str]]) -> list[str]:
@@ -286,10 +314,11 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     """A pushed range: every changed blob (listed blobs skipped; X1 only on blobs new since the
     anchor), then the tip's path checks and, except in the hook, a build of the tip's other
     blobs: unskipped with X1 on main, with the list elsewhere."""
-    items = changed(revs, top)
+    odd: list[str] = []
+    items = changed(revs, top, special=odd)
     old = anchor_history(top) if old is None else old  # the hook reads it once per push
     listed = known(top) & old  # `exempt`, with the history read once
-    found = tree(tip, top) if tip else []
+    found = tree(tip, top, odd) if tip else []
     # main's tip is checked whole, X1 on, nothing skipped: a marked card restored onto main (a
     # revert of the move) is refused at its push (review round 3, M2). That scan is stricter
     # than the range's, so the range skips the blobs it covers (round 4, performance B3).
@@ -297,10 +326,10 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     in_tip: set[tuple[str, str]] = set(found) if whole else set()
     # `published`: blobs main's history already has (the hook only): main's own runs checked them
     v = scan([i for i in items if i not in in_tip], skip=listed | published, x1_old=old, top=top)
-    refused, warned = list(v.refused), list(v.warned)
+    refused, warned = [*specials(odd), *v.refused], list(v.warned)
     if tip:
         refused += [f"{p}: no card for it in its set" for p in orphans(found)]
-        refused += unowned(found, top)
+        refused += unowned(found, top, published)
         if tip_build:
             covered = {b for b, _ in items}
             rest = found if whole else [(b, p) for b, p in found if b not in covered]
@@ -311,19 +340,35 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
 
 
 def run_tree(treeish: str, *, no_skip: bool, top: Path = TOP) -> Verdict:
-    found = tree(treeish, top)
+    odd: list[str] = []
+    found = tree(treeish, top, odd)
     v = scan(found, skip=set() if no_skip else exempt(top), x1_old=None, top=top)
-    return Verdict([*v.refused, *(f"{p}: no card for it in its set" for p in orphans(found)),
+    return Verdict([*specials(odd), *v.refused,
+                    *(f"{p}: no card for it in its set" for p in orphans(found)),
                     *unowned(found, top)], v.warned)  # fmt: skip
 
 
-def unowned(found: list[tuple[str, str]], top: Path = TOP) -> list[str]:
+def unowned(found: list[tuple[str, str]], top: Path = TOP,
+            published: frozenset[str] = frozenset()) -> list[str]:  # fmt: skip
     """Every set file (labels, fixed labels, reviews, checks.yaml) in this tree that doesn't
     parse as the merge reads it, names an ID the merge's own rule refuses for one half
     (`merged.stray`: a label row or `checks.yaml` key with no card of its set; reviews are
     append-only history, so a removed card's rows stay, and moved IDs there are the moved-ID
     guard's), or holds text trigger 10's text check flags in any value (review round 3, M3;
-    round 4, B1, B2). Read from the tree, so it holds for what is pushed."""
+    round 4, B1, B2). Read from the tree, so it holds for what is pushed. The text check runs
+    once per distinct string (a set's rows repeat most values), and not on a blob in
+    `published` (main's history; the hook only): a push that touches no set file costs no text
+    check (review round 5, performance B-1). Sound because every set file blob in main's history
+    to 2c421ac was text-checked once, 55 blobs, 0 hits (review round 6, L5), and main's own CI
+    run checks every later one without `published`."""
+    memo: dict[str, list[str]] = {}
+
+    def hits(s: str) -> list[str]:
+        got = memo.get(s)
+        if got is None:
+            got = memo[s] = list(text_injection(s))
+        return got
+
     cards: dict[str, set[str]] = {}
     for _b, path in found:
         if CARD.match(path):
@@ -346,7 +391,9 @@ def unowned(found: list[tuple[str, str]], top: Path = TOP) -> list[str]:
         own = cards.get(path.split("/")[2], set())
         out += [f"{where}: names {i}, which has no card in its set"
                 for i in merged.stray(kind, ids, own, set())]  # fmt: skip
-        flagged = sorted({h for v in values for s in strings(v) for h in text_injection(s)})
+        if b in published:
+            continue
+        flagged = sorted({h for s in {s for v in values for s in strings(v)} for h in hits(s)})
         if flagged:
             out.append(f"{where}: trigger 10's text check flags it ({', '.join(flagged[:5])})")
     return out
@@ -485,7 +532,10 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
     history = None if private or not ranges else (_published(remote, cwd), anchor_history(cwd))
     for rref, lsha, revs in ranges:
         if private:
-            items = changed(revs, cwd, want=lambda p: PRIVATE_CARD.match(p) is not None)
+            odd: list[str] = []
+            items = changed(revs, cwd, want=lambda p: PRIVATE_CARD.match(p) is not None,
+                            special=odd, special_want=lambda _p: True)  # fmt: skip
+            refused += specials(odd)
             data = cat(sorted({b for b, _ in items}), cwd)
             for b, p in dict.fromkeys(items):
                 refused += check_private(b, p, data[b])

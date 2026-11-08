@@ -10,9 +10,11 @@ and M1's upload."""
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
+import stat
 import subprocess
 import threading
 import time
@@ -21,10 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ecf.eval.setio import canonical
+
 GIT = "/usr/bin/git"
 TIMEOUT_S = 5.0  # for the whole check: every git call in one pass shares it
 BACKOFF_S = 300.0  # after a timeout, no git for five minutes (five ticks), however often asked
 IGNORED_NAMES = (".DS_Store",)
+# the modes of a plain file in git: nothing else may sit in a set (review round 5, B-1)
+REGULAR_MODES = ("100644", "100755")
 _ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
 _FLAGS = ("--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
           "-c", "core.attributesFile=/dev/null")  # fmt: skip
@@ -83,9 +89,10 @@ def _ok(top: Path, *args: str) -> str:
 def set_files(root: Path) -> dict[str, Path]:
     """Every file of a set folder, by its path relative to the folder, found by walking it (no
     `git`, no ignore rules), except `.build/` (built, ignored by design), `*.tmp` and `.DS_Store`
-    (a crashed atomic write, Finder). Symbolic links are listed, not followed. The one list both
-    the clean check and the fingerprint read (review round 4, B3). Plain strings, one join per
-    file: it runs on every gate pass."""
+    (a crashed atomic write, Finder). Symbolic links (to files or folders) and other special
+    files are listed, never followed: the clean check counts each as uncommitted (round 5, B-1).
+    The one list both the clean check and the fingerprint read (review round 4, B3). Plain
+    strings, one join per file: it runs on every gate pass."""
     out: dict[str, Path] = {}
     base = os.fspath(root)
     cut = len(base) + 1
@@ -102,22 +109,36 @@ def set_files(root: Path) -> dict[str, Path]:
     return out
 
 
-def _blob_id(p: Path, algo: str) -> str:
-    """The id git gives the file's content: a link's target text, or the file's bytes."""
-    data = os.fsencode(os.readlink(p)) if p.is_symlink() else p.read_bytes()
+def _blob_id(p: Path, algo: str) -> str | None:
+    """The id git gives a regular file's content; None for anything else (a symbolic link, a
+    pipe, a socket, a device), which no reader may follow (review round 5, B-1). Opened without
+    following a link, and checked to be a regular file before it is read."""
+    try:
+        fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:  # a symbolic link
+            return None
+        raise
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = f.read()
     h = hashlib.new(algo)
     h.update(b"blob %d\0" % len(data))
     h.update(data)
     return h.hexdigest()
 
 
-def dirty(top: Path, pathspec: str) -> list[str]:
-    """The paths under `pathspec` whose content differs from the commit HEAD names: a file
-    missing, added (untracked or ignored alike) or changed. Each file is hashed as git would and
-    compared with HEAD's tree, so neither the index (an assume-unchanged or skip-worktree flag,
-    a stale stat), `status` options nor ignore rules can make an edit look committed (review
-    round 4, B3, B4). Raises GitFailed when HEAD can't be read."""
-    head = read_head(top)
+def dirty(top: Path, pathspec: str, head: str | None = None) -> list[str]:
+    """The paths under `pathspec` whose content differs from the commit `head` names (default:
+    HEAD, read from the ref files): a file missing, added (untracked or ignored alike) or
+    changed. Each file is hashed as git would and compared with that tree, so neither the index
+    (an assume-unchanged or skip-worktree flag, a stale stat), `status` options nor ignore rules
+    can make an edit look committed (review round 4, B3, B4). Anything that isn't a regular file,
+    in the tree (a symbolic link, a submodule) or on disk, is always listed: a reader would
+    follow it to content no commit holds (round 5, B-1). Raises GitFailed when HEAD can't be
+    read."""
+    head = read_head(top) if head is None else head
     if head is None:
         raise GitFailed(f"{top.name}'s HEAD can't be read from its ref files")
     algo = "sha256" if len(head) == 64 else "sha1"
@@ -125,7 +146,8 @@ def dirty(top: Path, pathspec: str) -> list[str]:
     for entry in _ok(top, "ls-tree", "-r", "-z", head, "--", pathspec).split("\0"):
         if entry:
             meta, path = entry.split("\t", 1)
-            want[path] = meta.split()[2]  # a submodule's commit id never equals a file's blob id
+            mode, _kind, blob = meta.split()
+            want[path] = blob if mode in REGULAR_MODES else ""  # "": never matches a file
     have = {f"{pathspec}/{rel}": p for rel, p in set_files(top / pathspec).items()}
     return sorted(
         {
@@ -139,9 +161,10 @@ def _differs(p: Path, blob: str, algo: str) -> bool:
     """Whether the file isn't that blob; a file that can't be read (removed mid-check, say)
     can't be shown to be it."""
     try:
-        return _blob_id(p, algo) != blob
+        got = _blob_id(p, algo)
     except OSError:
         return True
+    return got is None or got != blob
 
 
 def git_dir(top: Path) -> tuple[Path, Path] | None:
@@ -182,11 +205,16 @@ def _check(top: Path, set_name: str) -> Clean:  # noqa: PLR0911 - one return per
             False, f"tests/eval/{set_name} has uncommitted changes: {', '.join(public[:5])}"
         )
     priv = top / "eval" / "private"
-    if not (priv / set_name).is_dir():
+    if not private_half(priv, set_name):
         return Clean(False, f"no eval/private/{set_name} (public set only)", no_private=True)
     if _reftable(priv):
         return Clean(False, "eval/private uses reftable, which this check can't read; use files")
-    private = dirty(priv, set_name)
+    # the private HEAD is read once: the commit compared, checked pushed and recorded is one
+    # commit, whatever lands meanwhile (review round 5, B-3)
+    head = read_head(priv)  # from the HEAD and ref files, never `git rev-parse` (the plan)
+    if head is None:
+        return Clean(False, "eval/private's HEAD can't be read from its ref files")
+    private = dirty(priv, set_name, head)
     if private:
         return Clean(False, f"eval/private/{set_name} has uncommitted changes:"
                      f" {', '.join(private[:5])}")  # fmt: skip
@@ -196,12 +224,9 @@ def _check(top: Path, set_name: str) -> Clean:  # noqa: PLR0911 - one return per
         return Clean(False, f"eval/private has no upstream branch ({exc})")
     if not upstream.startswith("refs/remotes/"):
         return Clean(False, f"eval/private's upstream {upstream} isn't a remote branch")
-    r = _git(priv, "merge-base", "--is-ancestor", "HEAD", "@{u}")
+    r = _git(priv, "merge-base", "--is-ancestor", head, "@{u}")
     if r.returncode != 0:
         return Clean(False, "eval/private has commits not pushed to its upstream")
-    head = read_head(priv)  # from the HEAD and ref files, never `git rev-parse` (the plan)
-    if head is None:
-        return Clean(False, "eval/private's HEAD can't be read from its ref files")
     return Clean(True, f"private {head[:8]} committed and pushed", head)
 
 
@@ -247,6 +272,10 @@ def clean_and_pushed(top: Path, set_name: str, *, fresh: bool = False) -> Clean:
             with _lock:
                 _backoff_until = _now() + BACKOFF_S
         return Clean(False, f"git: {exc}", error=True)
+    except OSError as exc:  # a folder or file of either repository that can't be read: not
+        return Clean(
+            False, f"{exc.filename or top}: can't be read ({exc.strerror or exc})"
+        )  # clean
     finally:
         _deadline.reset(token)
 
@@ -257,12 +286,12 @@ def reset_backoff() -> None:
         _backoff_until = 0.0
 
 
-def _stat(p: Path) -> tuple[int, int, int] | None:
+def _stat(p: Path) -> tuple[int, int, int, int] | None:
     try:
         st = p.stat()
     except OSError:
         return None  # a missing file is a value, not an error
-    return st.st_size, st.st_mtime_ns, st.st_ino
+    return st.st_size, st.st_mtime_ns, st.st_ino, st.st_ctime_ns
 
 
 def _repo_stats(top: Path) -> tuple[Any, ...]:
@@ -285,22 +314,41 @@ def _repo_stats(top: Path) -> tuple[Any, ...]:
 
 
 def _set_stats(root: Path) -> tuple[Any, ...]:
-    """Name, size, mtime and inode of every file `set_files` lists (the clean check's own list)."""
+    """Name, size, mtime, inode and ctime of every file `set_files` lists (the clean check's own
+    list). ctime, which no program can set, catches an in-place rewrite that restores the mtime
+    (`touch -r`, `rsync --inplace -t`; review round 5, B-4)."""
     out: list[Any] = []
     for rel, p in sorted(set_files(root).items()):
         try:
             st = p.lstat()
         except OSError:
             continue
-        out.append((rel, (st.st_size, st.st_mtime_ns, st.st_ino)))
+        out.append((rel, (st.st_size, st.st_mtime_ns, st.st_ino, st.st_ctime_ns)))
     return tuple(out)
 
 
+def private_half(priv: Path, set_name: str) -> bool:
+    """Whether `priv/<set>` is the private half, by the one rule `merged.paths` uses: present and
+    stored exactly so (on a case-insensitive volume `eval/Private` answers `is_dir` too; review
+    round 9)."""
+    p = priv / set_name
+    return p.is_dir() and canonical(p) == p
+
+
 def fingerprint(top: Path, set_name: str) -> tuple[Any, ...]:
+    """`_fingerprint`, never raising: a path that can't be read is a marker in it, so the key
+    changes and the check that follows fails (review round 16)."""
+    try:
+        return _fingerprint(top, set_name)
+    except OSError as exc:
+        return ("unreadable", str(exc.filename))
+
+
+def _fingerprint(top: Path, set_name: str) -> tuple[Any, ...]:
     """What a commit, a push, a new card or an in-place edit changes, in both repositories: the
     HEAD, config, branch ref, packed-refs, remote-tracking refs and index files, and every set
-    file's name, size, mtime and inode (`set_files`). No `git`."""
+    file's name, size, mtime, inode and ctime (`set_files`). No `git`."""
     priv = top / "eval" / "private"
     return (_repo_stats(top), _set_stats(top / "tests" / "eval" / set_name),
             _repo_stats(priv) if priv.is_dir() else None,
-            _set_stats(priv / set_name) if (priv / set_name).is_dir() else None)  # fmt: skip
+            _set_stats(priv / set_name) if private_half(priv, set_name) else None)  # fmt: skip

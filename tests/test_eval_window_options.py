@@ -372,14 +372,15 @@ def test_an_experiment_is_never_a_source_run(conn: sqlite3.Connection, db_path: 
         ce.start(db_path, clock, root, source_run=rid)
 
 
-def test_the_root_guard_follows_symlinks_and_covers_preset_d(
+def test_the_root_guard_refuses_a_linked_set_and_covers_preset_d(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
     ce.start(db_path, clock, root)
     claude_eval.reset()
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
-    ce.start(db_path, clock, alias)  # the same set by another name: allowed
+    with pytest.raises(InvalidInputError, match="symbolic link"):  # round 6: never through a link
+        ce.start(db_path, clock, alias)
     assert _remembered(conn) == str(root.resolve())
     claude_eval.reset()
     other = tmp_path / "other"

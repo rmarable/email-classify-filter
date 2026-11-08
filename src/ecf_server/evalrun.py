@@ -289,8 +289,10 @@ def corpus_run(session: corpus_session.Session,
 
 def set_version(root: Path) -> str:
     """The version of the set `merged.resolve` gives for the logical root (EVAL-PRIVATE.md, "The
-    resolver"); cheap (two files hashed), for a caller that reads no case."""
-    return label_file.set_version(merged.resolve(root))
+    resolver"), for a caller that reads no case. Not cheap with a private half: the freshness
+    check hashes every source and merged copy (about 85-110 ms for `synthetic`, round 12)."""
+    with merged.named_errors():  # anything unreadable refused by name (review round 17)
+        return label_file.set_version(merged.resolve(root))
 
 
 # Reading a set. `read_set` is the one reader every run and the gate go through
@@ -298,11 +300,12 @@ def set_version(root: Path) -> str:
 # once, reads each label file once (the version is of those bytes), and checks every row's file.
 # A row it can't run is a problem, never silently dropped.
 
-MISSING, OUTSIDE, OVERSIZED, CHANGED = (
+MISSING, OUTSIDE, OVERSIZED, CHANGED, UNREADABLE = (
     "missing",
     "outside the set",
     "over the size limit",
     "changed",
+    "unreadable",
 )
 
 
@@ -342,12 +345,16 @@ def read_set(root: Path) -> SetRead:
     refresh holds the set's lock."""
     held = merged.take_shared(root)
     try:
-        return _read_set(merged.resolve(root).resolve())
+        with (
+            merged.one_read(),
+            merged.named_errors(),
+        ):  # each email hashed once: freshness check and row check share it
+            return _read_set(merged.resolve(root).resolve(), merged.paths(root).public)
     finally:
         merged.release(held)
 
 
-def _read_set(root: Path) -> SetRead:
+def _read_set(root: Path, logical: Path | None = None) -> SetRead:
     index = root / "labels.jsonl"
     if not index.is_file():
         raise NoSet(f"no labels.jsonl in {root}")
@@ -360,7 +367,9 @@ def _read_set(root: Path) -> SetRead:
     fixed, _stale = fixed_labels.current(root, rows, fixed_rows)  # a stale row is left out
     out: list[Case] = []
     problems: list[tuple[str, str]] = []
-    ok = label_file.models_ok(root)  # judges' labels count only on a generated set (OD-547)
+    # judges' labels count only on a generated set (OD-547), read from the set's own public half,
+    # never from a file in the merged view (review round 12, B2)
+    ok = label_file.models_ok(logical or root)
     for r in rows:
         path = (root / r["file"]).resolve()
         why = (OUTSIDE if not path.is_relative_to(root) else MISSING if not path.is_file()
@@ -368,7 +377,10 @@ def _read_set(root: Path) -> SetRead:
         if why is not None:
             problems.append((str(r["id"]), why))
             continue
-        on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
+        on_disk = merged.sha256_of(path)
+        if not on_disk:  # can't be read: a problem, the case left out (review round 13, B4)
+            problems.append((str(r["id"]), UNREADABLE))
+            continue
         if on_disk != r["sha256"]:
             problems.append((str(r["id"]), CHANGED))
         confirmed = label_file.is_confirmed(r, models_ok=ok) and on_disk == r["sha256"]

@@ -18,7 +18,27 @@ AUTHOR = "generated"
 
 def is_generated(root: Path) -> bool:
     """True when `root` holds a generated set: a manifest of this kind, any manifest that can't be
-    read (fail closed), or a card whose author is `generated` in labels.jsonl."""
+    read (fail closed), or a card whose author is `generated` in labels.jsonl. For a checkout set
+    both halves count: a generated card in the private half makes the set generated (P1, P7;
+    EVAL-PRIVATE.md, Step 3 review round 13, B1)."""
+    from ecf.eval import merged  # noqa: PLC0415 - merged's own imports must not load genset
+
+    halves = [root]
+    try:  # from either half's path: both halves (a private path maps to its public one; round 14)
+        public = merged.public_of(root) if merged.is_private_root(root) else root
+        priv = merged.paths(public).private
+        halves += [public] + ([priv] if priv is not None else [])
+    except (merged.Unreadable, PermissionError):  # a half that can't be found: generated, failing
+        return True  # closed (review round 17)
+    except Exception:  # noqa: S110 - a location `paths` can't work out: the folder alone (refused elsewhere)
+        pass
+    try:
+        return any(_generated(h) for h in dict.fromkeys(halves))
+    except OSError:  # a half that can't be read: generated (fail closed, as an unreadable
+        return True  # manifest is; review round 16)
+
+
+def _generated(root: Path) -> bool:
     manifest = root / MANIFEST
     if manifest.exists():
         try:

@@ -21,8 +21,9 @@ from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval import markers, merged
 from ecf.eval.cards import Card, load_cards
+from ecf.eval.genset import AUTHOR
 from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
-from ecf.eval.setio import atomic_write, writable_root
+from ecf.eval.setio import atomic_write, sweep_old_temps, writable_root
 
 COMMIT_LIMIT = 1024 * 1024
 LONG_FIELDS = ("signature", "quoted_thread", "footer")  # a long card's text besides its body
@@ -143,6 +144,8 @@ class BuildReport:
     placed: list[tuple[str, str, int, bool]] = field(
         default_factory=list[tuple[str, str, int, bool]]
     )
+    # old temporary files the build couldn't remove, one line each (review round 25, S2)
+    left: list[str] = field(default_factory=list[str])
 
 
 def _same(path: Path, data: bytes, digest: str) -> bool:
@@ -156,6 +159,7 @@ def _same(path: Path, data: bytes, digest: str) -> bool:
         return False
 
 
+@merged.named
 def marker_refusals(root: Path, *, private: bool) -> list[str]:
     """X1 (EVAL-PRIVATE.md, "Builder refusal"): in a public set, every card its front matter
     marks as an injection card except the pinned `starter-injection`; in a private set, every card
@@ -185,6 +189,7 @@ def _check_ids(root: Path, cards: list[Card]) -> None:
                                 " its card)")  # fmt: skip
 
 
+@merged.named
 def build_all(root: Path) -> BuildReport:
     """Build every card under `root/cases`. Stops before writing anything if hygiene fails."""
     writable_root(root)
@@ -193,6 +198,11 @@ def build_all(root: Path) -> BuildReport:
         raise InvalidInputError("a private card must carry an injection marker (X1): "
                                 + "; ".join(unmarked[:10]))  # fmt: skip
     cards = load_cards(root / "cases")
+    if merged.is_private_root(root) and (made := [c.id for c in cards if c.author == AUTHOR]):
+        # a generated card is never part of a private half (P1; review round 13, B1)
+        raise InvalidInputError(
+            f"a generated card can't be in a private set: {', '.join(made[:10])}"
+        )
     _check_ids(root, cards)
     findings = [f for c in cards for f in scan_card(c, f"{c.id}.md")]
     if findings:
@@ -233,4 +243,6 @@ def build_all(root: Path) -> BuildReport:
         label_file.carry_over(label_file.read(root), labels, models_ok=label_file.models_ok(root)),
     )
     placed = [(c.id, *p) for c in cards for p in c.phrase_offsets()]
-    return BuildReport(built, large, [], placed)
+    # crashed writes' old temporary files, once the build has written (review round 25, S2)
+    _, left = sweep_old_temps(root)
+    return BuildReport(built, large, [], placed, left)
