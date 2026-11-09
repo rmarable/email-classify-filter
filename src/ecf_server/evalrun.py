@@ -82,7 +82,7 @@ from ecf.eval.results import (
     spawn_figures,
     window_figures,
 )
-from ecf.eval.setio import canonical
+from ecf.eval.setio import canonical, writable_root
 from ecf.ids import new_random_id
 from ecf.schema import (
     CURRENT_VERSION,
@@ -1588,6 +1588,7 @@ def environment(power: Callable[[], schedule.Power], battery: Callable[[], int |
 def write_result(folder: Path, result: ResultFile, name: str | None = None) -> Path:
     """A result file, 0600, in `folder`, in this ecf's format (P16; a rescore of an older file
     is written by this code, so it gets it too)."""
+    writable_root(folder)  # never into a merged eval set (`--copy-to`; review round 28)
     result = result.model_copy(update={"format": max(result.format, RESULT_FORMAT)})
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / (name or f"{result.run_id}.json")
@@ -1624,7 +1625,7 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
     if copy_to is not None:
         try:  # the install's file and row are the record; a failed copy loses nothing
             write_result(copy_to, result)
-        except OSError as exc:
+        except (OSError, InvalidInputError) as exc:  # a refused folder too (review round 28)
             log.warning("eval.copy_failed", run_id=result.run_id[:8],
                         error_type=type(exc).__name__)  # fmt: skip
 

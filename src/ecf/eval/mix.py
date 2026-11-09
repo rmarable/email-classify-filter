@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
-from ecf.eval.setio import writable_root
+from ecf.eval.setio import reason, writable_root
 from ecf.yamlio import load_yaml
 
 SHIPPED = "eval_mix.yaml"
@@ -166,7 +166,7 @@ def load(path: Path) -> Mix:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidInputError(f"{path}: can't read it ({exc.strerror})") from None
+        raise InvalidInputError(f"{path}: can't read it ({reason(exc)})") from None
     return parse(load_yaml(text, source=path.name), source=path.name)
 
 

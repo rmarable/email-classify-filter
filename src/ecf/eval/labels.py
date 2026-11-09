@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError, NotFoundError
-from ecf.eval.setio import atomic_write, writable_root
+from ecf.eval.setio import atomic_write, writable_set
 
 
 def expected_hash(expected: dict[str, Any]) -> str:
@@ -79,7 +79,7 @@ def valid(name: str, value: Any) -> bool:
 
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
     """Through a temporary file and a rename, so a crash never leaves a half-written index."""
-    atomic_write(writable_root(root) / "labels.jsonl",
+    atomic_write(writable_set(root) / "labels.jsonl",
                  "".join(json.dumps(x, sort_keys=True) + "\n" for x in rows))  # fmt: skip
 
 

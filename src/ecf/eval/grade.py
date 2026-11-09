@@ -27,7 +27,7 @@ from ecf.eval import generate as gen
 from ecf.eval import labels as label_file
 from ecf.eval import models
 from ecf.eval.results import RESULT_FORMAT, CaseResult, ResultFile
-from ecf.eval.setio import writable_root
+from ecf.eval.setio import atomic_write, writable_set
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import load_schema
 
@@ -108,7 +108,7 @@ class Grading:
     def run(self, *, resume: bool) -> tuple[Path | None, dict[str, int], str]:
         """(the result file, counts by outcome, detail). No file while the run is stopped, and
         nothing written or asked in a merged view (review round 27)."""
-        writable_root(self.root)
+        writable_set(self.root)
         doc = gen.verify(self.root)
         models.check_judge(doc, (self.adapter.provider, self.adapter.model))
         work = gen.Work(self.root)
@@ -132,7 +132,8 @@ class Grading:
             if isinstance(self.adapter, CaseGrader):
                 reply = self.adapter.ask_case(self.root, row["id"], schema)
             else:
-                reply = self.adapter.ask(grade_prompt(view), schema, self.root / "work" / "call")
+                call = writable_set(self.root, self.root / "work" / "call")  # round 28
+                reply = self.adapter.ask(grade_prompt(view), schema, call)
             # one call log per judge, so judges can run side by side (J19)
             work.append(f"calls-{_slug(self.adapter.model)}", [{"stage": "grade", "case": row["id"],
                                    "at": self.now().isoformat()} | reply.record()])  # fmt: skip
@@ -162,10 +163,10 @@ class Grading:
                      "schema_digest": load_schema().digest},
             format=RESULT_FORMAT,
         )  # fmt: skip
-        folder = writable_root(self.root) / GRADES
+        folder = writable_set(self.root) / GRADES
         folder.mkdir(exist_ok=True)
         path = folder / f"{_slug(self.adapter.model)}-{result.run_id}.json"
-        path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        atomic_write(path, result.model_dump_json(indent=2) + "\n")  # never through a link
         return path
 
 

@@ -38,9 +38,11 @@ from ecf.eval.setio import (
     canonical,
     copy_new,
     is_merged,
+    reason,
     replace_file,
     write_new,
 )
+from ecf.text import escaped
 from ecf.yamlio import load_yaml
 
 FORMAT = 2  # 2: manifest entries carry ctime (review round 5, B-4)
@@ -72,13 +74,13 @@ def unreadable(path: object, exc: OSError) -> Unreadable:
     guess which of them is the cause: a refused write can be the folder's permission, the file's
     `uchg` flag or the folder's (review rounds 21-22, B1). A write reports the file it writes,
     never its temporary file (`setio.replace_file`, round 23)."""
-    reason = exc.strerror or exc
+    why = reason(exc)
     if not (isinstance(path, (str, bytes, os.PathLike)) and path not in ("", b"")):
-        return Unreadable(f"a file of the set: can't be read or written ({reason}); fix its"
+        return Unreadable(f"a file of the set: can't be read or written ({why}); fix its"
                           " permissions and run `ecf eval build`")  # fmt: skip
     where = _blame(Path(os.fsdecode(cast("str | bytes | os.PathLike[str]", path))))
     look = f"ls -ldO {shlex.quote(str(where.parent))} {shlex.quote(str(where))}"
-    return Unreadable(f"{where}: can't be read or written ({reason}); check the permissions and"
+    return Unreadable(f"{where}: can't be read or written ({why}); check the permissions and"
                       f" any lock flag of it and its folder (`{look}`), then run"
                       " `ecf eval build`")  # fmt: skip
 
@@ -151,7 +153,25 @@ class SetPaths:
 
 
 def _logical(root: Path) -> Path:
-    return Path(os.path.abspath(root))  # no symlink resolution: the path as given
+    """The path as given, made absolute, with no link resolved: a link at the set's location is
+    seen and refused. A `..` is folded only when the name it cancels isn't a link; after a
+    link it would go where the link points, so such a path is refused (review round 28, fourth
+    delta check)."""
+    p = root if root.is_absolute() else Path.cwd() / root
+    if ".." not in p.parts:
+        return Path(os.path.normpath(p))
+    out = Path(p.anchor)
+    for part in p.parts[1:]:
+        if part != "..":
+            out = out / part
+        elif os.path.islink(out):
+            raise InvalidInputError(
+                f"{escaped(str(root))}: a `..` after the symbolic link {escaped(str(out))};"
+                " give the folder without it"
+            )
+        else:
+            out = out.parent
+    return out
 
 
 def _shaped(p: Path, *, fold: bool) -> bool:
@@ -252,7 +272,8 @@ def public_of(root: Path) -> Path:
     """The public path of either half: `<top>/eval/private/<set>` gives `<top>/tests/eval/<set>`;
     a public path is returned as it is."""
     if is_private_root(root):
-        c = canonical(root)
+        _usable(paths(root))  # a link at the private set or above it: refused (round 28)
+        c = canonical(_logical(root))  # the path is_private_root judged (review round 28)
         return c.parents[2] / "tests" / "eval" / c.name
     _usable(paths(root))  # a link where the location is read: refused
     return _logical(root)
@@ -300,7 +321,7 @@ def refresh_after_write(root: Path) -> str | None:
     try:
         refresh_merged(root, wait=CLI_WAIT_S)
     except Exception as exc:  # never masks the writer's own result or error (C89)
-        return f"note: the merged set wasn't refreshed: {exc or type(exc).__name__}"
+        return f"note: the merged set wasn't refreshed: {reason(exc)}"
     return None
 
 
@@ -983,7 +1004,7 @@ def _clear_extras(m: Path) -> None:
         try:
             _remove(p)
         except OSError as exc:
-            why = f"{p}: can't be removed from the merged set ({exc.strerror or exc})"
+            why = f"{p}: can't be removed from the merged set ({reason(exc)})"
             raise InvalidInputError(f"{why}; remove it and run `ecf eval build` again") from exc
 
 
@@ -1003,7 +1024,10 @@ def _remove(p: Path) -> None:
     """Remove a file, link or folder inside the merged view, never following a link: each
     folder is opened without following one and emptied through its handle, so a folder swapped
     for a link part way is refused, never walked (review round 27). Walked with a stack, not
-    recursion, so no depth makes it fail other than with an OSError (round 15)."""
+    recursion, so no depth makes it fail other than with an OSError (round 15). Each folder
+    level open holds a descriptor, so a tree deeper than the open-file limit (256 by default on
+    macOS) fails with "Too many open files", named by `_clear_extras`: a stated limit, as such a
+    tree in the view is planted by hand (review round 28)."""
     if not stat.S_ISDIR(os.lstat(p).st_mode):
         p.unlink()
         return

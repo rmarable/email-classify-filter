@@ -222,7 +222,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import mix as mixmod  # noqa: PLC0415
         from ecf.eval import providers  # noqa: PLC0415
-        from ecf.eval.setio import writable_root  # noqa: PLC0415
+        from ecf.eval.setio import writable_set  # noqa: PLC0415
 
         if write_mix is not None:
             mixmod.write_default(write_mix)
@@ -231,7 +231,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
         root = root.expanduser().resolve()  # a CLI tool's answer file is named from it
-        writable_root(root)  # before the canary or any call is bought (review round 27)
+        writable_set(root)  # before the canary or any call is bought (review round 27)
         mode = "dev" if dev else "prod"
         if show_findings:
             _may_show(dev)
@@ -297,9 +297,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import grade as grading  # noqa: PLC0415
         from ecf.eval import mistral_api, models, providers  # noqa: PLC0415
-        from ecf.eval.setio import writable_root  # noqa: PLC0415
+        from ecf.eval.setio import writable_set  # noqa: PLC0415
 
-        writable_root(root)  # before the estimate, the canary or any call (review round 27)
+        writable_set(root)  # before the estimate, the canary or any call (review round 27)
         doc = gen.read_manifest(root)
         mode = str(doc.get("mode"))
         adapter = providers.resolve(grader, "grader", mode, paths())
@@ -567,10 +567,12 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         """The blind rating page's data (no ids, no key); its token map stays with ecf."""
         import json  # noqa: PLC0415
 
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+        out = writable_root(export.expanduser())  # before the service records a page (round 28)
         with LocalClient(paths()) as c:
             r = c.request("POST", f"/v1/eval/drafts/{run}/rating-page",
                           {} if part is None else {"part": part})  # fmt: skip
-        out = export.expanduser()
         name = "draft-rating-page.json" if part is None else f"draft-rating-page-{part}.json"
         _write_private(out / name, json.dumps(r))
         typer.echo(f"wrote {out / name} ({len(r['items'])} drafts), page"
@@ -643,12 +645,15 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         each run's record with its scores."""
         import json  # noqa: PLC0415
 
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+        # before the service is asked, which records a page (review round 28)
+        out = None if export is None else writable_root(export.expanduser())
         with LocalClient(paths()) as c:
-            if export is not None:
+            if out is not None:
                 if not runs:
                     raise InvalidInputError("name the judged runs to settle")
                 r = c.request("POST", "/v1/eval/drafts/settle-page", {"runs": runs})
-                out = export.expanduser()
                 _write_private(out / "draft-settle-page.json", json.dumps(r))
                 typer.echo(f"{len(r['items'])} drafts to settle: wrote"
                            f" {out / 'draft-settle-page.json'}, page {r['page']}")  # fmt: skip

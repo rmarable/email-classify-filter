@@ -24,7 +24,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval import review
-from ecf.eval.setio import atomic_write, writable_root
+from ecf.eval.setio import atomic_write, writable_set
 from ecf.schema import FIXED_ITEMS
 
 FILE = "fixed_labels.jsonl"
@@ -48,7 +48,7 @@ def write(root: Path, rows: list[dict[str, Any]]) -> None:
     """Replace the file atomically (a temporary file, then `os.replace`): a crash leaves the
     old file or the new one, never half of it."""
     atomic_write(
-        writable_root(root) / FILE,
+        writable_set(root) / FILE,
         "".join(json.dumps(r, sort_keys=True) + "\n" for r in sorted(rows, key=lambda r: r["id"])),
     )
 

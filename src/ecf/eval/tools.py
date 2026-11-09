@@ -31,7 +31,7 @@ from typing import Any, Literal, Protocol, cast
 
 from ecf.claude_wrapper import ENV_ALLOW
 from ecf.errors import InvalidInputError
-from ecf.eval.setio import writable_root
+from ecf.eval.setio import atomic_write, writable_root
 
 Status = Literal["ok", "refused", "failed", "limit"]
 # Set in the environment, these would send a run to another account or endpoint (P4)
@@ -289,7 +289,7 @@ class CliAdapter:
         workdir.mkdir(parents=True, exist_ok=True)
         schema_path, out_path = workdir / "schema.json", workdir / "out.json"
         out_path.unlink(missing_ok=True)
-        schema_path.write_text(json.dumps(schema), encoding="utf-8")
+        atomic_write(schema_path, json.dumps(schema))  # never through a link there (round 28)
         argv = [self._exe(), *self.tool.argv(self.model, schema_path, out_path)]
         try:
             ran = run_cli(argv, prompt, self.env(), workdir, timeout=self.timeout_s)

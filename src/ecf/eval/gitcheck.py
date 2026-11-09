@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ecf.eval.setio import canonical
+from ecf.eval.setio import canonical, reason
 
 GIT = "/usr/bin/git"
 TIMEOUT_S = 5.0  # for the whole check: every git call in one pass shares it
@@ -75,7 +75,7 @@ def _git(top: Path, *args: str, timeout: float = TIMEOUT_S) -> subprocess.Comple
     except subprocess.TimeoutExpired as exc:
         raise GitFailed(f"git timed out after {timeout:g} s", timed_out=True) from exc
     except OSError as exc:
-        raise GitFailed(f"git couldn't run ({exc.strerror or type(exc).__name__})") from exc
+        raise GitFailed(f"git couldn't run ({reason(exc)})") from exc
 
 
 def _ok(top: Path, *args: str) -> str:
@@ -273,9 +273,7 @@ def clean_and_pushed(top: Path, set_name: str, *, fresh: bool = False) -> Clean:
                 _backoff_until = _now() + BACKOFF_S
         return Clean(False, f"git: {exc}", error=True)
     except OSError as exc:  # a folder or file of either repository that can't be read: not
-        return Clean(
-            False, f"{exc.filename or top}: can't be read ({exc.strerror or exc})"
-        )  # clean
+        return Clean(False, f"{exc.filename or top}: can't be read ({reason(exc)})")  # clean
     finally:
         _deadline.reset(token)
 

@@ -958,3 +958,15 @@ def test_an_undecided_case_never_counts_as_unsafe_but_keeps_its_label_figures() 
     only = ResultFile(run_id="a" * 32, pair="p", set_version="v", created_at="t", cases=[u])
     assert "category" in {f.field for f in compare_fields(only, only)}  # the undecided case alone
     assert field_metrics(only)  # its labels count there too
+
+
+def test_a_copy_into_a_merged_view_is_refused_and_loses_nothing(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
+) -> None:
+    """A `--copy-to` in a merged view is refused by the result writer like any failed copy: the
+    run still finishes and its row is kept (review round 28, delta check)."""
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "evals"
+    _start(db_path, clock, root, copy_to=view)
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 1
+    assert not view.exists()

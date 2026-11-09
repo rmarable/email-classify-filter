@@ -130,6 +130,7 @@ ALLOWED = {
     ("eval/setio.py", "atomic_write"),
     ("eval/setio.py", "replace_file"),  # the one way a set file is written (round 23)
     ("eval/setio.py", "write_new"),
+    ("eval/setio.py", "append_text"),  # appends without following a link (round 28)
     ("eval/setio.py", "copy_new"),
     ("eval/setio.py", "_drop"),  # removes only this write's own temporary file
     ("eval/setio.py", "sweep_old_temps"),  # crashed writes' temporary files (round 24)
@@ -150,6 +151,7 @@ ALLOWED = {
     ("eval/merged.py", "_readable_view"),  # the view's own folders given 0755 (round 27)
     ("eval/merged.py", "refresh_merged"),  # the lock's folder in .merged/ (round 27)
 }
+GUARDS = {"writable_root", "writable_set"}  # a set's own folder or any path (round 28)
 _PATH_WRITES = {
     "write_text",
     "write_bytes",
@@ -168,6 +170,7 @@ _PATH_WRITES = {
     "replace_file",
     "write_new",
     "copy_new",
+    "append_text",
     "rmdir",
     "chmod",
     "lchmod",
@@ -263,11 +266,16 @@ def _is_write(
         return not _read_only(flags, mods)
     if name in {"open", "fdopen", "ZipFile"}:
         given = [*call.args[1:2], *(k.value for k in call.keywords if k.arg == "mode")]
-        receiver = getattr(f.value, "id", "") if isinstance(f, ast.Attribute) else ""
-        if not given and name == "open" and receiver and receiver not in modules:
-            # Path.open(mode): a mode in a variable counts (round 27); a module's open(name)
-            # (io, gzip, tarfile...) reads by default
-            given = call.args[:1]
+        # open(name, mode) and a module's open (io, gzip, tarfile...: reads by default) take the
+        # mode second; any other receiver's open is Path.open(mode), whatever the receiver is
+        # (a name, `(a / b)`, a call's or an attribute's result: review round 28)
+        module = isinstance(f, ast.Name) or (
+            isinstance(f, ast.Attribute)
+            and isinstance(f.value, ast.Name)
+            and f.value.id in modules | mods
+        )
+        if not given and name == "open" and not module:
+            given = call.args[:1]  # a mode in a variable counts (round 27)
         # a mode that isn't written out counts as a write, as os.open's flags do (round 27)
         return any(not (isinstance(m, ast.Constant) and isinstance(m.value, str))
                    or any(c in m.value for c in "wax+") for m in given)  # fmt: skip
@@ -293,7 +301,7 @@ def _writes(path: Path) -> list[tuple[str, int, bool]]:
             n = todo.pop()
             if isinstance(n, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
                 continue  # a nested def's or lambda's guard runs only if it is called
-            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "writable_root":
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") in GUARDS:
                 out.append(n)
             todo.extend(ast.iter_child_nodes(n))
         return out
@@ -586,7 +594,8 @@ def _old_temp(folder: Path, name: str = ".t-1.md.0123456789ab.tmp") -> Path:
 @pytest.mark.parametrize("linked", ["cases", "eml", ".build", "the set folder"])
 def test_the_sweep_never_follows_a_linked_folder(tmp_path: Path, linked: str) -> None:
     """A linked `cases/`, `eml/`, `.build/` or set folder is skipped: an old temporary file in
-    its target is left (review round 25, S1)."""
+    its target is left (review round 25, S1). A set holding a linked folder isn't swept at all,
+    with one line naming the link, as every writer refuses it (review round 28)."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     theirs = _old_temp(elsewhere)
@@ -601,7 +610,9 @@ def test_the_sweep_never_follows_a_linked_folder(tmp_path: Path, linked: str) ->
         (root / linked).symlink_to(elsewhere, target_is_directory=True)
         if linked != "cases":
             (root / "cases").symlink_to(real / "cases", target_is_directory=True)
-        assert sweep_old_temps(root) == ([], [])
+        gone, [line] = sweep_old_temps(root)
+        assert gone == [] and line.startswith(f"{root}: old temporary files not checked")
+        assert "a symbolic link;" in line
     assert theirs.exists()
 
 
@@ -657,10 +668,10 @@ def test_the_sweep_never_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert line.startswith(f"{root}: old temporary files not checked")
     (root / "merge.json").unlink()
 
-    def denied(_root: Path) -> bool:
+    def denied(_root: Path) -> str | None:
         raise PermissionError(errno.EACCES, "denied", str(root))
 
-    monkeypatch.setattr(setio, "is_merged", denied)
+    monkeypatch.setattr(setio, "merged_by", denied)
     gone, [line] = sweep_old_temps(root)
     assert gone == [] and "denied" in line and old.exists()
 
@@ -878,3 +889,522 @@ def test_a_path_inside_the_view_never_reads_its_records(
 
     monkeypatch.setattr(setio, "_view_record", no_read)
     assert is_merged(tmp_path / "eval" / "private" / ".merged" / "synthetic" / "cases" / "x.md")
+
+
+def test_a_view_folder_in_any_case_is_refused_and_named(tmp_path: Path) -> None:
+    """APFS ignores case, so `.Merged` is the view folder: refused before it exists and after,
+    and the refusal names what made the path a view (review round 28)."""
+    priv = tmp_path / "eval" / "private"
+    for typed in (".Merged", ".MERGED"):
+        named = r"merged eval set \(the folder .*/\.(Merged|MERGED)\)"
+        with pytest.raises(InvalidInputError, match=named):
+            writable_root(priv / typed / "synthetic" / "new")
+    (priv / ".Merged").mkdir(parents=True)
+    for typed in (".merged", ".Merged"):
+        assert is_merged(priv / typed / "synthetic" / "new")
+    held = tmp_path / "copy"
+    held.mkdir()
+    (held / "merge.json").write_text("")  # not JSON: counts, and is named
+    with pytest.raises(InvalidInputError, match=r"copy/merge\.json, a merged view's record"):
+        writable_root(held / "s")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cases",
+        "eml",
+        ".build",
+        "work",
+        "grades",
+        "labels.jsonl",
+        "reviews.jsonl",
+        "checks.yaml",
+        "fixed_labels.jsonl",
+        "manifest.json",
+    ],
+)
+def test_a_set_writer_never_writes_through_a_link(tmp_path: Path, name: str) -> None:
+    """A set whose folder or set file is a symbolic link is refused by every writer before it
+    writes, naming the link, so nothing lands where it points (OD-705, review round 28)."""
+    root = _set(tmp_path / "tests" / "eval" / "synthetic", "t-1")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    if name == "cases":
+        (root / "cases").rename(elsewhere / "cases")
+        (root / "cases").symlink_to(elsewhere / "cases", target_is_directory=True)
+    elif "." in name and name != ".build":
+        (elsewhere / name).write_text("")
+        (root / name).symlink_to(elsewhere / name)
+    else:
+        (root / name).symlink_to(elsewhere, target_is_directory=True)
+    before = sorted(p.name for p in elsewhere.rglob("*"))
+    for write in (
+        lambda: build_all(root),
+        lambda: label_file.write(root, []),
+        lambda: review.append_log(root, [{"id": "t-1"}]),
+    ):
+        with pytest.raises(InvalidInputError, match=f"{name}: a symbolic link;"):
+            write()
+    assert sorted(p.name for p in elsewhere.rglob("*")) == before
+    if "." in name and name != ".build":
+        assert (elsewhere / name).read_text() == ""  # nothing written or appended through it
+
+
+def test_a_special_file_where_a_set_folder_goes_is_refused(tmp_path: Path) -> None:
+    root = _set(tmp_path / "s", "t-1")
+    os.mkfifo(root / "eml")
+    with pytest.raises(InvalidInputError, match="eml: not the folder a set holds by this name"):
+        build_all(root)
+
+
+def test_an_append_never_follows_a_link(tmp_path: Path) -> None:
+    """The review log and a generated set's work files are appended without following a link,
+    even one put there after the set was checked (review round 28)."""
+    from ecf.eval import generate  # noqa: PLC0415
+
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("")
+    link = tmp_path / "x.jsonl"
+    link.symlink_to(outside)
+    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+        setio.append_text(link, "row\\n")
+    root = tmp_path / "gen"
+    work = generate.Work(root)
+    work.append("batches", [{"n": 1}])
+    (root / "work" / "batches.jsonl").unlink()
+    (root / "work" / "batches.jsonl").symlink_to(outside)
+    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+        work.append("batches", [{"n": 2}])
+    assert outside.read_text() == ""
+
+
+def test_a_new_card_is_never_written_through_a_linked_cases_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from ecf.cli import app  # noqa: PLC0415
+
+    monkeypatch.setenv("ECF_HOME", str(tmp_path / "home"))
+    root = tmp_path / "set"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "cases").symlink_to(elsewhere, target_is_directory=True)
+    r = CliRunner().invoke(
+        app, ["eval", "new-case", "t-9", "--template", "bec", "--root", str(root)]
+    )
+    assert r.exit_code != 0
+    assert "cases: a symbolic link;" in r.output + str(r.exception), r.output
+    assert not list(elsewhere.iterdir())
+
+
+def test_the_writer_check_sees_an_open_on_any_receiver(tmp_path: Path) -> None:
+    """`Path.open` with a write mode counts whatever its receiver is: `(a / b)`, a call's result,
+    an attribute or `Path(r)` (review round 28: only a bare name was seen)."""
+    mod = tmp_path / "w.py"
+    mod.write_text(
+        "import io\nfrom pathlib import Path\n"
+        "def a(r):\n    (r / 'log').open('a')\n"
+        "def b(self):\n    self._path('x').open('a')\n"
+        "def c(self):\n    self.p.open('w')\n"
+        "def d(r):\n    Path(r).open('w')\n"
+        "def ok1(r):\n    (r / 'log').open()\n    io.open(r)\n    open(r)\n"
+        "def ok2(r):\n    (writable_root(r) / 'log').open('a')\n"
+    )
+    assert sorted({w[0] for w in _writes(mod) if not w[2]}) == ["a", "b", "c", "d"]
+
+
+def test_an_eval_result_copy_never_goes_into_a_view(tmp_path: Path) -> None:
+    """`ecf eval run --copy-to` and the service's result writer refuse a merged view (review
+    round 28)."""
+    from ecf.cli import _copy_folder  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+    from ecf_server.evalrun import write_result  # noqa: PLC0415
+
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "results"
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        _copy_folder(view)
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        write_result(view, None, "x.json")  # type: ignore[arg-type]
+    assert not view.exists()
+
+
+@pytest.mark.parametrize("command", ["calibration-export", "settle-drafts"])
+def test_an_export_into_a_view_is_refused_before_the_service_is_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from ecf import cli_evalgen  # noqa: PLC0415
+    from ecf.cli import app  # noqa: PLC0415
+
+    class NoService:
+        def __init__(self, *_a: object) -> None:
+            raise AssertionError("the service was asked")
+
+    monkeypatch.setattr(cli_evalgen, "LocalClient", NoService)
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "page"
+    r = CliRunner().invoke(app, ["eval", command, "r1", "--export", str(view)])
+    assert r.exit_code != 0
+    assert "merged eval set" in r.output + str(r.exception), r.output
+
+
+def test_a_message_never_reads_none(tmp_path: Path) -> None:
+    """An OSError with no message is named by its type wherever an eval message gives a reason
+    (review round 28: the sweep's notes were fixed alone in round 27)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    assert "(OSError)" in str(merged.unreadable(tmp_path / "x", OSError()))
+    assert "(OSError)" in str(merged.unreadable(None, OSError()))
+    assert setio.reason(OSError(errno.EACCES, None)) == os.strerror(errno.EACCES)
+
+
+def test_the_set_names_match_the_merged_layout() -> None:
+    from ecf.eval import merged  # noqa: PLC0415
+
+    assert {*merged.COPIED, merged.LINKED} <= set(setio.SET_FOLDERS)
+    assert set(merged.FILES) == set(setio.SET_FILES)
+
+
+def test_a_card_writer_never_writes_through_a_linked_cases_folder(tmp_path: Path) -> None:
+    """A card's labels or expectations, written by its own path, are refused when the set's
+    `cases/` is a link: the guard finds the card's set and checks it (review round 28, delta
+    check)."""
+    from ecf.eval.cards import parse_card  # noqa: PLC0415
+
+    src = SRC.parents[1] / "tests" / "eval" / "synthetic" / "cases" / "bank-change-reply-to.md"
+    other = tmp_path / "other"
+    (other / "cases").mkdir(parents=True)
+    before = src.read_text(encoding="utf-8")
+    (other / "cases" / "t-1.md").write_text(before, encoding="utf-8")
+    labels = parse_card(before, source="t-1.md").expected.labels
+    root = tmp_path / "tests" / "eval" / "synthetic"
+    root.mkdir(parents=True)
+    (root / "cases").symlink_to(other / "cases", target_is_directory=True)
+    card = root / "cases" / "t-1.md"
+    for write in (
+        lambda: review.set_labels(card, labels),
+        lambda: review.write_expected(card, "x", {}),
+    ):
+        with pytest.raises(InvalidInputError, match="cases: a symbolic link;"):
+            write()
+    assert (other / "cases" / "t-1.md").read_text() == before
+
+
+def test_a_set_reached_through_a_link_is_still_checked(tmp_path: Path) -> None:
+    """Only a set's own folder may be a link (an alias of the whole set): what is inside it is
+    checked as for the set itself, and so is a link further down a helper's path, such as a
+    call folder (review round 28, delta check)."""
+    real = _set(tmp_path / "real", "t-1")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (real / "eml").symlink_to(elsewhere, target_is_directory=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    for write in (lambda: build_all(alias), lambda: review.append_log(alias, [{"id": "t-1"}])):
+        with pytest.raises(InvalidInputError, match="eml: a symbolic link;"):
+            write()
+    assert not list(elsewhere.iterdir())
+    (real / "eml").unlink()
+    (real / "work").mkdir()
+    (real / "work" / "call").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(InvalidInputError, match="call: a symbolic link;"):
+        setio.writable_set(alias, alias / "work" / "call")
+    card = alias / "cases" / "t-1.md"
+    assert setio.writable_set(alias, card) == card
+
+
+def test_a_folder_outside_any_set_is_checked_for_the_view_alone(tmp_path: Path) -> None:
+    """A page or result folder holding a plain file or a link named like a set's folder is no
+    set, and isn't refused for it (review round 28, delta check)."""
+    from ecf.cli import _copy_folder  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    out = tmp_path / "Desktop"
+    out.mkdir()
+    (out / "grades").write_text("my notes")
+    (out / "work").symlink_to(tmp_path, target_is_directory=True)
+    assert writable_root(out) == out
+    assert writable_root(out / "page.json") == out / "page.json"
+    assert _copy_folder(out) == out.resolve()
+
+
+def test_a_new_set_is_checked_as_a_set_before_it_holds_anything(tmp_path: Path) -> None:
+    """`writable_set` checks a set's own folder whatever it holds yet: a generated set's work
+    folder planted as a link is refused before the first card exists (review round 28)."""
+    root = tmp_path / "gen"
+    root.mkdir()
+    (root / "work").symlink_to(tmp_path, target_is_directory=True)
+    assert writable_root(root) == root  # holds nothing that makes it a set
+    with pytest.raises(InvalidInputError, match="work: a symbolic link;"):
+        setio.writable_set(root)
+
+
+def test_an_append_to_a_pipe_is_refused_by_name(tmp_path: Path) -> None:
+    fifo = tmp_path / "reviews.jsonl"
+    os.mkfifo(fifo)
+    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+        setio.append_text(fifo, "row\n")
+
+
+def test_a_refusal_shows_a_name_escaped(tmp_path: Path) -> None:
+    """A path with a line break or a terminal control in its name is shown escaped (review
+    round 28, delta check)."""
+    for root in (tmp_path / ".merged" / "a\nb", tmp_path / "s" / "x\x1b[31m"):
+        if ".merged" not in str(root):
+            _set(root.parent, "t-1")
+            root.symlink_to(tmp_path, target_is_directory=True)
+        with pytest.raises(InvalidInputError) as got:
+            setio.writable_set(root.parent, root)
+        assert "\n" not in str(got.value) and "\x1b" not in str(got.value)
+
+
+def test_a_page_or_refresh_error_never_reads_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settle page's read error and a writer's refresh note name an OSError with no message
+    by its type (review round 28, delta check)."""
+    from datetime import date  # noqa: PLC0415
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from ecf.eval import merged  # noqa: PLC0415
+    from ecf.eval import settle as st  # noqa: PLC0415
+
+    def bare(*_a: object, **_k: object) -> str:
+        raise OSError
+
+    monkeypatch.setattr(Path, "read_text", bare)
+    with pytest.raises(InvalidInputError, match=r"answers \(OSError\)"):
+        st.apply_page(tmp_path, tmp_path / "a.json", tmp_path / "t.json", date(2026, 11, 8))
+
+    def with_private(_root: Path) -> SimpleNamespace:
+        return SimpleNamespace(private=tmp_path)
+
+    monkeypatch.setattr(merged, "paths", with_private)
+    monkeypatch.setattr(merged, "refresh_merged", bare)
+    assert merged.refresh_after_write(tmp_path) == (
+        "note: the merged set wasn't refreshed: OSError"
+    )
+
+
+def test_a_link_inside_a_set_to_another_set_is_refused(tmp_path: Path) -> None:
+    """A set is named by its writer, never guessed from what a folder holds: a call folder
+    linked to another set is a link inside this one, refused (review round 28, second delta
+    check)."""
+    s_root, other = _set(tmp_path / "S", "t-1"), _set(tmp_path / "T", "t-2")
+    (s_root / "work").mkdir()
+    (s_root / "work" / "call").symlink_to(other, target_is_directory=True)
+    with pytest.raises(InvalidInputError, match="call: a symbolic link;"):
+        setio.writable_set(s_root, s_root / "work" / "call")
+    (other / "cases" / "checks.yaml").write_text("")  # a stray set-file name moves nothing
+    assert setio.writable_set(other, other / "cases" / "t-2.md") == other / "cases" / "t-2.md"
+
+
+def test_a_path_must_lie_inside_its_set(tmp_path: Path) -> None:
+    """`..` below a set, which the system resolves after following any link, and a path outside
+    the set are refused (review round 28, second delta check)."""
+    root = _set(tmp_path / "S", "t-1")
+    (tmp_path / "other" / "sub").mkdir(parents=True)
+    (root / "foo").symlink_to(tmp_path / "other" / "sub", target_is_directory=True)
+    for path in (root / "foo" / ".." / "labels.jsonl", root / "cases" / ".." / "x",
+                 tmp_path / "elsewhere"):  # fmt: skip
+        with pytest.raises(InvalidInputError, match="not a path inside its set"):
+            setio.writable_set(root, path)
+    assert not (tmp_path / "other" / "labels.jsonl").exists()
+
+
+# The writers into a set, each naming its set with `writable_set` (review round 28): a writer
+# moved back to the view-only `writable_root` would no longer check the set for links
+SET_WRITERS = {
+    ("eval/builder.py", "build_all"),
+    ("eval/labels.py", "write"),
+    ("eval/fixed_labels.py", "write"),
+    ("eval/review.py", "append_log"),
+    ("eval/review.py", "set_labels"),
+    ("eval/review.py", "write_expected"),
+    ("eval/generate.py", "Work.append"),
+    ("eval/generate.py", "Run._ask"),
+    ("eval/generate.py", "Run._accept"),
+    ("eval/generate.py", "write_manifest"),
+    ("eval/generate.py", "start"),
+    ("eval/grade.py", "Grading.run"),
+    ("eval/grade.py", "Grading._write"),
+    ("eval/setio.py", "sweep_old_temps"),
+    ("cli.py", "eval_new_case"),
+}
+
+
+def _callers(path: Path, name: str) -> set[str]:
+    """The qualified names of the functions in `path` that call `name`."""
+    found: set[str] = set()
+
+    def visit(node: ast.AST, scope: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            s = scope
+            if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                s = [*scope, child.name]
+            if isinstance(child, ast.Call) and getattr(child.func, "id", "") == name and scope:
+                found.add(".".join(scope))
+            visit(child, s)
+
+    visit(ast.parse(path.read_text(encoding="utf-8")), [])
+    return found
+
+
+def test_every_set_writer_names_its_set() -> None:
+    missing = [f"{rel}:{fn}" for rel, fn in sorted(SET_WRITERS)
+               if fn not in _callers(SRC / rel, "writable_set")]  # fmt: skip
+    assert not missing, "set writer without writable_set: " + ", ".join(missing)
+
+
+def test_a_model_call_folder_in_a_set_is_checked_as_part_of_it() -> None:
+    """Generate and grade run each model call in the set's `work/call`, so the folder they pass
+    is a `writable_set` result: a link there out of the set is refused before the call (review
+    round 28, second delta check). A temporary folder (judge-drafts, the canary) is no set."""
+    bad: list[str] = []
+    for rel in ("eval/generate.py", "eval/grade.py"):
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            checked = {
+                t.id
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Assign)
+                and isinstance(n.value, ast.Call)
+                and getattr(n.value.func, "id", "") == "writable_set"
+                for t in n.targets
+                if isinstance(t, ast.Name)
+            }
+            for n in ast.walk(fn):
+                if not (isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "ask"):
+                    continue
+                arg = n.args[2] if len(n.args) > 2 else None
+                ok = (isinstance(arg, ast.Name) and arg.id in checked) or (
+                    isinstance(arg, ast.Call) and getattr(arg.func, "id", "") == "writable_set"
+                )
+                if not ok:
+                    bad.append(f"{rel}:{n.lineno}")
+    assert not bad, "a model call folder not checked as part of its set: " + ", ".join(bad)
+
+
+def test_a_link_then_dot_dot_into_the_view_is_refused(tmp_path: Path) -> None:
+    """`X/link/..` is the link's target's parent, as the system goes there, not `X`: a path
+    through a link into the view and back up is refused (review round 28, third delta check).
+    A `..` in the part that doesn't exist yet leads on through a link after it too."""
+    from ecf.eval.setio import canonical  # noqa: PLC0415
+
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic"
+    (view / "cases").mkdir(parents=True)
+    x = tmp_path / "X"
+    x.mkdir()
+    (x / "link").symlink_to(view / "cases", target_is_directory=True)
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        writable_root(x / "link" / ".." / "out.json")
+    assert canonical(x / "link" / "..") == canonical(view)
+    (x / "into").symlink_to(view, target_is_directory=True)
+    assert canonical(x / "new" / ".." / "into" / "y") == canonical(view) / "y"
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        writable_root(x / "new" / ".." / "into" / "y")
+    assert writable_root(x / "new" / ".." / "page.json") == x / "new" / ".." / "page.json"
+
+
+def test_a_model_call_never_writes_its_schema_through_a_link(tmp_path: Path) -> None:
+    """The call folder's `schema.json` is replaced, never written through a link put there
+    (review round 28, third delta check)."""
+    from ecf.eval import tools  # noqa: PLC0415
+    from tests.test_eval_generate import fake_tool  # noqa: PLC0415
+
+    tool, environ = fake_tool(tmp_path, {})
+    adapter = tools.CliAdapter(tool, "fake-model-1", environ)
+    call = tmp_path / "set" / "work" / "call"
+    call.mkdir(parents=True)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("mine")
+    (call / "schema.json").symlink_to(victim)
+    adapter.ask("p", {"type": "object"}, call)
+    assert victim.read_text() == "mine"
+    assert not (call / "schema.json").is_symlink()
+
+
+def test_the_sweep_removes_a_model_calls_old_temps(tmp_path: Path) -> None:
+    """A model call's schema file is written in `work/call`, so a crashed one's temporary file
+    there is swept too (review round 28, fourth delta check)."""
+    root = _set(tmp_path / "s", "t-1")
+    (root / "work" / "call").mkdir(parents=True)
+    t = _old_temp(root / "work" / "call", ".schema.json.0123456789ab.tmp")
+    w = _old_temp(root / "work", ".seeds.jsonl.0123456789ab.tmp")
+    gone, left = sweep_old_temps(root)
+    assert sorted(gone) == sorted([t, w]) and not left
+    # a linked work folder is never walked, even by the listing (one name opened at a time)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "call").mkdir(parents=True)
+    _old_temp(elsewhere / "call", ".schema.json.0123456789ab.tmp")
+    (root / "work" / "call").rmdir()
+    (root / "work").rmdir()
+    (root / "work").symlink_to(elsewhere, target_is_directory=True)
+    assert old_temps_left(root) == []
+
+
+def test_a_set_path_with_dot_dot_after_a_link_is_refused(tmp_path: Path) -> None:
+    """A set's location is read as given, so a `..` after a link, which the system resolves
+    where the link points, is refused; after a plain folder it is folded (review round 28,
+    fourth delta check)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    top = tmp_path / "top"
+    (top / "eval" / "private" / "synthetic").mkdir(parents=True)
+    (top / "tests" / "eval" / "synthetic").mkdir(parents=True)
+    (tmp_path / "elsewhere" / "a" / "b").mkdir(parents=True)
+    (top / "eval" / "private" / "L").symlink_to(tmp_path / "elsewhere" / "a" / "b")
+    via_link = top / "eval" / "private" / "L" / ".." / "synthetic"
+    for ask in (merged.is_private_root, merged.public_of):
+        with pytest.raises(InvalidInputError, match=r"a `\.\.` after the symbolic link"):
+            ask(via_link)
+    plain = top / "eval" / "private" / "synthetic" / ".." / "synthetic"
+    assert merged.is_private_root(plain)
+    assert merged.public_of(plain) == merged.public_of(top / "eval" / "private" / "synthetic")
+
+
+def test_the_public_half_of_a_linked_private_set_is_refused(tmp_path: Path) -> None:
+    """A private set folder that is a link is no checkout set, for `public_of` as for every
+    other entry point (review round 28, fifth delta check)."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    top = tmp_path / "top"
+    (top / "tests" / "eval" / "synthetic").mkdir(parents=True)
+    (top / "eval" / "private").mkdir(parents=True)
+    (tmp_path / "x" / "a" / "b").mkdir(parents=True)
+    (top / "eval" / "private" / "synthetic").symlink_to(tmp_path / "x" / "a" / "b")
+    with pytest.raises(InvalidInputError):
+        merged.public_of(top / "eval" / "private" / "synthetic")
+
+
+def test_a_grades_file_is_never_written_through_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run's grades file is written by `atomic_write`, so a link at its name is replaced, never
+    followed (review round 28, fifth delta check)."""
+    from collections import Counter  # noqa: PLC0415
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from ecf.eval import grade as grading  # noqa: PLC0415
+
+    class Fake:
+        provider, model = "fake", "fake-model-1"
+
+        def describe(self) -> dict[str, str]:
+            return {"model": self.model}
+
+    monkeypatch.setattr(grading.secrets, "token_hex", lambda _n=8: "abcd1234abcd1234")
+    root = _set(tmp_path / "s", "t-1")
+    assert not build_all(root).findings  # labels.jsonl, which the set's version reads
+    (root / "grades").mkdir()
+    victim = tmp_path / "victim.json"
+    victim.write_text("mine")
+    name = f"{grading._slug('fake-model-1')}-abcd1234abcd1234.json"  # pyright: ignore[reportPrivateUsage]
+    (root / "grades" / name).symlink_to(victim)
+    g = grading.Grading(root, Fake(), now=lambda: datetime(2026, 11, 8, tzinfo=UTC))  # type: ignore[arg-type]
+    g._write({"cases": {}}, [], {}, Counter())  # pyright: ignore[reportPrivateUsage]
+    assert victim.read_text() == "mine"
+    assert not (root / "grades" / name).is_symlink()

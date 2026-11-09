@@ -31,7 +31,7 @@ from ecf.eval import labels as label_file
 from ecf.eval import review
 from ecf.eval.builder import build_all
 from ecf.eval.cards import parse_card
-from ecf.eval.setio import writable_root
+from ecf.eval.setio import reason, writable_root
 from ecf.schema import FieldKind, load_schema
 
 SETTLED = "settled"
@@ -159,7 +159,7 @@ def apply_page(root: Path, answers_file: Path, tokens_file: Path,
         given: Any = json.loads(answers_file.read_text(encoding="utf-8"))
         tokens: Any = json.loads(tokens_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise InvalidInputError(f"can't read the page's answers ({exc})") from None
+        raise InvalidInputError(f"can't read the page's answers ({reason(exc)})") from None
     if not isinstance(given, dict) or not isinstance(tokens, dict):
         raise InvalidInputError("answers and tokens must be JSON objects")
     need = {d["id"]: set(d["fields"]) for d in ag.open_disputes(root)}

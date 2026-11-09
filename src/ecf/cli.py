@@ -920,7 +920,7 @@ def eval_new_case(
 ) -> None:
     """Write a new case card from a template (edit it, then `ecf eval build`)."""
     from ecf.eval.case_templates import TEMPLATES  # noqa: PLC0415
-    from ecf.eval.setio import atomic_write, writable_root  # noqa: PLC0415
+    from ecf.eval.setio import atomic_write, writable_set  # noqa: PLC0415
 
     if template not in TEMPLATES:
         raise typer.BadParameter(f"one of {', '.join(TEMPLATES)}", param_hint="--template")
@@ -938,7 +938,8 @@ def eval_new_case(
         home = priv
     if any((h / "cases" / f"{case_id}.md").exists() for h in merged.halves(root)):
         raise typer.BadParameter(f"{case_id} already exists", param_hint="CASE_ID")
-    target = writable_root(home / "cases" / f"{case_id}.md")  # before its folder is made
+    # the set itself, so a linked cases/ is refused too, before its folder is made (round 28)
+    target = writable_set(home) / "cases" / f"{case_id}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(target, TEMPLATES[template].format(id=case_id))
     typer.echo(f"wrote {target}")
@@ -1567,7 +1568,9 @@ def _copy_folder(copy_to: Path | None, cwd: Path | None = None) -> Path | None:
     """Where `ecf eval run` also writes its result (plan 0.3): `--copy-to`, else
     `state-archive/evals/` (gitignored) when run from inside an ecf checkout, else nowhere."""
     if copy_to is not None:
-        return copy_to.expanduser().resolve()
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+        return writable_root(copy_to.expanduser().resolve())  # never a view (review round 28)
     here = (cwd or Path.cwd()).resolve()
     for folder in (here, *here.parents):
         if (folder / ".git").exists() and (folder / "src" / "ecf_server").is_dir():
@@ -2308,7 +2311,9 @@ def _subset_ids(path: Path) -> frozenset[str]:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidInputError(f"{path}: can't read it: {exc.strerror}") from exc
+        from ecf.eval.setio import reason  # noqa: PLC0415
+
+        raise InvalidInputError(f"{path}: can't read it: {reason(exc)}") from exc
     if path.suffix == ".json":
         ids = {c.id for c in load_result(path).cases}
     elif path.suffix == ".jsonl":
