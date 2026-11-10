@@ -26,7 +26,7 @@ its rules bind as if they were here.
 | Before you… | Read |
 |---|---|
 | edit `tests/eval/synthetic/**` or `tests/eval/drafts/**` | `.claude/rules/eval-synthetic.md` |
-| edit `docs/roadmap/**` | `.claude/rules/roadmap.md` |
+| edit `docs/roadmap/**` (incl. a plan checked by models: no rule without a model event and fault; the plan-to-model cross-reference check) | `.claude/rules/roadmap.md` |
 | edit `README.md`, `docs/operator-guide.md`, `docs/admin-guide.md`, `docs/gmail-setup.md`, or write a new user-facing doc | `.claude/rules/user-docs.md` |
 | plan a change to the classifier, rules, policy, facts or eval; run a review; choose or evaluate a model | `docs/agents/reviews-and-evals.md` |
 | ask to commit (which tests to run), or merge to `main` | `docs/agents/testing-and-merge.md` |
@@ -36,7 +36,7 @@ Claude Code loads the three `.claude/rules/` files on its own when it touches th
 
 ## Project
 
-ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 multi-user teams, M3 remote MCP for claude.ai, M10 Microsoft 365 and Copilot (after M3), M11 Microsoft Teams chat (after M1), M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace (parked), M8 model-written drafts, M9 send drafts from Slack. Next: M1, then M11; M6 stays parked (OD-592).
+ecf (email-classify-filter) watches business mailboxes over IMAP, classifies each message, applies deterministic fraud and regulator rules, and asks a person to approve actions in Slack. v1 is single-user local mode on macOS (no AWS); `v1.0.0` is macOS-only, and the Linux code in the repo is unsupported until M5 (ADR 0020). Roadmap: M1 AWS mode, M2 multi-user teams, M3 remote MCP for claude.ai, M10 Microsoft 365 and Copilot (after M3), M11 Microsoft Teams chat (after M1), M4 always-on, M5 Linux, M6 Gmail API, M7 Google Workspace (parked), M8 model-written drafts, M9 send drafts from Slack. Next: M1, then M11; M6 stays parked (OD-592). After M1 and eval/private merge, ecf adopts dev-ai-standards (`planning-docs/DEV-AI-STANDARDS-ADOPTION.md`).
 
 Each deliverable, and each real-service test, starts only when the operator names it.
 
@@ -147,3 +147,12 @@ sessions or subagents of each.
   local working state and off limits. Decisions themselves are in SPEC and `docs/adr/`. Revisit if
   Codex reports it can't reference the archive of stated decisions (`state-archive/`), or if the
   operator changes their mind (OD-532).
+- **Shared machine** (operator decision 2026-11-06, OD-703): sessions and subagents of both kinds
+  run side by side on one computer and share its memory, CPU and disk. Before heavy work (the full
+  suite, a move simulation, model checks that use more than ~1 GB or all cores, evals, builds), tell
+  the other active sessions what will run and roughly what it uses; Codex tells the operator, who
+  passes it on. Priority follows the task: work that blocks a gate, a merge or the operator runs
+  first, and other sessions shrink (fewer workers, one run at a time) or pause when asked. If two
+  tasks conflict and neither clearly ranks higher, ask the operator. Never stop, kill or slow down
+  another session's process yourself; ask that session to do it. Answer a peer's request before
+  starting new work.
