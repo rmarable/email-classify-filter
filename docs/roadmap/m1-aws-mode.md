@@ -1,6 +1,6 @@
 # M1 AWS mode, single user
 
-**Status: draft 27, 2026-11-10. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
+**Status: draft 28, 2026-11-10. Not built.** M1 started 2026-11-04 (OD-592 put it next; OD-593).
 Phase R: round 1 (eight Fable reviewers) on draft 1 (df4d331); rounds 2 and 3 (eight Opus
 reviewers each, delta, OD-577) on drafts 2 (272df2a) and 3 (1c2e2f5). After round 3 kept finding
 holes at the seams drafts 2 and 3 had added, the operator chose to simplify before the next round
@@ -39,7 +39,10 @@ to OD-770 to OD-777 (draft 26 built from a model audit first, removal first: one
 no audit download on abort; `destroy` by the recorded stack ID only; the local hold lifted by a restart);
 round 26 (eight Opus reviewers, draft 26, 6f9521d) to OD-778 and OD-779 (draft 27: the AWS delete its own
 command, `ecf aws destroy`; step 8 in one order; no pause set; an escalation reset only when AWS never
-saw it delivered). Every finding and decision (OD-593 to OD-779) is folded in and listed under "Plan review findings". Code references
+saw it delivered); round 27 (eight Opus reviewers, draft 27, 775b75a) to OD-780 to OD-782 (draft 28:
+the life model rebuilt from an audit of its writes and reads, one lock for step 8, the abort and `ecf aws
+destroy`, the stack ID carried by the `cutover` record and the marker, the key split on the current
+key). Every finding and decision (OD-593 to OD-782) is folded in and listed under "Plan review findings". Code references
 are as of `93e0fea`. Ships as one release at the end (OD-600).
 
 This document replaces, for M1, the design plan's M1 parts
@@ -1338,6 +1341,55 @@ and its mode switch first; the key check at pull time; the `jobkeep/<job>` SHA-2
   link is done. Step 9's card-edit timing is recorded, not a pass line. Models `freeze_model15.py`, `map_model15.py`, `card_model9.py`,
   `delay_model13.py` and `life_model3.py`, run by `run_all14.py`; `check_refs.py` v8.
 
+### After Phase R round 27 (SPEC OD-780 to OD-782, operator 2026-11-10)
+
+Round 27 (8 Opus) found 3 highs, all from draft 27's fixes or removals: an abort after an `ecf aws
+destroy` during cutover had no stack ID to prove the stack gone (the gap was older: life_model3's abort
+finished without reading an ID); draft 27's key split read v1's `Opened.own` the wrong way round, so a
+forgery would get "type the key again" and no Security Notice; and step 8's last write was two writes
+(the `cutover` row in SQLite, the CLI's mode in the AWS config), which life_model3 fused, so decision B
+removed "mode switch first" on a model that couldn't show the order. All three came from model events
+standing for several real writes, or reading values no real read gives. The operator chose to reshape,
+not patch (`state-archive/m1/draft28/decisions.md`): an audit of the life model first
+(`audit-life_model3.md`), a fix list and one Opus review of it (`fix-list.md`, `fix-list-review.md`;
+the review's high, step 9's marker read, is kept), then `life_model4.py` (`area-life.md`), then this
+text. The model runs added two rules (the migrate lock also taken by `ecf aws destroy`; `init` refused
+while a stack ID is recorded) and removed four the fix list had proposed (the ID's compare-and-clear,
+`init`'s refusals during cutover and while a marker exists, an order between the abort's last two
+writes): none is caught without it.
+
+- **OD-780, the Mac's side of a move, reshaped (amends OD-778, OD-779):** one migrate lock, held by
+  cutover step 8 for its whole transition, by `migrate abort` for its gate and step (1), and by `ecf aws
+  destroy`; step 8 is four writes in order: the service's bootout, the plist's delete, the CLI's switch to
+  AWS mode, then the `cutover` record's delete; step 8 reads no marker; step 9 refuses while the abort
+  marker exists. An abort that finds the plist gone names `ecf service install` at its first step. No
+  Slack post marks fraud flagging off or back on (operator decision): the CLI prints it. A move back's
+  restore accepts only a bundle signed by the Mac's current backup key, with that key typed; signed by
+  the current key with another key typed asks again, anything else prints the Security Notice. A new
+  Mac accepts the key the operator types and never prompts with a bundle header's fingerprint; a leaked
+  rotated-out key typed there restores its bundle (stated). A typed stack ID is accepted while AWS still
+  describes it in any status but `DELETE_COMPLETE`, named `<p>-app` in the caller's account; calls use
+  the ID's region. A lift of the AWS hold after the bound Mac is lost, and a replacement checking mail
+  beside a held AWS install, join the stated limits.
+- **OD-781, the stack ID travels with the move (amends OD-771, OD-778):** the `cutover` record and the
+  abort marker carry the recorded stack ID; step 2 refuses while none is recorded, and steps 3 to 8
+  refuse when the config's ID differs from the record's; the abort deletes and proves gone by the
+  marker's ID, and its finish writes the config in local mode with the ID removed and deletes the
+  marker. `ecf aws destroy`'s finish deletes `aws-freeze.json`, then writes the config without the ID.
+  `init --migrating` and `init --mode aws` refuse while a stack ID is recorded. v1's `ecf destroy`
+  refuses only while a stack ID is recorded, in the CLI and in `ecf-server destroy`.
+- **OD-782, checks, cards and infrastructure (amends OD-776, OD-777, OD-779):** the life model's audit
+  and `life_model4.py` (progress read from the stores, one event per write to one store, two stacks, an
+  install begun on another machine; checks that mail checking comes back without v1's destroy and that
+  deleting both installs stays reachable); a move back's commit writes the head reference of a scan run
+  AWS started as its `scan:` row, so v1 edits that head; the escalation reset clears `posted_at` and
+  `thread_key`, and more than 20 undelivered escalations of one address come back as v1's "and N more"
+  burst card (stated). Every `<p>-app` resource has `RemovalPolicy.DESTROY` (CDK's L2 defaults retain
+  tables, the user pool and log groups); the auto-delete helper's `ServiceTimeout` is 900 s; the seed
+  secret is named `ecf/<p>/<install.id>/seed` and granted with an ARN wildcard; runtime roles write no
+  SSM parameter; only `ecf-jobs` writes `jobkeep/`. Models `freeze_model15.py`, `map_model15.py`,
+  `card_model10.py`, `delay_model13.py` and `life_model4.py`, run by `run_all15.py`; `check_refs.py` v9.
+
 ## Design
 
 ### Architecture
@@ -1718,8 +1770,9 @@ which is F10's; edits in `card:<item>`) and
   identity of the active approving person, and consumes nonce and `jti` by conditional put. **Migrate
   purposes (round 6, one table):** `migrate_link` and `migrate_secret`: a `pending` Cognito identity,
   install `migrating` only, nonce bound to the bundle SHA-256 (link) or the phase manifest (secret) and
-  that `sub`; `relink`: an unlinked or pending identity plus a valid relink signature; every other
-  purpose: a confirmed identity of the active approving person. `MFA_SETUP`, `SOFTWARE_TOKEN_SETUP` and
+  that `sub`; `relink`: an unlinked or pending identity plus a valid relink signature; `migrate` (step
+  9's lift): its conditions are owned by "The AWS `migrating` hold" under `ecf migrate` (OD-779); every
+  other purpose: a confirmed identity of the active approving person. `MFA_SETUP`, `SOFTWARE_TOKEN_SETUP` and
   `NEW_PASSWORD_REQUIRED` are refusals. Verify limit via `RATE#`. SPEC §9.6 gains `migrate`,
   `migrate_link`, `migrate_secret`, `relink`.
 - **Attestation and relink signatures (round 6):** versioned domain tags (`ecf/relink/v1`,
@@ -1902,7 +1955,7 @@ restore, an AWS import and `ecf upgrade` (no key rotation in AWS mode, OD-757). 
 `prepare`, `begin`, `abort` and `status` are exempt from the hold; the first chunk cancels an export
 in flight.
 
-**How this section is checked (OD-669, OD-672, OD-680, OD-690, OD-724, OD-731, OD-740, OD-764, OD-769, OD-777, OD-779).** The rules are written from executable models
+**How this section is checked (OD-669, OD-672, OD-680, OD-690, OD-724, OD-731, OD-740, OD-764, OD-769, OD-777, OD-779, OD-782).** The rules are written from executable models
 in `state-archive/m1/model/` (Step 6 moves them into `tests/m1/`), and the table at the end of this
 section maps every rule to the model function or check that encodes it; a rule with no entry there is
 a stated limit or listed under "Not modelled". Since round 19 (OD-731) a new or changed rule enters
@@ -1917,7 +1970,9 @@ action with its write and its reads; draft 24's models read only what a row of
 `state-archive/m1/draft24/ground-truth.md` says a real read returns, OD-764; draft 25's reads audit,
 `state-archive/m1/draft25/reads-*.md`, ties every model event and read to a real one, OD-769; draft 26's
 audit, `state-archive/m1/draft26/audit-*.md`, adds the life model's reads and checks every timing grid
-for the phases and durations it can't generate, OD-777; draft 27's models follow round 26, OD-779).
+for the phases and durations it can't generate, OD-777; draft 27's models follow round 26, OD-779;
+draft 28's audit of the life model, `state-archive/m1/draft28/audit-life_model3.md`, splits every event
+that stood for writes to two stores and removes every read of a value no real read gives, OD-782).
 `freeze_model15.py` explores every interleaving of two
 jobs (the second a one-step job), two machines and a second local process, `aws unfreeze` from any
 machine, a deploy outside any job (`+foreign`), up to two restore requests with the local service at
@@ -1933,15 +1988,20 @@ some named command always reaches a clean end, that each job can reach `done` by
 that each kind's stated-limit count and its two key counts (states after the Mac's key refusal, and
 destroyed states, OD-777) are the ones the runner records (a rise is a strand the text doesn't
 state). `+strict` checks the stricter adoption rule (neither machine adopts another's upgrade, restore
-or probe). `life_model3.py` checks the Mac's side of a move, rebuilt from this text's writes in their
-order (cutover steps 1, 2 and 8, step 8's progress lost at a kill and a step-8 process still running
-when an abort starts, the local hold and `cutover` record, v1's Slack queue at step 2, the local unit
-and the service starts, `migrate abort` and its marker, `ecf aws destroy` by the recorded or typed stack
-ID in either CLI mode and v1's local `ecf destroy`, a deleted stack AWS no longer describes, the move
-back's commit and `complete` with a mistyped older key, finalize, a lost Mac and a stale second machine;
-25,688 states; its stated counts, the AWS period lost (`aws=` on its base line), the Mac's changes
-since a backup lost (`mac=`) and a plain restore, or v1's `ecf destroy`, on a new Mac beside a live or
-frozen AWS (`y7=`), must equal the runner's `LIFE_STATED`). `delay_model13.py` checks F8 and the local hold over 61,573,945 timelines
+or probe). `life_model4.py` (191,100 states) checks the Mac's side of a move from this text's writes in their order, one
+event per write to one store (the SQLite database behind the service, the AWS config file,
+`aws-freeze.json`, the launchd plist and loaded job, AWS); no progress survives a kill, so every re-run
+reads the stores (OD-782). It covers cutover steps 2, 3 to 7, 8 (bootout, plist delete, the CLI's mode,
+the `cutover` delete) and 9, the migrate lock and the processes holding it, `migrate abort` (gate, stop,
+transaction, restart, deletes by the marker's ID, finish), `ecf aws destroy` by the recorded or typed ID
+and its finish, v1's `ecf destroy`, a re-init and a second stack, an install begun on another machine,
+v1's Slack queue at step 2, the move back's commit with the key split (a forgery under an unknown key or
+under a leaked rotated-out key; a mistyped older key), `complete`, finalize, a CLI kill or a reboot, a lost
+Mac and its replacement, a lift from another device after the loss, and a stale second machine. Besides safety and "a good end is reachable", it checks that mail checking comes back without
+v1's destroy and that deleting both installs stays reachable. Its stated counts, the AWS period lost
+(`aws=`: a stack that went live deleted before a move back), the Mac's changes since a backup lost
+(`mac=`), a lost Mac's replacement checking mail beside a live AWS (`y7=`) and a leaked rotated-out key
+typed on a new Mac (`old=`), must equal the runner's `LIFE_STATED`). `delay_model13.py` checks F8 and the local hold over 61,573,945 timelines
 (failed updates, a failed release (b) under both rollback orders with DescribeStacks showing the new or
 the old parameters mid-update, an abort from QUIET, items created mid-freeze, approved in QUIET or
 requeued into `delayed` during freeze (a), ticks delivered late (10 to 300 s) into the freeze or after
@@ -1963,7 +2023,7 @@ released), 2,920 sweep pages (a reopen, a live write's conflict, a raised retent
 the write, a raise that conflicts with the settings check, overlapping sweeps) and 57,324 restores
 after the bound Mac is lost following the rollback's commit (generations, a candidate the typed key
 refuses, a Mac restore before the hold or after step 8, an `ecf export --pull` copy with a real or a
-forged header generation, `aws destroy` after the move back; `rollback_limit`); `card_model9.py`
+forged header generation, `aws destroy` after the move back; `rollback_limit`); `card_model10.py`
 checks card reissue for two items under two overlapping ticks of one card each, with the `needs_card`
 index lagging the items and an old-mail item (part A, 3,738,830 states; with a cap of 2, the death
 between two items' writes, 5,043,050 states), one card row's post, mark, resends, holds, a redrive after
@@ -1972,18 +2032,19 @@ row whose every render crashes (part B, 6,272 states), the move back's escalatio
 a lost mark, v1's burst card for an address with up to 40 delivered ones) and question cards against
 what v1 then does on the Mac (part C, 1,240 cases), a scan run's replies with the Mac's own rows
 from before the migration, its head, AWS's later replies and their last edits still queued at the
-freeze, a settled run, and lines still in v1's queue at cutover (part D, 1,768 cases) and a card whose item changed
+freeze, a settled run, a run AWS started, and lines still in v1's queue at cutover (part D, 1,768 cases and 15 head
+cases) and a card whose item changed
 after its last render (part E, 64 cases).
-`run_all14.py` hashes its own and each model file before any run starts and prints the SHA-256s (a file
+`run_all15.py` hashes its own and each model file before any run starts and prints the SHA-256s (a file
 changed during the run fails it), runs the models in parallel (cores minus 2 at once by default, under
 a memory budget of 75% of RAM; `-j` and `--budget` lower both, and a control file lowers them while it
 runs, so other sessions on a shared machine keep room: `AGENTS.md`, "Shared machine"), then every
-counterexample from rounds 14 to 26 seeded back in as a fault, and fails unless each is caught by the
+counterexample from rounds 14 to 27 seeded back in as a fault, and fails unless each is caught by the
 check it targets; a fault caught only by restating its rule is marked, each stated count (each freeze
-kind's stated-limit and key counts, `map_model15.py`'s, card parts C's and D's and `life_model3.py`'s)
-must equal its table entry, and each run's peak memory is printed. The full `rollback` and
-`upgrade+foreign` base kinds (6,315,222 and 8,140,020 states in `run_all14.out`'s `freeze_model15`
-lines) run in the macOS merge gate; CI's models workflow runs `run_all14.py --ci` (every other line,
+kind's stated-limit and key counts, `map_model15.py`'s, card parts C's and D's and `life_model4.py`'s)
+must equal its table entry, and each run's peak memory and the host's RAM are printed. The full `rollback` and
+`upgrade+foreign` base kinds (6,315,222 and 8,140,020 states in `run_all15.out`'s `freeze_model15`
+lines) run in the macOS merge gate; CI's models workflow runs `run_all15.py --ci` (every other line,
 safety faults on those kinds included, since they stop at their first violation); both trigger on the
 same paths: the models and the pure functions they import (Step 6).
 **Restatements.** These faults are caught only because the check restates the rule they break:
@@ -1993,8 +2054,8 @@ same paths: the models and the pure functions they import (Step 6).
 text the refusal printed), `oldrule`, `auditdel` (the same run as `oldrule`), `noauditcreate`,
 `skipnoaudit`, `noexists`, `nounknown`, `importkeepsdelayed` (the check reads a delayed item with
 no grant), `migraterestore`, `nochildver`, `nohold`, `nostatuscond`, `otherterminal`, `requeueall`,
-`holdresend`, `qts`, and in `life_model3.py` `abortkeepscutover`, `abortabsentisgone`, `namefallback`
-and `postbeforestart` (the fault's edge writes the violation);
+`holdresend`, `qts`, and in `life_model4.py` `abortkeepscutover`, `abortabsentisgone` and `namefallback`
+(the fault's edge writes the violation);
 each rule is also carried by the Step 6 test named with it.
 **Principle:** every gate reads the truth directly (ecf-jobs its own stack,
 record and lock; the laptop `status`, the stack and its own files; the local service its own database
@@ -2059,17 +2120,24 @@ it; a run that adopts prints "continuing <person>'s <kind> job". It takes the on
 **Keys (I8, OD-757, OD-770).** The backup keys are written once, at `init` or `migrate` ("Write-once
 keys"), and kept by `UsePreviousValue`; ecf has no step that changes them in AWS mode. No job start
 compares keys (OD-765), and AWS signs exports without a key check (OD-770: draft 25's sign check
-changed no outcome, round 25). There is one key check, on the Mac, at restore: v1's signature check
-(`bundle_reader.py:79-91, 113-123`, `restore.py:78-81`) refuses a bundle signed under a seed that
-differs from the Mac's key (fault `pullnoverify`: a restore without the check applies a forged bundle).
-`ecf export --pull` checks nothing (OD-779: the pull-time check changed no outcome, round 26). The
-refusal is split by cause: a bundle the typed key opens as another install's, an older backup key
-mistyped (v1's `Opened.own` false), answers "that is not this install's key" and asks again, with no
-notice (fault `wrongkeynotice`: that refusal read as a forgery leads the operator to destroy a sound
-AWS install); a signature that fails under this install's own key prints the Security Notice and its
-way back on the CLI (fault `wrongremedy`: one text for every refusal leaves a key refusal with no way
-back). Restores of AWS bundles happen only in a move back, after cutover step 9, so the way back is one:
-`ecf aws destroy` (OD-778), then F12's way back, losing the AWS period. The runbook says key notices come
+changed no outcome, round 25). There is one key check, on the Mac, at restore (OD-780): a move back's restore accepts only a bundle
+whose signature verifies under the Mac's current backup key, with that key typed. v1's restore accepts any
+typed key that verifies the bundle (`restore.py:79-82`) and then makes it current (`restore.py:293-302`),
+and v1's `Opened.own` counts the install's rotated-out keys as its own (`bundle_reader.py:88, 291-293`);
+so the move back compares with the current key only (fault `ownanykey`: a seed moved to a rotated-out key
+that leaked is restored when that key is typed). The refusal is split by what the Mac can read: signed by
+the current key with another key typed answers "type this install's current backup key (fingerprint X)"
+and asks again, with no notice (fault `wrongkeynotice`: that refusal read as a forgery leads the operator
+to destroy a sound AWS install); anything not signed by the current key prints the Security Notice and its
+way back on the CLI (fault `ownsplit`, draft 27's split by `Opened.own`, which answered a forgery with
+"type the key again": the operator gives up with `migrate rollback --abort` and AWS runs on under the
+forgery with no notice; fault `wrongremedy`: one text for every refusal leaves a key refusal with no way
+back). `ecf export --pull` checks nothing (OD-779). A new Mac can't tell which key is current: it accepts
+the key the operator types, as v1 does, and never prompts with the fingerprint a bundle's header names
+(fault `headerhint`: the signer writes the header, so a forged bundle would name the leaked old key); a
+leaked rotated-out key typed there by the operator restores its bundle (stated, new Mac only; the runbook
+says type the newest key; `life_model4.py` counts it as `old=`). Restores of AWS bundles happen only in a
+move back, after cutover step 9, so the way back is one: `ecf aws destroy` (OD-778), then F12's way back, losing the AWS period. The runbook says key notices come
 only from the Mac's CLI. It is reached only through a
 compromised deployer credential (its `PutSecretValue` can move `AWSCURRENT`) or an AWS administrator;
 the notice says to rotate the deployer credentials, and the detective rule on every write to the seed
@@ -2193,8 +2261,7 @@ say so and OD-670 uses them.
 retries off); a throttle or a busy job lease means wait 30 s and call `status`. Kinds: `prepare`,
 `begin`, `first`, `rollback_export`, `commit`, `restore_merge`, `import_merge`, `upgrade_last`,
 `finish`, `abort`, `abort_local` and `status` (any state, read-only; with no job ID it returns the lock
-holder; for an open rollback it also returns the SHA-256 its record holds for `jobkeep/<job>`,
-OD-760). `abort`'s gate: the record not terminal, not `committing`,
+holder, and the stack ID, OD-778). `abort`'s gate: the record not terminal, not `committing`,
 and `Frozen` empty or owned by this job.
 They run only on a direct invoke naming the job ID, never from `jobs.fifo` whatever the event's shape (a
 test sends a forged SQS-shaped event). `first`, the work steps, `commit` and `finish` also need
@@ -2297,7 +2364,7 @@ card's `message_ts`, the current grant, the 10-minute rule for risk-raising clic
 replaced card is told "this card is out of date". A queued stop message is answered from its `STOP#`
 state through its `response_url` when that is under 25 minutes old; otherwise the card edit is the answer
 (stated limit, OD-671). A restore or import merge posts no cards (OD-694). Card reissue is one mechanism (OD-722, OD-728, OD-739;
-`card_model9.py`, part A): the merge's item transaction, when it leaves an item `awaiting_approval` with its
+`card_model10.py`, part A): the merge's item transaction, when it leaves an item `awaiting_approval` with its
 old grants deleted, gives the item a new `grant_id` (no `GRANT#` row yet) and sets the sparse attribute
 `needs_card`, whose index sorts by merge time (`migrate` does so for every open approval); nothing else
 sets it. v1's expire needs an issued grant and its re-offer an `expired` item (`approvals.py:339-351,
@@ -2325,11 +2392,11 @@ ticks, a tick dying before its first write or between two items' writes, a secon
 merge (which runs only after F5's drain, so never beside a tick in flight), v1's expire (which needs
 an issued grant), request, approve and `ecf item resolve`, and `migrate abort` while the hold is up
 give at most one card per grant, none for a dead grant or a destroyed install, and every awaiting
-item its card by the tick alone, with the index lagging (card_model9 part A, also with a cap of 2 so a
+item its card by the tick alone, with the index lagging (card_model10 part A, also with a cap of 2 so a
 tick can die between two items' writes: faults `nohold`,
 `nostatuscond`, `nocleanup`, a leftover mark starving another item, `twotx`, and `nograntcond`, a tick
 acting on a stale Query result: two cards for one grant). An SQS send can't join the transaction
-(card_model9 part B, where Slack's failures are the adversary's moves, so every row whose item stays
+(card_model10 part B, where Slack's failures are the adversary's moves, so every row whose item stays
 must reach `posted`, a refused death `doctor` lists, or v1's one automatic re-post spent): `slack-out` takes a message (deduplication ID =
 the `CARD#` key and its `card_queued_at`), reads the row, marks it `dropped` (REMOVE `card_queued_at`)
 if its item is absent or terminal, else renders the row's grant, posts, and marks it `posted` with
@@ -2355,7 +2422,7 @@ give-up, each re-queued once automatically in a write conditioned on `requeued` 
 newer grant clears `requeued`; fault `requeueall` restates it; `otherterminal`, draft 21's terminal
 unknown-code give-up, leaves the approval without a card; OD-747); a dead letter after 5 crashes is a
 death like v1's crash death, `given_up_other`, re-queued once in the same way (`slack_out.py:597-626`;
-card_model9's `b_succ` maps both to one transition, and a row whose every render crashes ends `given_up_*`), and any death of a re-queued row ends it with
+card_model10's `b_succ` maps both to one transition, and a row whose every render crashes ends `given_up_*`), and any death of a re-queued row ends it with
 `requeued` set (a message redriven after 1,000 receives is a death the
 function never sees: the row stays `queued` and the 15-minute resend covers it) (`doctor` lists it and `ecf slack
 repost` covers it; fault `noother`: such a row left `queued` is re-sent forever and leads the
@@ -2444,7 +2511,7 @@ at most 512 MiB), keeps it in `<data>/rollback/<job>.ecfb` (0600, removed at `co
   with the AWS card's recorded channel as its route (OD-747), the by-value "moved back" edits for
   every open item's card and every card the bundle marks `stale` (OD-761: AWS's `CARD#` row records the
   item version it read when it rendered, written only in the mark after Slack accepted the post or edit,
-  and `rollback_export` marks a reference `stale` when that version is below the item's; card_model9
+  and `rollback_export` marks a reference `stale` when that version is below the item's; card_model10
   part E, faults `notexported`, the flag not in the bundle, `markbefore`, the version written before
   Slack accepted, and `markitemver`, the item's version at mark time; draft 25's escalation version bump
   and its fault `noescbump` are removed, OD-776: the escalation reset below covers the alert); v1's sender serves a
@@ -2459,20 +2526,23 @@ at most 512 MiB), keeps it in `<data>/rollback/<job>.ecfb` (0600, removed at `co
   <channel>", or "in the scan summary" for an old-mail item, which gets no card (`scan_summary.py:41-46`), `approvals.py:878`; any other
   open status its v1 status line and the command, e.g. `ecf item resolve <short>` for
   `failed_unknown`) and a "moved back to <computer> at <time>" post, which also says that clicks made
-  in the minutes before the move were not done; it sets back to pending each bundle escalation in
-  state `posted` or `merged` that has no `delivered` mark, whatever the key of the card that carried it
+  in the minutes before the move were not done; it sets back to pending, clearing `posted_at` and
+  `thread_key`, each bundle escalation (fraud, regulator, quarantine, capped or roll-up) in state `posted`
+  or `merged` that has no `delivered` mark, whatever the key of the card that carried it
   (OD-779: AWS's slack-out writes the mark on the escalation row in the same mark it writes after Slack
   accepted the card carrying it, an `item:<sid>` card, a burst or roll-up card, the cap thread or a scan
   summary, `escalations.py:94-112, 151-165`; v1 marks an escalation posted when it enqueues it,
   `escalations.py:88-92`, so one still queued in `slack-out.fifo` would never post, and an escalated
   item is usually terminal at once, `decide.py:152-167`; v1's sweep posts pending rows whatever the
-  status, `escalations.py:55-65`; card_model9 part C: faults `markbeforeaccept`, the mark written
+  status, `escalations.py:55-65`; card_model10 part C: faults `markbeforeaccept`, the mark written
   before Slack accepts, and `tsreset`, OD-739's reset by `message_ts`, each leave an alert never shown;
   `resetall`, draft 26's reset of every `item:` escalation, re-posts the install's fraud history, and v1's
   sweep merges more than 5 pending escalations of an address into one burst card listing 20, so the one
   undelivered alert can fall off it; draft 26's fault `headkey` is removed with the card-key rule; an
   alert whose mark a kill lost, between Slack's accept and the mark, posts twice: stated, counted in part
-  C); AWS's slack-out, in the mark it writes after
+  C; more than 20 undelivered escalations of one address, after a long Slack outage on AWS, come back as
+  one burst card ending v1's "... and N more: `ecf inbox`", v1's own limit for new mail, stated; a row
+  counted only in that "and N more" line is marked with the card that counted it, as v1 marks it); AWS's slack-out, in the mark it writes after
   Slack accepted a scan reply's post or edit, records the stable IDs that reply carries as delivered
   (`delivered_sids[n]`, escalated or not: a records-only scan escalates nothing, `precheck.py:176`; the
   scan tick still enqueues a line, and adds it to `reported`, before Slack has it, as v1 does,
@@ -2493,7 +2563,11 @@ at most 512 MiB), keeps it in `<data>/rollback/<job>.ecfb` (0600, removed at `co
   `scan:` rows (v1 exports no `slack_messages` to the Mac, and restore keeps the Mac's own pre-migration
   head and reply rows, deleting only `item:%`, `restore.py:238`); the commit empties the head row of
   every run the bundle carries, so v1 posts a fresh head and threads the new reply under it (OD-776;
-  fault `nohead`: the head stale or missing, the replies unthreaded). card_model9 part D models what v1
+  fault `nohead`: the head stale or missing, the replies unthreaded); for a run AWS started, whose head
+  the Mac has no row for, the commit writes AWS's delivered head reference as the run's `scan:` row (it
+  already inserts `moved:` rows from the bundle's card references), so v1 edits that head instead of
+  posting a second one (OD-782; fault `noawshead`: every move back posts a second head for each such run
+  still in retention; round 27 found un-settling every run did that). card_model10 part D models what v1
   then does, with the Mac's rows for replies 1 to m, its head, and AWS's replies past them: faults
   `scanreset`, `reported` untouched, and `settledskip`, no un-settle, each leave lines unposted;
   `tsonly`, draft 23's rule by `message_ts`, loses a line whose last edit was still queued; `nobump`, no
@@ -2569,7 +2643,7 @@ Step 6c; there is no dry run or early refusal before `commit`, OD-767, OD-773; f
 | An update fails and rolls back | the stack as before it | re-run (F0 decides again) |
 | An update ends `UPDATE_ROLLBACK_FAILED` | stack needs `ContinueUpdateRollback` | F0 runs `ecf aws continue-rollback`, then reads again; a second failure stops at the runbook |
 | Laptop killed, asleep, offline, credentials expired | as left | re-run on that laptop or another (F0; another machine finds the job through `status`'s lock holder), or `aws unfreeze` where allowed; `doctor` and the stuck-freeze alarm (F15) report it |
-| The bound machine lost or replaced (rollback from `commit` on) | frozen | stated limit (OD-672, OD-760, OD-773): on the new Mac, restore the candidates in order until the typed key verifies one: Mac backups whose header `generation` exceeds `jobkeep/<job>`'s (v1's restore sets the install's generation to max(here, bundle) + 1, `restore.py:278-284`, and an export's header carries it, so every backup made after the local commit qualifies and none made before it does; no clock is compared), newest by `seq` within the highest generation, in `export_dir` if reachable, then `jobkeep/<job>`, which the deployer's `s3:GetObject` on `jobkeep/*` reads (F14) and which stays until `ecf aws destroy`, however late the new Mac comes, and last the `ecf export --pull` copies, which `--pull` keeps in their own folder under `export_dir` (OD-779: a pulled copy's header generation is written by AWS's seed holder, so it never ranks with the Mac's own backups; fault `pulledasbackup`); a candidate the typed key refuses is skipped for the next, which lacks the refused one's later changes (stated); then `ecf aws destroy`. The restore maps items as v1's restore does (`importer.load`, `restore.py:159`). After `ecf aws destroy` only the Mac's own backups are left, by the same order, then the pulled copies: the highest-generation backup holds pre-migration data if none was made since the commit, so items AWS sent or cancelled are offered again (the runbook says make a backup before `ecf aws destroy`). A Mac restore after cutover step 8 or after finalize can lift a stale backup's generation above `jobkeep/<job>`'s (stated). A Mac action after its last backup is lost, v1's own limit (map_model15 `rollback_limit`, which counts each of these stated cases by cause: faults `comparetime`, backups made after AWS's commit time, which a new Mac can't compare with its own clock and which picks a manual export made under the hold, `prehold`, the newest backup whatever its generation, `jobkeeponly`, draft 23's row, and `nofallback`, no next candidate after a refusal); no other machine finishes it (OD-732); v1's restore of a rollback-kind bundle unverified (`bundle_reader.py:85` takes only the scheduled and manual kinds until Step 6c; Step 8) |
+| The bound machine lost or replaced (rollback from `commit` on) | frozen | stated limit (OD-672, OD-760, OD-773): on the new Mac, restore the candidates in order until the typed key verifies one: Mac backups whose header `generation` exceeds `jobkeep/<job>`'s (v1's restore sets the install's generation to max(here, bundle) + 1, `restore.py:278-284`, and an export's header carries it, so every backup made after the local commit qualifies and none made before it does; no clock is compared), newest by `seq` within the highest generation, in `export_dir` if reachable, then `jobkeep/<job>`, which the deployer's `s3:GetObject` on `jobkeep/*` reads (F14) and which stays until `ecf aws destroy`, however late the new Mac comes, and last the `ecf export --pull` copies, which `--pull` keeps in their own folder under `export_dir` (OD-779: a pulled copy's header generation is written by AWS's seed holder, so it never ranks with the Mac's own backups; fault `pulledasbackup`); a candidate the typed key refuses is skipped for the next, which lacks the refused one's later changes (stated); the new Mac never prompts with the fingerprint a bundle's header names, and when the typed key opens none of the candidates it says "check the key: none of these backups opens with it" before naming `ecf aws destroy` (OD-780; Keys); then `ecf aws destroy`. The restore maps items as v1's restore does (`importer.load`, `restore.py:159`). After `ecf aws destroy` only the Mac's own backups are left, by the same order, then the pulled copies: the highest-generation backup holds pre-migration data if none was made since the commit, so items AWS sent or cancelled are offered again (the runbook says make a backup before `ecf aws destroy`). A Mac restore after cutover step 8 or after finalize can lift a stale backup's generation above `jobkeep/<job>`'s (stated). A Mac action after its last backup is lost, v1's own limit (map_model15 `rollback_limit`, which counts each of these stated cases by cause: faults `comparetime`, backups made after AWS's commit time, which a new Mac can't compare with its own clock and which picks a manual export made under the hold, `prehold`, the newest backup whatever its generation, `jobkeeponly`, draft 23's row, and `nofallback`, no next candidate after a refusal); no other machine finishes it (OD-732); v1's restore of a rollback-kind bundle unverified (`bundle_reader.py:85` takes only the scheduled and manual kinds until Step 6c; Step 8) |
 | A chunk keeps failing | frozen | `aws unfreeze` where allowed (runbook first), else `aws destroy` |
 | `aws unfreeze` | `abort`, then F9 | for the job named in `Frozen`, or, with `Frozen` empty, the lock holder in `freezing`; in every state before `done` except a rollback in `committing` |
 | A restore or import aborted midway | every address paused; items mapped so far are final (each item's merge is one transaction); approvals already merged get their cards from the `needs_card` tick after the release (F10) | run the same command again: the new job skips items already marked `merged_by` this source key |
@@ -2584,35 +2658,49 @@ secrets (without a recovery window); it deletes `<p>-app` (`<p>-base` is admin-d
 it, stated: a re-migrate reuses it), never runs v1's Slack teardown or writes v1's local
 `destroyed/<install>.json` record, and addresses the stack only by the stack ID and account that every
 stack create (`init --migrating`, `init --mode aws`) records in the AWS config (fault `modedispatch`:
-a delete chosen by the CLI's mode, so a local-mode CLI has no way to the stack, leaves states stuck). A
-machine without a recorded ID takes one only when the operator types it, shown with its job and
-creation time, and only once DescribeStacks shows that ID as a live stack (fault `typednotlive`: a
-deleted stack's ID, read as gone, leaves the live install behind a Mac that thinks it is gone); it
-never resolves the stack by name (fault `namefallback`: a stale machine resolving a new install's stack
-by name deletes it; fault `noidtype`: with no typed-ID path a lost Mac's replacement can't destroy).
-`status` returns the stack ID, so F0 runs from a second machine. It counts the stack gone on
-`DELETE_COMPLETE` for that ID or, since AWS stops describing a deleted stack, on DescribeStacks'
-"does not exist" for that ID when the ID's account and region equal `GetCallerIdentity`'s and the
-configured region (fault `completeonly`: `DELETE_COMPLETE` alone leaves a re-run stuck once AWS forgets
-the stack; fault `absentisgone`: a wrong account's "does not exist" read as gone). A re-run reads the
-stack's status first: on a stack already deleting it waits, on `DELETE_FAILED` it calls `DeleteStack`
-again without a change set (fault `rerunchangeset`: CloudFormation refuses a change set there, and the
-re-run is stuck). A run that finds it gone deletes
-this machine's `aws-freeze.json` (fault `destroykeepsfile`) and switches the CLI to local mode; a re-run
-with no stack left finishes (fault `gonestackrefused`). It doesn't refuse during cutover or a committing
-move back (the abort gate and the Mac's held service carry both, OD-771). The Slack bot token is not
-revoked and the manifest points at a dead endpoint until `ecf slack reauthorize` (stated). **v1's `ecf
-destroy`** stays the local destroy (Slack app, secrets, data) and refuses while the local hold, the
-`cutover` record, the abort marker or a recorded stack ID exists ("destroy the AWS install first: `ecf
-aws destroy`"; fault `v1norefuse`: during cutover or after a move back's `complete` it deletes the
-Mac's install, and the bot token AWS holds, beside a live or frozen stack). On a new Mac with no
-recorded ID beside a live or frozen stack, a plain restore and v1's `ecf destroy` are the stated limit
-of F12's lost-Mac row (counted by `life_model3.py` as `y7=`). `migrate finalize` keeps the local hold
+a delete chosen by the CLI's mode, so a local-mode CLI has no way to the stack, leaves states stuck). It
+runs under the migrate lock that step 8 and `migrate abort` take (OD-781; fault `destroynolock`: a delete
+during step 8 leaves the Mac held, in AWS mode, with no ID). A machine without a recorded ID takes one
+only when the operator types it, shown with its job and creation time, and only while DescribeStacks by
+that ID returns any status but `DELETE_COMPLETE`, its ARN's stack name is `<p>-app` and its account is
+the caller's (OD-780; fault `typednotlive`: a deleted stack's ID, read as gone, leaves the live install
+behind a Mac that thinks it is gone; fault `typedliveonly`, draft 27's "live stack": a stack left
+`DELETE_FAILED`, frozen or held when the Mac is lost can't be destroyed); every call uses the region in
+the ID's ARN. It never resolves the stack by name (fault `namefallback`: a stale machine resolving a new
+install's stack by name deletes it; fault `noidtype`: with no typed-ID path a lost Mac's replacement can't
+destroy). `status` returns the stack ID, so F0 runs from a second machine. It counts the stack gone on
+`DELETE_COMPLETE` for that ID or on DescribeStacks' "does not exist" for that ID when the ID's account
+equals `GetCallerIdentity`'s (AWS describes a deleted stack by its ID for a period its API reference
+doesn't state, then answers "does not exist"; fault `completeonly`: `DELETE_COMPLETE` alone leaves a
+re-run stuck once AWS forgets the stack; fault `absentisgone`: a wrong account's "does not exist" read as
+gone). A run, first or re-run, reads the stack's status by the recorded ID first: on a stack already
+deleting it waits (printing progress; interruptible, the next run waits again), on `DELETE_FAILED` it calls
+`DeleteStack` again without a change set (fault `rerunchangeset`: CloudFormation refuses a change set
+there, and the re-run is stuck), on `UPDATE_ROLLBACK_FAILED` it refuses with "run `ecf aws
+continue-rollback` first". A run that finds it gone deletes this machine's `aws-freeze.json` (fault
+`destroykeepsfile`), then writes the AWS config once, in local mode with the stack ID removed (fault
+`configfirst`: the config first and a kill before the file delete leaves a file F13 obeys and no ID to
+finish by; fault `keeprid`: an ID kept after the stack is gone refuses v1's `ecf destroy` for good); a
+re-run with no stack left finishes (fault `gonestackrefused`). It doesn't refuse during cutover or a
+committing move back (the abort gate and the Mac's held service carry both, OD-771). `init --migrating`
+and `init --mode aws` refuse while a stack ID is recorded ("finish `ecf aws destroy` first"; OD-781;
+fault `initkeepsid`: a re-init overwrites the old ID before the destroy's finish, and the Mac stays in AWS
+mode). The Slack bot token is not revoked and the manifest points at a dead endpoint until `ecf slack
+reauthorize` (stated). **v1's `ecf destroy`** stays the local destroy (Slack app, secrets, data) and
+refuses while a stack ID is recorded ("destroy the AWS install first: `ecf aws destroy`"; OD-781; fault
+`v1norefuse`: during cutover or after a move back's `complete` it deletes the Mac's install, and the bot
+token AWS holds, beside a live or frozen stack). Step 2 refuses with no recorded ID and every abort
+keeps the ID until its stack is gone, so the hold, the `cutover` record and the marker need no condition
+of their own (draft 27's four conditions: `life_model4.py` shows the ID alone suffices). The check runs
+in the CLI and again in `ecf_server/destroy`, which the operator can run as `ecf-server destroy`
+(`__main__.py:31, 89-110`), both reading the AWS config. On a new Mac with no recorded ID beside a held,
+live or frozen stack, a plain restore and v1's `ecf destroy` are the stated limit of F12's lost-Mac row
+(counted by `life_model4.py` as `y7=`: a replacement checking mail beside a live AWS). `migrate finalize` keeps the local hold
 set (fault `finalizeclears`: an unheld Mac on pre-migration data beside a newer AWS), so past cutover
 step 8 with AWS destroyed the way out is one rule: install the unit (the service starts held), make a
 manual export of the kept database (allowed under the hold) and restore it (the restore clears the
 hold; OD-773, so nothing of the Mac's own is lost), `ecf address set` after finalize, then `ecf slack
-reauthorize` and `set-tokens`; the AWS period is lost (stated, counted by `life_model3.py`); a new Mac
+reauthorize` and `set-tokens`; the AWS period is lost (stated, counted by `life_model4.py`); a new Mac
 restores by F12's candidate order instead. Anyone with
 `lambda:InvokeFunction` on `ecf-jobs` can run a job's chunks (the job ID is no secret: `status`
 returns the lock holder's; stated limit, OD-668; the deployer can change the stack anyway). An `abort`
@@ -2634,7 +2722,9 @@ snapshot-tested with each action's resource; OD-691) adds to the base deploy act
 `stack/<p>-app/*`; Names, under Infrastructure), and `CreateChangeSet`, `DescribeChangeSet`,
 `ExecuteChangeSet`, `DeleteChangeSet` and `ContinueUpdateRollback` on `stack/<p>-app/*` only (no change
 set on `<p>-base`, which an administrator deploys and which holds the boundaries and the detective
-rules, OD-770); on the seed secret's ARN, `secretsmanager:PutSecretValue` (the write at `init` and
+rules, OD-770); on the seed secret, named `ecf/<p>/<install.id>/seed` and granted as that name
+followed by `-??????` (its ARN's random suffix changes at every create, so a policy naming the full ARN
+would fail the next `migrate` after `ecf aws destroy`; OD-782), `secretsmanager:PutSecretValue` (the write at `init` and
 `migrate`; every write to the seed is matched by F15's seed rule) and `DescribeSecret` (no
 `UpdateSecretVersionStage`: it moved `AWSCURRENT` for the removed rotation, OD-763; the seed's resource
 policy also denies `RotateSecret` and `CancelRotateSecret` to every principal but an administrator); on
@@ -2852,9 +2942,9 @@ transaction, Step 6); the export hold beside a freeze beyond the exemptions abov
 notices, the QUIET click refusal (F4; Step 9 tests it), queue retention, per-channel and rate holds,
 `channel_not_found`, a lost Slack response that makes a second post, the re-queue of a given-up row by
 hand, a "replaced" edit dropped when its message is gone, a duplicate question card, the move back's
-edits ahead of new posts (timing, not safety: a stated limit, OD-761; Step 9's pass line, OD-776), v1's
+edits ahead of new posts (timing, not safety: a stated limit, OD-761; Step 9 records it, OD-779), v1's
 crash window between a post and its mark, and the kills between a mark and its "replaced" edits
-(`card_model9.py` checks which grants get a card, the post's mark, "replaced" edits and give-ups, and the
+(`card_model10.py` checks which grants get a card, the post's mark, "replaced" edits and give-ups, and the
 move back's escalations, scan replies and heads, card edits and question cards against what v1 then
 does); a reference with no `message_ts` posting a fresh message (noise, not loss; v1's window, stated);
 the "renew now" mark (F11; Step 6c and Step 12 test it); whether F7's identity re-check is needed (the
@@ -2870,8 +2960,9 @@ of the window, the worst case, and Cancel's path reads none); in F8, an approval
 (a), and the creator's clock skew; the IAM policies themselves (static tests and Step 8; the one IAM
 rule a model consequence rests on, no runtime delete or expiry of an `AUDIT#` row, is
 `map_model15.py`'s `auditdel`); `migrate abort`'s stack and table deletes and the AWS hold's exemptions
-(Step 12 runs `DeleteStack` and `login` under the hold; `life_model3.py` models the record, the marker
-and both destroys); a re-migration beyond one stale second machine; who lifts the AWS hold (a stated
+(Step 12 runs `DeleteStack` and `login` under the hold; `life_model4.py` models the record, the marker,
+the migrate lock and both destroys); `complete`'s three writes (the AWS record, `aws-freeze.json` and
+the AWS config) as one event; a re-migration beyond one re-init and one stale second machine; who lifts the AWS hold (a stated
 limit, OD-779, under "The AWS `migrating` hold"); the deployer-credential holder's
 other powers (a code deploy: SPEC's threat model); people, `IDENT#` and
 step-ups; bound values (both machines are assumed to hold the same command; `+strict`, in which neither
@@ -2888,18 +2979,17 @@ service crash dropping a pending restore request (the re-ask covers it); the kep
 removed at `complete`; F7's revocation of job 2; F2's "no owner in `Frozen`" gate; a scheduled export
 cancelled by F7 and F2's expiry extension (stated). `complete()` clearing `seen` and `waited` on a stack
 change stands for F5's stamp being the frozen stack's own update (`draft19-atomicity.md`). The faults
-caught only by restating a rule are the **Restatements.** list above, marked so in `run_all14.out`;
+caught only by restating a rule are the **Restatements.** list above, marked so in `run_all15.out`;
 `+strict` checks a limit, not a rule; draft 25's masked pairs are gone: the tail stays Slack-free and
 F13 refuses `set-tokens` during a job, so `tailslack` is caught, and `f13refuse`, `deadmantail` and
 `anycommit` are removed (the machine binding carries the commit, OD-777); in delay_model13 `badorder`
-is masked (defence in depth, F8) and `envtick` by OD-742's wait; in card_model9 `oldcapped` is masked
+is masked (defence in depth, F8) and `envtick` by OD-742's wait; in card_model10 `oldcapped` is masked
 (a performance rule, F10); the always-on "stop committed after the first chunk" checks are unreachable
 under the other gates (kept as defence in depth); the import kind is the same model as the restore
 kind, so only `restore` runs.
 
-**Rule → model (OD-680, OD-690, OD-702, OD-724, OD-731, OD-740, OD-748, OD-764, OD-769, OD-777, OD-779).** Rendered from
-`run_all14.py`'s `RULES`, the single source; each fault sits in exactly one row (`pullnoverify`, which
-`life_model3.py` also seeds, sits in I8's).
+**Rule → model (OD-680, OD-690, OD-702, OD-724, OD-731, OD-740, OD-748, OD-764, OD-769, OD-777, OD-779, OD-782).** Rendered from
+`run_all15.py`'s `RULES`, the single source; each fault sits in exactly one row.
 
 | Rule | Checked by | Faults |
 |---|---|---|
@@ -2908,7 +2998,7 @@ kind, so only `restore` runs.
 | I3 | `map_model15.py` |  |
 | I4 | `safety` |  |
 | I5 | `check`, `limit` |  |
-| I6 | `card_model9.py` |  |
+| I6 | `card_model10.py` |  |
 | I7 | `safety` |  |
 | I8 | `precheck_deploy`, `keys_dep`, `aws_expected`, `forged`, `bkeys`, `refused`, `keyref`, `destroyed`, `FORGE`, `FORGEDEP` | `keyreset`, `nolistcheck`, `relgate`, `pullnoverify`, `wrongremedy` |
 | F0 | `laptop_next`, `unfreezer_next`, `observe_laptop`, `succ`, `STRICT` |  |
@@ -2921,29 +3011,29 @@ kind, so only `restore` runs.
 | F7 | `revoked`, `stopped` |  |
 | F8 | `run`, `run_failrelb`, `run_overlap`, `tick_view`, `dsview`, `last_good`, `view`, `alive`, `localhold` | `schedseq`, `nowsched`, `nofrozenskip`, `addwrite`, `incr`, `seqa`, `seqb`, `cap`, `dslate`, `failopen`, `nowait`, `waitstart`, `tear`, `norestart`, `holdcounts`, `badorder`, `envtick` |
 | F9 | `laptop_next`, `unfreezer_next` |  |
-| F10 | `card_model9.py`, `a_succ`, `a_good`, `b_succ`, `b_good` | `nohold`, `nostatuscond`, `nocleanup`, `twotx`, `nograntcond`, `oldcapped`, `stampmark`, `nogrant`, `noother`, `otherterminal`, `overwrite`, `requeueall`, `holdresend` |
-| F11 | `part_c`, `part_d`, `part_d_head`, `part_e`, `esc_reset`, `apply_L`, `local`, `restored`, `tailreq`, `seed`, `bobj`, `pulled`, `xput`, `older`, `KEEP`, `slack_ok`, `marker`, `svc_n`, `secrets`, `rolled`, `socket`, `reauth`, `v1bad` | `tsreset`, `markbeforeaccept`, `resetall`, `keepsettled`, `settledskip`, `scanreset`, `qts`, `tsonly`, `nobump`, `noreset`, `seedinreply`, `seednodrain`, `nohead`, `notexported`, `markbefore`, `markitemver`, `expireopen`, `noolderok`, `nopullcommitted`, `nohousekeep`, `nolocallock`, `svc`, `entryonly`, `norestoredrow`, `tail`, `abortalways`, `abortedtail`, `startseed`, `tailslack` |
+| F10 | `card_model10.py`, `a_succ`, `a_good`, `b_succ`, `b_good` | `nohold`, `nostatuscond`, `nocleanup`, `twotx`, `nograntcond`, `oldcapped`, `stampmark`, `nogrant`, `noother`, `otherterminal`, `overwrite`, `requeueall`, `holdresend` |
+| F11 | `part_c`, `part_d`, `part_d_head`, `part_e`, `esc_reset`, `apply_L`, `local`, `restored`, `tailreq`, `seed`, `bobj`, `pulled`, `xput`, `older`, `KEEP`, `slack_ok`, `marker`, `svc_n`, `secrets`, `rolled`, `socket`, `reauth`, `v1bad` | `tsreset`, `markbeforeaccept`, `resetall`, `keepsettled`, `settledskip`, `scanreset`, `qts`, `tsonly`, `nobump`, `noreset`, `seedinreply`, `seednodrain`, `nohead`, `noawshead`, `notexported`, `markbefore`, `markitemver`, `expireopen`, `noolderok`, `nopullcommitted`, `nohousekeep`, `nolocallock`, `svc`, `entryonly`, `norestoredrow`, `tail`, `abortalways`, `abortedtail`, `startseed`, `tailslack` |
 | F12 | `limit`, `rollback_limit`, `order` | `comparetime`, `prehold`, `jobkeeponly`, `nofallback`, `pulledasbackup` |
 | OD-670 | `merge`, `map_in_flight`, `clamp`, `rewrite`, `took_src`, `check_case`, `reprocess_cases`, `undo_cases`, `killed_merge`, `lifecycle_timelines`, `play`, `migrate_rerun`, `children_timelines`, `settings_order`, `sweep_batch` | `oldrule`, `noauditcreate`, `skipnoaudit`, `nomark`, `marklater`, `rewritesplit`, `nodraftsrerun`, `nounknown`, `importkeepsdelayed`, `nosettled`, `migraterestore`, `restoredown`, `keepaudit`, `keepgrantid`, `undoremoves`, `olderdoneev`, `sweepuncond`, `sweepnoset`, `noexpcond`, `noterminalcond`, `noexists`, `childkeep`, `childuncond`, `nochildver`, `mergenochild`, `exportnofilter`, `createstrict`, `childstamp_early`, `itemsfirst`, `batchnocond`, `dropsetcheck`, `retryall`, `setconflictdrop`, `auditdel` |
-| Lifecycle | `life_model3.py`, `abort_gate`, `destroy_gate`, `v1_destroy_refused`, `restore_refused`, `step2_blocked`, `mac_active` | `deadblocks`, `abortkeepscutover`, `abortabsentisgone`, `noidtype`, `namefallback`, `gonestackrefused`, `destroykeepsfile`, `absentisgone`, `finalizeclears`, `nostartcommitting`, `e4always`, `recordfirst`, `nomarkercheck`, `postbeforestart`, `v1norefuse`, `modedispatch`, `rerunchangeset`, `completeonly`, `typednotlive`, `wrongkeynotice` |
+| Lifecycle | `life_model4.py`, `status`, `reads_gone`, `restore_refused`, `kill`, `bothdel`, `mac_active` | `deadblocks`, `abortkeepscutover`, `abortabsentisgone`, `noidtype`, `namefallback`, `gonestackrefused`, `destroykeepsfile`, `absentisgone`, `finalizeclears`, `nostartcommitting`, `e4always`, `recordfirst`, `recordbeforemode`, `nolock8`, `destroynolock`, `nomark9`, `no2refuse`, `abortreadsconfig`, `initkeepsid`, `keeprid`, `configfirst`, `v1norefuse`, `modedispatch`, `rerunchangeset`, `completeonly`, `typednotlive`, `typedliveonly`, `wrongkeynotice`, `ownsplit`, `ownanykey`, `headerhint` |
 | F13 | not modelled: prose only; Step 6 tests | |
 | F14 | not modelled: IAM: static tests and Step 8 | |
 | F15 | not modelled: alarms: Step 8 | |
 
 A Step 6 test fails if any invariant, F heading or OD-670 bullet appears in neither this table nor
 "Not modelled", or if a name here doesn't occur in the models' source as a function, field, action
-name, fault name or model file. **Cross-references (OD-731, OD-764, OD-769, OD-777, OD-779; `.claude/rules/roadmap.md`).** Each rule
+name, fault name or model file. **Cross-references (OD-731, OD-764, OD-769, OD-777, OD-779, OD-782; `.claude/rules/roadmap.md`).** Each rule
 here (F0 to F15, I1 to I8, Keys, each OD-670 bullet, Expiry, `migrate abort` and the Mac's side of a move)
 has one owning paragraph, and other sections cite it by name rather than restating it. A script,
-`state-archive/m1/model/check_refs.py` (v8) until Step 6 moves it to `tests/m1/`, must pass before each
+`state-archive/m1/model/check_refs.py` (v9) until Step 6 moves it to `tests/m1/`, must pass before each
 Phase R round: every name in this table occurs in the models' source as a whole identifier (from the
 syntax tree, comments and docstrings excluded); the table's rows, names and faults equal
-`run_all14.py`'s `RULES`; every fault the text names is in `run_all14.py`'s tables (a removed one only in
+`run_all15.py`'s `RULES`; every fault the text names is in `run_all15.py`'s tables (a removed one only in
 a sentence that says it was removed), every fault in those tables is named in the text, and every MUT
-name the models test is in those tables; `run_all14.out` and `run_all14_ci.out` each record the
+name the models test is in those tables; `run_all15.out` and `run_all15_ci.out` each record the
 runner's and every model's SHA-256, end ALL CLEAN, and hold every table row's exact result line (the
 `--ci` output all but the gate-only rows), every kind's stated-limit and two key counts,
-`map_model15.py`'s stated counts, card parts C's and D's and `life_model3.py`'s base lines equal to the
+`map_model15.py`'s stated counts, card parts C's and D's and `life_model4.py`'s base lines equal to the
 runner's tables, and masked faults clean; every count the text quotes is on an output line of a label
 its sentence names (a fault's own result line, a kind's line, a model's or part's base line, a model
 function standing for its model), followed by the same noun, a list's counts in the order of its
@@ -2952,13 +3042,16 @@ names exactly the runner's gate-only kinds; each `PARAMS` value equals the model
 constant (a fault's own value included, as `dslate`'s lag) and every place the text quotes it, every
 wait's seconds in a sentence about freeze (b)'s wait and every late-tick bound included; a fault the
 text calls masked or caught is so in the runner's tables; no model count is written in words; every
-run's peak stays under 70% of the machine's RAM and every "N states, X GB peak" the text gives equals
-the output; each life fault's summary line names exactly the orders its raw lines catch; every F rule
-and invariant is in this table or under "Not modelled"; `check_refs.py --selftest` seeds 49 breaks (a
+run's peak stays under 70% of the RAM the output records for the machine that ran it, and every "N
+states, X GB peak" the text gives equals the output (the GB within 0.5: a kind's peak varies by about
+0.4 GB from run to run, OD-782); a removed fault is named only with the removal word
+beside it; every F rule and invariant is in this table or under "Not modelled"; `check_refs.py
+--selftest` seeds 54 breaks (a
 renamed name, a comment-only name, a fake fault, a truncated count, a swapped count, a fault dropped
 from the text or the runner, a stale output, a rule-table row drifted from `RULES`, a parameter
 changed in a token or in prose, a stated count changed in the output only, round 25's eight missed
-classes, round 26's seven and a peak figure split across two lines) and each must be found (a rename to another name the code has can't be
+classes, round 26's seven, a peak figure split across two lines, and round 27's burst sizes, a removed
+fault beside an unrelated removal word and the host's RAM) and each must be found (a rename to another name the code has can't be
 caught: the check verifies existence, not intent; nor can a small count swapped for another number on
 the same output line, since small counts are matched by line); no superseded model generation is named outside "Decisions" and "Plan
 review findings"; every F-rule, invariant and OD the text cites exists (an OD in SPEC's table, on this
@@ -3163,7 +3256,18 @@ SPEC §12.4 AWS mode:
 
 - **Synthesizer:** `DefaultStackSynthesizer(generate_bootstrap_version_rule=False)`, `versionReporting`
   off, `aws-cdk-lib` pinned, template snapshot, no-asset test; asset-creating constructs avoided;
-  explicit log groups; inline auto-delete helper.
+  explicit log groups; inline auto-delete helper, its custom resource's `ServiceTimeout` set to 900 s
+  (CloudFormation's default is 3,600 s, AWS::CloudFormation::CustomResource, fetched 2026-11-10 (rv), so a
+  helper that never answers holds `DELETE_IN_PROGRESS` an hour; OD-782).
+- **Removal policy (OD-782):** a CDK Aspect sets `RemovalPolicy.DESTROY` on every `<p>-app` resource;
+  CDK's L2 defaults are `RETAIN` for `Table`, `TableV2`, `UserPool` and `LogGroup` (their construct pages,
+  fetched 2026-11-10 (rv)), and with `Retain` the stack still ends `DELETE_COMPLETE` while the resource
+  stays (DeletionPolicy attribute page, fetched 2026-11-10 (rv)), so `ecf aws destroy` and `migrate abort`
+  would read "gone" while the tables, the user pool and the log groups remain, and the next `init
+  --migrating` would fail on their names. A template test fails on any `DeletionPolicy` or
+  `UpdateReplacePolicy` of `Retain` or `RetainExceptOnCreate` in `<p>-app`; Step 12 re-migrates the same
+  `install.id` after an abort and records `ListTables`, `ListUserPools` and `DescribeLogGroups` showing
+  nothing of the old install.
 - **cdk-nag 3** (pinned), every suppression with a reason. **No VPC** (CDK assertion).
 - **Two-phase deploy:** base stack; zip verified against the SHA-256 in the client wheel; app stack.
   No code signing (OD-606).
@@ -3222,13 +3326,17 @@ SPEC §12.4 AWS mode:
     conditions too, specifying-conditions.html, fetched 2026-11-06 (rv)), so for `ITEM#` rows and their
     records the contract test, that no write but the sweep sets it, is the control; the static test
     counts `expires_at` for `AUDIT#` rows only, where the Denies below enforce it (OD-743, OD-754);
-  - S3 `GetObject`, `PutObject`, `ListBucket` (prefix-conditioned); `DeleteObject` on `exports/`,
+  - S3 `GetObject`, `PutObject`, `ListBucket` (prefix-conditioned; `PutObject` on `jobkeep/` for
+    `ecf-jobs` only, a static test: with the SHA-256 gone, OD-779, only the job function may write the
+    bundle a lost Mac restores, and the key check proves the key, not who made the bundle or how fresh
+    it is); `DeleteObject` on `exports/`,
     `jobkeep/` and `backups/` for `ecf-jobs` only (partial objects, a finished job's bundle, the prune); the helper's version actions;
   - SQS `SendMessage`, `ReceiveMessage`, `DeleteMessage`, `ChangeMessageVisibility`,
     `GetQueueAttributes`;
   - Secrets Manager `GetSecretValue`, `PutSecretValue`, `CreateSecret`, `TagResource` on exact
-    prefixes, and `DescribeSecret` and `DeleteSecret` on `job/*` for `ecf-jobs` only (F14); SSM `GetParameter`, `PutParameter` on `/ecf/<p>/runtime/*` only (deploy-set
-    parameters, such as the export verify key, are under another path);
+    prefixes, and `DescribeSecret` and `DeleteSecret` on `job/*` for `ecf-jobs` only (F14); SSM `GetParameter` on the deploy-set parameters only, such as the export verify key (no
+    runtime `PutParameter`, OD-782: nothing names a runtime parameter, and one would outlive `ecf aws
+    destroy`, which deletes only stack resources);
   - KMS `GenerateDataKey*`, `Decrypt` on `aws/sns`; SNS `Publish`; CloudWatch Logs writes;
   - CloudFormation `DescribeStacks` on its own stack (`stack/<p>-app/*`; the call always
     names the stack, a test), for `ecf-jobs` (F6) and `ecf-worker` (the tick, F8);
@@ -3433,12 +3541,13 @@ estimate, unverified).
   data; F12) and the CLI's `ecf cancel`, `reject`, `approve` and `item resolve` (a Step 6c test), and
   allows the migrate export and a manual one, step-up, the Keychain read and the transfer under the
   CLI's attestation (OD-653), and restore (a rollback's restore clears it, F11). Cutover step 2 writes
-  the hold and a `cutover` record in one transaction; step 8's locked transition removes the record as
-  its last write, after the unit (OD-778; a killed step 8 re-runs from the record). While `cutover` exists the local service refuses `ecf restore` and `ecf
+  the hold and a `cutover` record carrying the recorded stack ID in one transaction (OD-781); step 8's
+  locked transition removes the record as its last write (OD-780; a killed step 8 re-runs from the
+  record). While `cutover` exists the local service refuses `ecf restore` and `ecf
   import`, and only then (fault `e4always`, the refusal whenever the hold is set, strands a held Mac
   whose AWS install was destroyed past step 8); `migrate abort` deletes the record in its hold-clear
-  transaction (fault `abortkeepscutover`). `life_model3.py` checks these with both destroys and the move back
-  (25,688 states). Because the hold refuses Cancel, it counts no delay: a held tick passes 0
+  transaction (fault `abortkeepscutover`). `life_model4.py` checks these with both destroys and the move back
+  (191,100 states). Because the hold refuses Cancel, it counts no delay: a held tick passes 0
   to `advance_delays` (`approvals.py:566-587`), and `migrate abort`'s step (1) clears the hold with the
   local service stopped, so the restart sets `_last_tick_mono` (`service.py:215`) and the first tick
   after it credits nothing from before (OD-771; draft 25's "the lift writes nothing" let the next tick
@@ -3462,8 +3571,10 @@ estimate, unverified).
   install still `migrating` whose link is done, bound to the migration's bundle SHA-256), which stores it
   in the settings item (OD-772, OD-779); `prepare` and every freeze job refuse while it is up. Who can
   lift it is a stated limit (OD-779): the admin's step-up from any device, or any of the three runtime
-  roles by a direct write of the settings item; nothing in AWS reads the Mac's abort marker, so a lift
-  from abort step (1) until `DELETE_COMPLETE` puts AWS live beside the resumed Mac for that window. A held queue
+  roles by a direct write of the settings item; nothing in AWS reads the Mac's abort marker or knows
+  the Mac is lost, so a lift from abort step (1) until `DeleteStack` removes the functions puts AWS live
+  beside the Mac for that window, and a lift after the bound Mac is lost puts it live beside a
+  replacement that restores (OD-780; `life_model4.py`'s `y7=`). A held queue
   consumer reports each message as a batch-item failure, so held messages wait in SQS and go with the
   stack on an abort; `slack-in` and `slack-out` messages dead-letter after their receive count, about 4
   days under the hold (stated). Nothing counts down under the hold: `migrate`'s import turns `delayed`
@@ -3471,15 +3582,29 @@ estimate, unverified).
   kept `delayed` with no grant here, whose send can't run) and nothing approves under the hold.
   Quiescing comes from the hold, not from deleting secrets: a warm `ecf-slack-in` keeps the secrets it
   read in Lambda Init (ground truth G7).
+- **The migrate lock (OD-780):** one lock file beside the data directory (an `flock`, as v1's
+  `acquire_lock`, `service.py:155-163`, but its own file, so the service can restart while it is held),
+  taken by cutover step 8 for its whole transition, by `migrate abort` for its gate and step (1), and by
+  `ecf aws destroy`; a killed holder frees it, and each SQLite write re-reads its own gate inside its
+  transaction, so a kill of the lock holder alone can't let a pending write race (fault `nolock8`: without
+  the lock an abort runs between step 8's writes, and the Mac is left with no service and a stack it
+  can't finish). It replaces draft 27's marker reads in step 8 (round 27: the draft-27 life model read the marker
+  and acted in one step, which no real read can do).
 - **Cutover order:**
-  1. post "fraud flagging off since T" to Slack; pause every address (v1's pause; OD-778: there is no
-     pause set, and nothing later resumes an address on its own); drain `slack_out` and `alert_outbox`;
-  2. put the local service in the `migrating` hold and write the `cutover` record (one transaction),
-     refused, with nothing written, while v1's `slack_out` holds a `queued` or `claimed` job (named in
-     the refusal; a post enqueued after step 1's drain is caught here); `dead` jobs are listed, to
+  1. pause every address (v1's pause: a paused address is still fetched and flagged, `pause.py:3-6`;
+     OD-778: there is no pause set, and nothing later resumes an address on its own); drain `slack_out`
+     and `alert_outbox`; the CLI prints "fraud flagging stops at step 2 and comes back with AWS's first
+     check, or after `migrate abort`" (OD-780: no Slack post; draft 27's "fraud flagging off since T"
+     and "back on" posts had no sender that works under the hold);
+  2. put the local service in the `migrating` hold and write the `cutover` record with the recorded
+     stack ID (one transaction), refused, with nothing written, while no stack ID is recorded ("record
+     it: `ecf aws destroy`'s typed-ID checks"; OD-781; fault `no2refuse`: a record with no ID leaves an
+     abort with nothing to prove gone) or while v1's `slack_out` holds a `queued` or `claimed` job (named
+     in the refusal; a post enqueued after step 1's drain is caught here); `dead` jobs are listed, to
      re-post with `ecf slack repost` or to lose (stated, OD-772; fault `deadblocks`: counting `dead`
      rows blocks the move for good). After a refusal the addresses stay paused: the operator runs
-     `migrate` again once Slack has the posts, or `ecf resume` (OD-771: no automatic resume);
+     `migrate` again once Slack has the posts, or `ecf resume` (OD-771: no automatic resume). Steps 3
+     to 8 refuse when the AWS config's stack ID differs from the record's;
   3. local step-up (purpose `migrate`) bound to the migrate plan's hash (`install.id`, the target
      stack, the one-time recipient's fingerprint);
   4. export the migrate kind (a new bundle kind; it also carries `slack_messages` and
@@ -3496,17 +3621,20 @@ estimate, unverified).
   7. `migrate_link` step-up by the pending Cognito identity, bound to the same SHA-256: the bundle's
      person and the Cognito identity become one person (local `people.id` kept, the Cognito identity
      confirmed, the Slack identity kept); `migrate.identities_linked` and a Security Notice;
-  8. **only now**, in one locked transition, in this order (OD-778): the local unit is uninstalled
-     (plist removed, data kept), which also cancels the dead-man message (OD-621); then the `cutover`
-     record is removed, and the CLI switches to AWS mode with that last write. The transition's progress
-     is in memory only: a killed step 8 starts again from the `cutover` record (each write is idempotent)
+  8. **only now**, under the migrate lock, four writes in this order (OD-780): `launchctl bootout` of the
+     local service and the plist's delete (v1's `uninstall()`, `service_unit.py:187-191`; data kept),
+     which also cancels the dead-man message (OD-621); the AWS config's switch to AWS mode; then, in a
+     transaction that re-reads it, the `cutover` record's delete. The transition's progress is in memory
+     only: a killed step 8 starts again from the `cutover` record (each write is idempotent; a kill
+     between the bootout and the plist's delete leaves a plist launchd starts at the next login, held)
      (fault `recordfirst`: the record removed first, a kill before the unit's removal leaves a held Mac
-     no re-run or abort can reach). Draft 26's mode switch first goes: with the unit gone first, no
-     local restore can run before step 9 (round 26; `life_model3.py`). Once `migrate abort` has written
-     its marker, the step-8 process, if still running, reads the marker before each write and stops
-     (fault `nomarkercheck`: it finishes step 8 and step 9 lifts AWS beside the resumed Mac);
+     no re-run or abort can reach; fault `recordbeforemode`, draft 27's order: the record removed before
+     the mode switch, a kill between leaves the CLI local with no record to resume from and the abort's
+     gate closed);
   9. upload and verify the private eval part; switch the Slack manifest; edit to "moved" the old cards
-     of items not marked `needs_card`; refused while the abort marker exists; lift the AWS hold through
+     of items not marked `needs_card`; refused while the abort marker exists (a read of the local
+     database; fault `nomark9`: after a killed step 8 and an abort the stores look as step 8 leaves
+     them, and step 9 lifts AWS during the abort); lift the AWS hold through
      the `migrate` route's step-9 call, after which `ecf-worker`'s tick issues grants and cards for the items step 6 marked (F10; their
      old cards get the "replaced" edit instead);
   10. resume each address only after its own mail check passes (OD-366); the first AWS check covers
@@ -3516,21 +3644,24 @@ estimate, unverified).
   to finish an abort already started), and destroys the AWS install. It takes its own step-up purpose, `migrate_abort`, bound to (`install.id`, the recorded stack
   ID), whose prompt reads "destroy the AWS install <stack>; keep this computer's data"
   (v1's `destroy` purpose would show the wrong action and share its bound values with a local destroy,
-  `destroy.py:151-157`), records its actor in a local Security Notice, and holds the local service's
-  lock for its gate, as step 8's transition does, so the two can't race; once started, every other
-  `migrate` subcommand is refused (as v1's `destroy.started`), and a step-8 process still running and
-  step 9 read the marker and stop (cutover step 8, fault `nomarkercheck`). Each run, first or re-run, in
-  this order: (1) with the local service stopped (after any tick in progress; the CLI stops it as v1's
-  CLI does, `launchctl bootout` through `service_unit.py:202-204`; draft 26 cited `ecf-server`'s
-  `destroy.py:416-420`, which refuses while the service runs rather than stopping it), in one transaction clears the local hold, deletes the `cutover` record and writes the abort
-  marker, then restarts the service if its unit is installed (the restart sets the tick's clock: the
-  local hold paragraph above; fault `norestart`). The addresses stay paused (OD-778: no pause set; the
-  operator resumes them with `ecf resume`, as after a step-2 refusal or a restore), and the local service
-  posts "fraud flagging back on" when it starts, never the CLI (fault `postbeforestart`: the CLI's post
-  with no service running, after step 8 removed the unit, announces checking that isn't happening); AWS
-  can't fetch meanwhile: before step 6 it has no address, and from step 6 its `migrating` hold is up
-  (ground truth A1); (2) force-deletes the step-5 mailbox and bot-token secrets; (3) runs `ecf aws
-  destroy`'s deletes by the recorded stack ID: a
+  `destroy.py:151-157`), records its actor in a local Security Notice, and takes the migrate lock for
+  its gate and step (1), so it waits for a step 8 in progress; once started, every other `migrate`
+  subcommand is refused (as v1's `destroy.started`), and step 9 refuses while the marker exists. Each
+  run, first or re-run, in this order: (1) with the local service stopped (after any tick in progress;
+  the CLI stops it as v1's CLI does, `launchctl bootout` through `service_unit.py:202-204`, which waits
+  up to `STOP_TIMEOUT_S`, 60 s, and raises after it: the abort then says "re-run `migrate abort`"), in
+  one transaction that re-reads its gate clears the local hold, deletes the `cutover` record and writes
+  the abort marker carrying the record's stack ID (OD-781), then restarts the service if its plist exists
+  (the restart sets the tick's clock: the local hold paragraph above; fault `norestart`); if the plist is
+  gone (step 8 removed it), it prints "run `ecf service install`: nothing checks mail until you do; this
+  abort continues" at once (OD-780; draft 27 named it only on the last line, after a delete that can take
+  an hour). The addresses stay paused (OD-778: no pause set; the operator resumes them with `ecf resume`,
+  as after a step-2 refusal or a restore; a paused address is still fetched and flagged). Nothing is
+  posted to Slack (OD-780). AWS can't fetch meanwhile: before step 6 it has no address, and from step 6
+  its `migrating` hold is up (ground truth A1); (2) force-deletes the step-5 mailbox and bot-token
+  secrets; (3) runs `ecf aws destroy`'s deletes by the marker's stack ID (OD-781; fault
+  `abortreadsconfig`: by the config's ID, which an `ecf aws destroy` during cutover removed, the abort can
+  never prove the stack gone): a
   change set that turns off the tables' and the user pool's deletion protection and the tables' PITR
   (with PITR on, `DeleteTable` keeps a system backup for 35 days, PointInTimeRecovery_Howitworks.html,
   fetched 2026-11-06 (rv); Step 12 checks `ListBackups` with `BackupType` SYSTEM shows none for the
@@ -3539,11 +3670,10 @@ estimate, unverified).
   gone; the deployer has no S3 delete right, OD-743), any `<p>-scratch-*` table (PITR restores create
   them outside the stack; one still `CREATING` is waited for), then the one-time identity `job/*` and
   the Slack configuration token `slack/config`, force-deleted with the deployer credentials, since no
-  resource policy can remove access; (4) `ecf aws destroy`'s finish: on gone for that ID by its rule
-  (fault `abortabsentisgone`: a wrong profile's "does not exist" read as gone leaves the stack), it
-  deletes the marker and switches the CLI to local mode (OD-771; abort has no mode switch of its own and
-  no unit reinstall: when step 8 had removed the unit, the abort's last line names the install step,
-  and nothing checks mail until the operator runs it; OD-778). The abort downloads
+  resource policy can remove access; (4) the finish: on gone for the marker's ID by `ecf aws destroy`'s
+  rule (fault `abortabsentisgone`: a wrong profile's "does not exist" read as gone leaves the stack), it
+  writes the AWS config in local mode with the stack ID removed and deletes the marker (OD-781; in
+  either order, `life_model4.py`; abort has no unit reinstall). The abort downloads
   no audit: an aborted install's AWS audit, `logs/` included, goes with the stack (stated, OD-772;
   draft 25's download and its faults `copyonce`, `skipexisting` and `rerunclears` are removed, with the
   deployer's `logs/` read). v1 destroy's Slack steps (archiving channels, the manifest delete,
@@ -3551,8 +3681,9 @@ the token revoke) are not run: the laptop keeps the Slack app. A killed abort is
   it again (each delete is idempotent, as `aws destroy`'s are; a stack left `DELETE_FAILED` is deleted
   again; with no stack left it finishes, OD-766). A `migrate run` chunk still running when the stack is
   deleted fails its writes, which nothing reads again. Step 12 records abort-to-local-checking and
-  abort-to-`init` times on a seeded 2 million-row audit and passes local checking back within 2 minutes
-  of the abort's start (nothing precedes the resume but the step-up and the lock); `init --migrating`
+  abort-to-`init` times on a seeded 2 million-row audit and passes the local service running unheld
+  within 2 minutes of the abort's start, or of the `ecf service install` step (1) names (the step-up, the
+  lock and the service's stop, up to 60 s, come first); `init --migrating`
   retries a same-name create while a deleted queue, secret or table is still going (SQS waits 60 s,
   API_DeleteQueue, fetched 2026-11-06 (rv); the seed secret, a stack resource, is deleted with
   `ForceDeleteWithoutRecovery` by CloudFormation's default, DeletionPolicy page, fetched 2026-11-08,
@@ -3602,12 +3733,14 @@ the token revoke) are not run: the laptop keeps the Slack app. A killed abort is
   item becomes `failed_unknown` (OD-673), an existing `pending` `sent` row set to `unknown` so `\Sent`
   reconciliation settles it where the provider keeps sent mail; with no `sent` row it needs `ecf item
   resolve` and a manual redo; a `migrate` of a v1 item `executing` or `failed` with a `sent` row gives
-  `failed_unknown` too (OD-775). Fraud flagging is off from step 1 to
-  the first AWS check (stated limit, OD-621). Clicks fail visibly from step 2 to step 9.
+  `failed_unknown` too (OD-775). Fraud flagging is off from step 2's hold to
+  the first AWS check (stated limit, OD-621; a paused address is still flagged, `pause.py:3-6`). Clicks fail visibly from step 2 to step 9.
 - **Scheduled export** writes to `backups/`; `ecf export --pull` copies the newest (or a named)
   `backups/` object to its own folder under the laptop's `export_dir` (OD-779: a lost Mac's candidates
-  rank these last, F12) without bumping `export.seq` or checking the key (the Mac checks at restore), where the local prune
-  applies; SPEC §11.9 and `doctor` say so.
+  rank these last, F12) without bumping `export.seq` or checking the key (the Mac checks at restore); v1's
+  prune reads only `export_dir` itself (`scheduled_export.py:204`), so pulled copies are kept until the
+  operator deletes them, and a pulled copy newer than every Mac backup is not used automatically (F12's
+  order; the runbook says restore it by name if wanted); SPEC §11.9 and `doctor` say so.
 
 ### Operations
 
@@ -3710,11 +3843,20 @@ mail only, destroyed after each run with the Budget alarm on.
   unit reinstall and own mode switch, step 8's and step 9's marker refusals, `destroy`'s committing
   refusal and an early refusal before `commit`; round 26 found the overcount.)
 - From draft 27 (OD-778, OD-779): the migration's pause set, its v1 `ecf pause` change and the abort's
-  resume of it; step 8's "either order" and its mode switch first; `ecf destroy` reaching AWS from a
-  local-mode CLI (now `ecf aws destroy`); the key check at `ecf export --pull`; the `jobkeep/<job>`
-  SHA-256 in the record, `status` and the pull; the reset of every `item:` escalation and its
-  duplicate-alert limit; the "un-settle only if a line was dropped" condition; Step 9's card-edit pass
-  line (now recorded).
+  resume of it; step 8's "either order" and its mode switch first; the key check at `ecf export
+  --pull`; the `jobkeep/<job>` SHA-256 in the record, `status` and the pull; the "un-settle only if a
+  line was dropped" condition; Step 9's card-edit pass line (now recorded). Replaced, not removed (round
+  27 corrected this list): `ecf destroy` reaching AWS from a local-mode CLI, by the new command `ecf aws
+  destroy`; the reset of every `item:` escalation and its duplicate-alert limit, by the delivered mark
+  and a narrower stated duplicate.
+- From draft 28 (OD-780 to OD-782): the Slack posts "fraud flagging off since T" and "back on" (the CLI
+  prints the state); v1 `ecf destroy`'s refusal on the hold, `cutover` and the marker (the recorded ID
+  alone); the runtime roles' SSM `PutParameter`; card part D's "AWS head left" stated count (the commit
+  writes AWS's head reference instead). Replaced, not removed: step 8's marker reads, by the migrate lock;
+  draft 27's key split by `Opened.own`, by a split on the current key. Added: the migrate lock, also taken
+  by `ecf aws destroy`; the stack ID in the `cutover` record and the marker; step 2's and `init`'s
+  refusals on the recorded ID; the `<p>-app` name and account checks on a typed ID; the removal policy
+  Aspect; the helper's `ServiceTimeout`; the seed secret's stated name.
 
 ## Steps
 
@@ -3823,24 +3965,24 @@ small task with its own review.
    an upgrade whose packaged set version differs warns, lists the addresses on the old version and
    requires `upload-private` to be re-verified; **the models (OD-672, OD-680, OD-690, OD-702, OD-724,
    OD-731, OD-740, OD-748, OD-756, OD-769, OD-777):** `freeze_model15.py`, `delay_model13.py`, `map_model15.py`,
-   `card_model9.py`, `life_model3.py` and `check_refs.py` (now in `state-archive/m1/model/`) move to
-   `tests/m1/` with `run_all14.py`'s seeded faults, its table of the check each must be caught by and its stated-limit
+   `card_model10.py`, `life_model4.py` and `check_refs.py` (now in `state-archive/m1/model/`) move to
+   `tests/m1/` with `run_all15.py`'s seeded faults, its table of the check each must be caught by and its stated-limit
    counts, masked faults' included (a traceback, another check or a changed count fails the run;
-   restatements marked), in their own CI workflow (`run_all14.py --ci`, on changes to the models or to
+   restatements marked), in their own CI workflow (`run_all15.py --ci`, on changes to the models or to
    the pure functions they import, and nightly; a public repository's
    schedule stops after 60 days without activity, unverified, so `doctor` for the repo's maintainer
    names the last nightly run): one job per base kind or fault, each with its own timeout, faults
    stopping at their first catch, every job under 45 minutes and 8 GB on the runner (a public
    repository's standard runner has 16 GB, GitHub-hosted runners reference, fetched 2026-11-06 (rv));
-   the full `rollback` (6,315,222 states, 5.5 GB peak) and `upgrade+foreign`
-   (8,140,020 states, 7.2 GB peak) base kinds run in the macOS merge gate (draft 25's `probe+forge2` is removed: no
+   the full `rollback` (6,315,222 states, 5.1 GB peak) and `upgrade+foreign`
+   (8,140,020 states, 7.0 GB peak) base kinds run in the macOS merge gate (draft 25's `probe+forge2` is removed: no
    base action reads keys outside a rollback, OD-777; safety faults on those kinds stop at their first
    violation and run in CI; `nolocallock`, `svc` and `abortalways` run on `rollback+nojob2`; OD-756,
    OD-764) on the same trigger as
    CI (the models and the pure functions they import; a CI test compares the two path lists; Step 6's
    gate line records them), never on the runner; a growth budget: a draft whose model adds over 50% to a kind's states says why,
    and every run's measured peak (its resident set's peak, `ru_maxrss` from `os.wait4`, which
-   `run_all14.py` prints in GiB for each run, OD-777) stays under 70% of the gate machine's RAM
+   `run_all15.py` prints in GiB for each run, OD-777) stays under 70% of the gate machine's RAM
    (`check_refs.py` fails a larger one, OD-779; past that a kind is split by job-2 kind, as `+nojob2`
    already is); each model
    action stays one real write and reads only what a real read gives (`draft18-atomicity.md` to
@@ -3951,29 +4093,33 @@ small task with its own review.
    purpose `migrate`, refused for an unconfirmed identity, an install no longer `migrating` or a link
    not done (OD-772, OD-779); a held
    local tick credits nothing, and abort's step (1) runs with the service stopped, so the restart's
-   first tick credits nothing from before the lift (OD-771); abort writes its marker, deletes `cutover`
-   and restarts the service first, leaves every address paused, posts nothing from the CLI (the service
-   posts "fraud flagging back on" when it starts), names the install step when the unit is gone, and stops
-   a step-8 process still running and step 9 by the marker (OD-778), downloads nothing, force-deletes the step-5
-   secrets, the one-time identity and `slack/config`, and finishes through `aws destroy`'s finish (OD-771,
-   OD-772); the `committed` re-ask with the kept
+   first tick credits nothing from before the lift (OD-771); the migrate lock held by step 8, the abort's
+   gate and step (1) and `ecf aws destroy`, freed by a kill (OD-780); abort writes its marker with the
+   `cutover` record's stack ID, deletes `cutover` and restarts the service first, leaves every address
+   paused, posts nothing to Slack, names `ecf service install` at step (1) when the plist is gone, and
+   step 9 refuses while the marker exists (OD-780, OD-781), downloads nothing, force-deletes the step-5
+   secrets, the one-time identity and `slack/config`, deletes by the marker's ID and finishes by writing
+   the AWS config (local, ID removed) and deleting the marker (OD-771, OD-772, OD-781); the `committed` re-ask with the kept
    copy deleted reads `jobkeep/<job>` again and finishes after a local export bumped `export.seq`
    (OD-760); a bundle the Mac's key doesn't verify refused at its restore, and a change set touching the
-   seed resource refused (OD-770); `ecf aws destroy` works in either CLI mode, addresses only the recorded
-   stack ID (a machine without one asks for it and accepts it only while DescribeStacks shows it live),
-   counts the stack gone on `DELETE_COMPLETE` or on "does not exist" with the ID's account and region
-   matching, and on `DELETE_FAILED` deletes again without a change set; v1's `ecf destroy` refused while
-   the hold, `cutover`, the marker or a recorded stack ID exists; step 8 removes the unit, then the record,
-   switching the CLI to AWS mode with that last write, and a killed step 8 re-run from the record finishes
-   (OD-778); a
+   seed resource refused (OD-770); `ecf aws destroy` works in either CLI mode under the migrate lock,
+   addresses only the recorded stack ID (a machine without one asks for it and accepts it only while
+   DescribeStacks returns any status but `DELETE_COMPLETE`, with stack name `<p>-app` and the caller's
+   account; calls in the ARN's region), counts the stack gone on `DELETE_COMPLETE` or on "does not exist"
+   with the ID's account matching, on `DELETE_FAILED` deletes again without a change set, on
+   `UPDATE_ROLLBACK_FAILED` refuses naming `ecf aws continue-rollback`, and finishes by deleting
+   `aws-freeze.json`, then writing the config (local, ID removed); `init` refused while a stack ID is
+   recorded; v1's `ecf destroy` refused, in the CLI and in `ecf-server destroy`, while a stack ID is
+   recorded; step 2 refused with no recorded ID; step 8 runs bootout, the plist's delete, the mode switch
+   and the record's delete, and a killed step 8 re-run from the record finishes (OD-778, OD-780, OD-781); a
    bundle v1 can't read refused at the Mac's restore, then `migrate rollback --abort` (OD-767); AWS's slack-out
    records `delivered_sids` only after Slack accepted, the migrate seed sits in its own entry, and a move
    back takes undelivered lines off `reported`, bumps `replies`, un-settles every carried run and empties
    its head, so v1 posts a fresh head and threads the reply (OD-776, OD-779); AWS's slack-out marks an
    escalation delivered only after Slack accepted its card, and a move back resets only unmarked ones
    (OD-779); the rollback export marks a card `stale` from
-   the version its mark recorded and the commit edits it, and resets every unresolved `item:` escalation
-   (OD-761, OD-776); a move back after `migrate finalize` (rollback, unit installed at `complete`, `ecf address set
+   the version its mark recorded and the commit edits it (OD-761, OD-776); the commit writes the head
+   reference of a scan run AWS started as its `scan:` row, so v1 edits that head (OD-782); a move back after `migrate finalize` (rollback, unit installed at `complete`, `ecf address set
    --app-password`) restores into the kept and into an empty database (OD-758, OD-766); the
    one-time identity gone with no `DeletedDate` after its job ends, after its record expires before
    `freezing` and after a `migrate abort` before step 6; no root key in any AWS request (a test); a secret write with a valid Cognito step-up
@@ -4127,7 +4273,8 @@ small task with its own review.
 9. **Slack request URL (go-ahead):** a move back's commit with 1,000 open items: the time to its first
    new escalation (recorded, OD-779: v1's sender holds 60 s after a 429, so no fixed line holds; OD-755);
    a move back with 40 delivered escalations of one address and one undelivered: only the undelivered one
-   posted (OD-779); manual install with the signing secret; Socket Mode to request
+   posted (OD-779); a scan run AWS started, moved back: its head edited, no second head (OD-782); manual
+   install with the signing secret; Socket Mode to request
    URL and back (`reauthorize`, then `set-tokens` with a new app-level token); `reauthorize` keeps the URL; real clicks; 5 forced-cold clicks and form buttons; the
    placeholder and `views.update`; a non-approver's Show excerpt; bad-signature and stale posts;
    replayed body; double click; a click processed after 5 minutes in the queue (accepted). Cancel
@@ -4260,16 +4407,21 @@ small task with its own review.
       `ecf export --pull` copy ranking last (OD-760, OD-773, OD-779); a `DeleteStack`
       with the tables still protected: whether `logs/` survives and the alert arrives (recorded; OD-754).
     - **Abort:** `migrate abort` before step 6 and after it, killed after step (1) and after `DeleteStack`
-      started and re-run: the local service back within 2 minutes of the abort's start, every address
-      still paused until `ecf resume` (no address resumed by ecf), the install gone by its recorded stack
-      ID, the CLI back in local mode (OD-768, OD-771, OD-778); an abort after step 8 removed the unit: the
-      abort's last line names the install step, and local checking is back within 2 minutes of that
-      install (OD-778); step 2 refused with a post still queued in v1's `slack_out`, then run again
-      (OD-772); a second machine without the recorded ID refused by `aws destroy` until the operator types
-      a live stack's ID (a deleted stack's ID refused), and never resolving a new install's stack by name
-      (OD-771, OD-778); v1's `ecf destroy` refused during cutover and after a move back's `complete` (OD-778);
-      `aws destroy` re-run on a `DELETE_FAILED` stack, and on a stack DescribeStacks no longer describes,
-      finishing (OD-778).
+      started and re-run: the local service running unheld within 2 minutes of the abort's start (the
+      stop's time recorded apart), every address still paused until `ecf resume` (no address resumed by
+      ecf), the install gone by the marker's stack ID, the CLI back in local mode with no ID recorded
+      (OD-768, OD-771, OD-778, OD-781); an abort after step 8 removed the unit: step (1) names `ecf service
+      install`, and the service is running unheld within 2 minutes of that install (OD-780); an abort after
+      an `ecf aws destroy` during cutover finishing by the marker's ID (OD-781); step 2 refused with a post
+      still queued in v1's `slack_out`, then run again (OD-772), and refused with no recorded ID (OD-781); a
+      second machine without the recorded ID refused by `aws destroy` until the operator types the ID of a
+      stack DescribeStacks still describes (held, frozen and `DELETE_FAILED` included; a deleted stack's ID,
+      a `<p>-base` ID and another account's refused), and never resolving a new install's stack by name
+      (OD-771, OD-778, OD-780); v1's `ecf destroy` and `ecf-server destroy` refused while a stack ID is
+      recorded and allowed after `aws destroy` finishes (OD-781); `init --migrating` refused until then
+      (OD-781); `aws destroy` re-run on a `DELETE_FAILED` stack finishing; whether, and how long, a
+      deleted stack's ID is still described is recorded, and the "does not exist" path is tested against
+      a stub (OD-778).
     - **Move back after finalize:** finalize, then `ecf migrate rollback` (the service started held, the unit
       installed at `complete`), `ecf address set <address> --app-password` per address; mail checks resume
       (OD-758, OD-766); the same onto a fresh Mac's empty database (no `cutover` record: not refused).
@@ -5117,6 +5269,37 @@ folded in: the abort's stop cited from v1's CLI (`service_unit.py`), the peak me
 `ru_maxrss`, model counts comma-grouped.
 
 Draft 27 gets a full review on Opus (OD-577): text, models and `run_all14.py` output together.
+
+### Phase R round 27 (8 Opus, draft 27 775b75a, 2026-11-10)
+
+Three highs, all from draft 27's fixes or removals (one also from an older model gap); about 12 mediums.
+Raw: `state-archive/m1/phase-r-raw/r27-*.md`; merged: `review-findings.md`, "# Round 27". The operator
+chose to reshape (Decisions, "After Phase R round 27"): an audit of the life model's writes and reads,
+a fix list with one Opus review, `life_model4.py`, then the text. Draft 28's models are
+`freeze_model15.py`, `map_model15.py`, `card_model10.py`, `delay_model13.py` and `life_model4.py`, run by
+`run_all15.py`, with `check_refs.py` v9.
+
+| # | Round-27 finding | Landed |
+|---|---|---|
+| RH1 | `ecf aws destroy` during cutover, then `migrate abort`: the abort proves the stack gone by the config's ID, which the destroy removed, and a typed ID of a deleted stack is refused, so the Mac stays held (184 stuck in a patched model; the abort's finish read no ID in life_model2 and life_model3 too) | the `cutover` record and the marker carry the stack ID; the abort deletes and proves gone by the marker's (`abortreadsconfig`, `no2refuse`; OD-781) |
+| RH2 | the key split read `Opened.own` the wrong way round: v1's `own` is false for a forged bundle, so a forgery would get "type the key again" and no notice; `own` also counts rotated-out keys, so a seed moved to a leaked old key could be retyped and restored | the split and the acceptance on the current key only; a new Mac never prompts with the header's fingerprint (`ownsplit`, `ownanykey`, `headerhint`; OD-780) |
+| RH3 | step 8's last write is the SQLite `cutover` delete and the AWS config's mode, fused in life_model3; record then mode with a kill between leaves no record to resume from and the abort's gate closed (14 cannot-finish) | bootout, plist delete, mode, record, under the migrate lock (`recordbeforemode`, `nolock8`; OD-780) |
+
+Mediums: a typed ID accepted in any status but `DELETE_COMPLETE` (`typedliveonly`; OD-780); the
+recorded ID removed by the destroy's finish, and v1's `ecf destroy` refused only while one is recorded
+(`keeprid`, `v1norefuse`; OD-781); no "fraud flagging" Slack posts (OD-780, operator decision); a lift
+after the Mac is lost stated (OD-780); one lock instead of the marker reads, the race between a step-8
+read and an abort gone (`nolock8`; OD-780); `ecf service install` named at the abort's first step (OD-780);
+the destroy's wait and the helper's `ServiceTimeout` (OD-782); CDK's retained resources (OD-782); a second
+scan head for a run AWS started (`noawshead`; OD-782); three faults made checks instead of restatements
+(their violations computed from the state); Step 12's 2-minute item made measurable. Lows folded in:
+the stale text round 27 listed, `migrate`'s purpose in one place, `UPDATE_ROLLBACK_FAILED` in the
+destroy, the `--pull` folder's prune, the seed's name, `jobkeep/` writes by `ecf-jobs` only, no runtime
+SSM write, the burst card past 20, the escalation reset's `posted_at` and `thread_key`, the runner's
+Linux memory units and host RAM. The pre-review of the fix list found one more high (dropping step 9's
+marker read let a re-run after a killed step 8 and an abort lift AWS during the abort; `nomark9`), kept.
+
+Draft 28 gets a full review on Opus (OD-577): text, models and `run_all15.py` output together.
 
 ## Open questions
 
