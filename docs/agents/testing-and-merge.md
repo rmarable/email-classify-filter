@@ -33,3 +33,6 @@ Reserved for Claude Code. GitHub CI runs on Linux only (to stay within free minu
   and run again rather than merge.
 - Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
 - No `ecf models install` step before the gate.
+- **Card scan** (EVAL-PRIVATE.md X5): every merge to `main`, docs-only merges included (a
+  card-only merge is `.md` only), runs `uv run python scripts/check_card_injection.py --tree HEAD
+  --no-skip` on the local merge commit; it must refuse nothing.

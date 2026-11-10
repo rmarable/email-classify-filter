@@ -68,16 +68,39 @@ def test_marked_cards_are_refused_in_a_public_set_and_required_in_a_private_one(
     (pub / "cases" / "starter-injection.md").write_bytes(
         (SYNTHETIC / "cases" / "starter-injection.md").read_bytes()
     )
-    assert marker_refusals(pub, private=False) == ["inj: marked card in a public set (hidden_text)"]
+    (pub / "cases" / "hand.md").write_text(_card("hand", "author: hand\nhidden_text: x\n"))
+    # a generated card is exempt in a public set (it can't go private, P1); nowhere else
+    (pub / "cases" / "made.md").write_text(_card("made", "author: generated\nhidden_text: x\n"))
+    assert marker_refusals(pub, private=False) == [
+        "hand: marked card in a public set (hidden_text)",
+        "inj: marked card in a public set (hidden_text)",
+    ]
     assert marker_refusals(pub, private=True) == ["plain: private card without an injection marker"]
 
 
-def test_committed_sets_mark_only_known_cards() -> None:
-    """Before the move, today's public sets hold marked cards; this records which, so the move
-    list and the refusal agree (the move commit turns the refusal on)."""
-    for s in ("synthetic", "drafts", "heldout3"):
-        for msg in marker_refusals(EVAL / s, private=False):
-            assert "marked card in a public set" in msg
+def test_committed_public_sets_mark_no_card() -> None:
+    """After the move every injection card is private; only the pinned starter stays public. The
+    predicate is applied directly: the builder's generated-card exemption doesn't apply here."""
+    marked = [
+        p.relative_to(EVAL).as_posix()
+        for p in sorted(EVAL.glob("*/cases/*.md"))
+        if markers.reasons(markers.front_matter(p.read_text(), source=p.name))
+        and not markers.is_pinned_starter(p.stem, p.read_bytes())
+    ]
+    assert not marked, marked
+
+
+def test_build_refuses_a_marked_card_in_a_public_set(tmp_path: Path) -> None:
+    (tmp_path / "cases").mkdir()
+    (tmp_path / "cases" / "plain.md").write_text(_card("plain"))
+    (tmp_path / "cases" / "inj.md").write_text(_card("inj", "hidden_text: x\n"))
+    with pytest.raises(InvalidInputError) as e:
+        build_all(tmp_path)
+    assert str(e.value) == ("an injection card belongs in the private set (X1): inj: marked card"
+                            " in a public set (hidden_text)")  # fmt: skip
+    assert not (tmp_path / "eml").exists()  # refused before anything is written
+    (tmp_path / "cases" / "inj.md").unlink()
+    assert build_all(tmp_path).built == ["plain"]
 
 
 def test_build_refuses_a_card_whose_id_differs_from_its_file_and_an_orphan_file(

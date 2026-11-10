@@ -19,8 +19,14 @@ from ecf.eval import labels as label_file
 from ecf.eval import merged as mg
 from ecf_server import claude_eval, draftruns
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import split_set
 from tests.test_claude_eval import connector, start
-from tests.test_draft_eval import make_droot
+from tests.test_draft_eval import (
+    BENIGN_DRAFT,
+    NO_DRAFT,
+    _card,  # pyright: ignore[reportPrivateUsage]
+    make_droot,
+)
 
 pytestmark = pytest.mark.usefixtures("conn")
 
@@ -36,18 +42,9 @@ def pub(tmp_path: Path) -> Path:
 
 
 def make_split_drafts(tmp_path: Path) -> Path:
-    """The test draft set split: d-inject in the private half, merged and fresh."""
-    p = make_droot(tmp_path / "tests" / "eval")
-    priv = tmp_path / "eval" / "private" / "drafts"
-    for d in ("cases", "eml"):
-        (priv / d).mkdir(parents=True)
-        for f in (p / d).glob("d-inject.*"):
-            shutil.move(f, priv / d / f.name)
-    rows = (p / "labels.jsonl").read_text().splitlines()
-    (p / "labels.jsonl").write_text("".join(r + "\n" for r in rows if '"d-inject"' not in r))
-    (priv / "labels.jsonl").write_text("".join(r + "\n" for r in rows if '"d-inject"' in r))
-    mg.refresh_merged(p)
-    return p
+    """The test draft set as `make_droot` lays it out: d-inject in the private half, merged and
+    fresh."""
+    return make_droot(tmp_path)
 
 
 def _restart(db_path: Path, clock: FakeClock) -> list[str]:
@@ -154,7 +151,10 @@ def test_two_installs_on_one_stale_set_both_end_with_it_fresh(pub: Path) -> None
 
 
 def test_a_set_without_a_private_half_needs_no_lock(tmp_path: Path) -> None:
-    root = make_droot(tmp_path / "tests" / "eval")
+    texts = {cid: _card(cid, draft) for cid, draft in (("d-benign", BENIGN_DRAFT),
+                                                       ("d-none", NO_DRAFT))}  # fmt: skip
+    root = split_set(tmp_path, "drafts", texts)  # no marked card: no private half
+    assert not (tmp_path / "eval").exists()
     assert claude_eval._set_for_recovery(root) == (None, None)  # pyright: ignore[reportPrivateUsage]
 
 

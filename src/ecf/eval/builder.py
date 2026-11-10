@@ -166,15 +166,19 @@ def _same(path: Path, data: bytes, digest: str) -> bool:
 @merged.named
 def marker_refusals(root: Path, *, private: bool) -> list[str]:
     """X1 (EVAL-PRIVATE.md, "Builder refusal"): in a public set, every card its front matter
-    marks as an injection card except the pinned `starter-injection`; in a private set, every card
-    it doesn't mark. `build_all` calls it from the move commit on; tests call it on fixtures."""
+    marks as an injection card except the pinned `starter-injection` and generated cards; in a
+    private set, every card it doesn't mark. `build_all` refuses on either. A generated card
+    (`ecf eval generate` writes `hidden_text`) is never gate evidence and a private half refuses
+    it (P1), so it stays where it was made; X5's scan still checks it if it is ever committed."""
     out: list[str] = []
     for p in sorted((root / "cases").glob("*.md")):
         data = p.read_bytes()
-        why = markers.reasons(markers.front_matter(data.decode("utf-8"), source=p.name))
+        front = markers.front_matter(data.decode("utf-8"), source=p.name)
+        why = markers.reasons(front)
         if private and not why:
             out.append(f"{p.stem}: private card without an injection marker")
-        elif not private and why and not markers.is_pinned_starter(p.stem, data):
+        elif (not private and why and front.get("author") != AUTHOR
+              and not markers.is_pinned_starter(p.stem, data)):  # fmt: skip
             out.append(f"{p.stem}: marked card in a public set ({', '.join(why)})")
     return out
 
@@ -201,6 +205,10 @@ def build_all(root: Path) -> BuildReport:
         # every build of a private half, whoever calls it (EVAL-PRIVATE.md, "Builder refusal")
         raise InvalidInputError("a private card must carry an injection marker (X1): "
                                 + "; ".join(unmarked[:10]))  # fmt: skip
+    if not merged.is_private_root(root) and (marked := marker_refusals(root, private=False)):
+        # a public set holds no injection card, from the move commit on (EVAL-PRIVATE.md, Step 5)
+        raise InvalidInputError("an injection card belongs in the private set (X1): "
+                                + "; ".join(marked[:10]))  # fmt: skip
     cards = load_cards(root / "cases")
     if merged.is_private_root(root) and (made := [c.id for c in cards if c.author == AUTHOR]):
         # a generated card is never part of a private half (P1; review round 13, B1)

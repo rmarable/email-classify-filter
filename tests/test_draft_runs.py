@@ -26,6 +26,7 @@ from ecf.eval.drafts import DraftsFile
 from ecf.eval.results import load_result
 from ecf_server import claude_eval, draftcheck, draftruns, evalrun
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import card_path, edit_in_place, settle_set
 from tests.test_claude_eval import (
     REQUEST,
     S1,
@@ -185,13 +186,10 @@ def test_a_card_changed_since_the_pilot_must_be_a_pilot_miss(
     db_path: Path, clock: FakeClock, droot: Path
 ) -> None:
     _pilots(db_path, clock, droot)
-    card = droot / "cases" / "d-benign.md"
+    card = card_path(droot, "d-benign")
     card.write_text(card.read_text().replace("We tried two", "We tried three"))
-    from ecf.eval import labels  # noqa: PLC0415
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
-    assert not build_all(droot).findings
-    labels.confirm(droot, "d-benign", clock.now().date())
+    settle_set(droot, ("d-benign",), clock.now().date())
     with pytest.raises(InvalidInputError, match="not a pilot classifier-stage miss: d-benign"):
         claude_eval.confirm_set(clock, db_path.parent, droot, evalrun.set_version(droot))
     assert _reg(db_path).confirmation is None
@@ -965,21 +963,18 @@ def test_a_pilot_score_carries_over_only_for_an_unchanged_card(
     db_path: Path, clock: FakeClock, droot: Path
 ) -> None:
     """5B-4: a card rewritten between pilot attempts runs again; its old score isn't kept."""
-    from ecf.eval import labels  # noqa: PLC0415
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     start(db_path, clock, droot)
     _drive(db_path, clock, until=1, limit=1)
     done = [w.case.id for w in _run().works if w.result is not None]
     _stop(db_path, clock)
-    card = droot / "cases" / f"{done[0]}.md"
+    card = card_path(droot, done[0])
     card.write_text(
         card.read_text().replace("\n---\n", "\n---\nP.S. One more line.\n", 1)
         if "\n---\n" in card.read_text()
         else card.read_text() + "\nOne more line.\n"
     )
-    assert not build_all(droot).findings
-    labels.confirm(droot, done[0], __import__("datetime").date(2026, 10, 2))
+    settle_set(droot, (done[0],), __import__("datetime").date(2026, 10, 2))
     start(db_path, clock, droot, new_attempt="card rewritten")
     assert done[0] in {w.case.id for w in _run().works}  # it runs again
     assert done[0] not in _run().prior_scored
@@ -989,15 +984,12 @@ def test_confirm_set_checks_cards_against_every_pilot(
     db_path: Path, clock: FakeClock, droot: Path
 ) -> None:
     """5B-4: a card changed between the two pilots is checked against the miss rule too."""
-    from ecf.eval import labels  # noqa: PLC0415
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     start(db_path, clock, droot, forced_draft=True)
     _drive(db_path, clock)
-    card = droot / "cases" / "d-benign.md"
+    card = card_path(droot, "d-benign")
     card.write_text(card.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
-    labels.confirm(droot, "d-benign", __import__("datetime").date(2026, 10, 2))
+    settle_set(droot, ("d-benign",), __import__("datetime").date(2026, 10, 2))
     start(db_path, clock, droot)
     _drive(db_path, clock)
     with pytest.raises(InvalidInputError, match="not a pilot classifier-stage miss"):
@@ -1242,11 +1234,11 @@ def _set_read_errors(root: Path) -> dict[str, Exception]:
 
     case = evalrun.read_set(root).selected(fraud_only=False)[0]
     kept = case.path.read_bytes()
-    case.path.write_bytes(kept + b"x")
+    edit_in_place(case.path, kept + b"x")
     try:
         changed = caught(lambda: evalrun.case_bytes(case))
     finally:
-        case.path.write_bytes(kept)
+        edit_in_place(case.path, kept)
     return {
         "unreadable": merged.unreadable(root / "labels.jsonl", PermissionError(13, "denied")),
         "card": caught(lambda: evalrun.check_target("c1", "payment_related:maybe", {})),
@@ -1512,7 +1504,7 @@ def test_a_case_edited_while_a_draft_run_prepares_records_the_cause(
     case = evalrun.read_set(droot).selected(fraud_only=False)[0]
 
     def edited_then(work: Callable[[], None]) -> None:
-        case.path.write_bytes(case.path.read_bytes() + b"x")
+        edit_in_place(case.path, case.path.read_bytes() + b"x")
         work()
 
     opts = claude_eval.Options(droot)

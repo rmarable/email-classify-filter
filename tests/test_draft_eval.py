@@ -9,7 +9,6 @@ import json
 import os
 import sqlite3
 import stat
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from ecf.errors import InvalidInputError
-from ecf.eval import drafts, labels
+from ecf.eval import drafts
 from ecf.eval.builder import build_all
 from ecf.eval.cards import Expected, parse_card
 from ecf.eval.drafts import DraftsFile, DraftSpec, full_name_pattern, read_names
@@ -26,6 +25,7 @@ from ecf.schema import with_fixed
 from ecf_server import actor, claude_eval, draftcheck, drafteval, evalrun, gate
 from ecf_server.api import _window_tuning  # pyright: ignore[reportPrivateUsage]
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import split_set
 from tests.test_claude_eval import (
     REQUEST,
     S1,
@@ -87,15 +87,10 @@ def droot(tmp_path: Path) -> Path:
 
 def make_droot(tmp_path: Path) -> Path:
     """A draft set: a benign card, an injection card and a no-draft card, all confirmed."""
-    r = tmp_path / "drafts"
-    (r / "cases").mkdir(parents=True)
-    for cid, draft in (("d-benign", BENIGN_DRAFT), ("d-inject", INJECT_DRAFT),
-                       ("d-none", NO_DRAFT)):  # fmt: skip
-        (r / "cases" / f"{cid}.md").write_text(_card(cid, draft))
-    assert not build_all(r).findings
-    for cid in ("d-benign", "d-inject", "d-none"):
-        labels.confirm(r, cid, date(2026, 10, 1))
-    return r
+    ids = ("d-benign", "d-inject", "d-none")
+    drafts_ = (BENIGN_DRAFT, INJECT_DRAFT, NO_DRAFT)
+    texts = {cid: _card(cid, d) for cid, d in zip(ids, drafts_, strict=True)}
+    return split_set(tmp_path, "drafts", texts, ids)  # d-inject is marked: the private half
 
 
 # The card block: its shape, the policy load checks (Q1), the followed pattern against the card's
@@ -468,6 +463,16 @@ def test_the_rules_stop_is_recorded_as_the_reason_no_draft_was_offered(
         assert c.cause == ("not_offered" if c.allowed else None)
 
 
+def _as_if_read_from(conn: sqlite3.Connection, run_id: str, metrics: dict[str, Any],
+                     version: str) -> None:  # fmt: skip
+    """The run's stored version and its record of the merged set it read made to match a
+    countable set, so only the run's kind can refuse it at the gate."""
+    metrics = metrics | {"merged_version": version, "private_commit": "0" * 40}
+    conn.execute("UPDATE eval_runs SET set_version = ?, metrics = ? WHERE run_id = ?",
+                 (version, json.dumps(metrics), run_id))  # fmt: skip
+    conn.commit()
+
+
 def test_a_forced_run_offers_only_draft_reply_and_tells_refusals_apart(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, droot: Path
 ) -> None:
@@ -520,11 +525,9 @@ def test_a_forced_run_offers_only_draft_reply_and_tells_refusals_apart(
     from tests.eval_checkout import commit  # noqa: PLC0415
     from tests.test_eval_recovery_x13 import make_split_drafts  # noqa: PLC0415
 
-    countable = make_split_drafts(droot.parent / "checkout")
-    commit(droot.parent / "checkout", first=True)
-    conn.execute("UPDATE eval_runs SET set_version = ? WHERE run_id = ?",
-                 (evalrun.set_version(countable), run.run_id))  # fmt: skip
-    conn.commit()
+    countable = make_split_drafts(droot.parents[2] / "checkout")
+    commit(droot.parents[2] / "checkout", first=True)
+    _as_if_read_from(conn, run.run_id, metrics, evalrun.set_version(countable))
     evalrun.remember_root(connector(db_path), clock, countable)
     check = gate.synthetic(conn, run.key, "C")
     assert not check.ok and "marked not for the gate" in check.detail

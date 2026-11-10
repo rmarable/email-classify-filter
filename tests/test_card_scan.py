@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from tests.eval_checkout import split_set
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_card_injection.py"
 LIST = ROOT / "tests" / "eval" / "known-public-injection-blobs.txt"
@@ -114,17 +116,13 @@ OLD = "inj-old"
 
 def made_set(tmp: Path) -> Path:
     """A set holding OLD (marked, and flagged by trigger 10), built."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
-    root = tmp / "made"
+    root = tmp / "made" / "eval" / "private" / "synthetic"  # marked: built as a private card
     if not (root / "eml" / f"{OLD}.eml").is_file():
         card(tmp / "made-top", OLD, body=INJ,
              extra="expected:\n  safety: {injection_target: archive}\n")  # fmt: skip
-        root.mkdir(parents=True, exist_ok=True)
-        (root / "cases").mkdir(exist_ok=True)
         src = tmp / "made-top" / "tests" / "eval" / "synthetic" / "cases" / f"{OLD}.md"
-        (root / "cases" / f"{OLD}.md").write_bytes(src.read_bytes())
-        assert not build_all(root).findings
+        split_set(tmp / "made", "synthetic", {OLD: src.read_text(encoding="utf-8")})
     return root
 
 
@@ -183,13 +181,13 @@ def test_a_new_card_x1_marks_but_trigger_10_misses_is_refused(repo: Path) -> Non
 def test_an_old_marked_card_passes_x1_on_a_branch(repo: Path) -> None:
     """A branch carrying OLD's bytes (it merged main from before the move): the blob
     is in main's history at the anchor, so X1 doesn't apply, and it is listed."""
-    copy(repo, OLD, repo.parent / "made")
+    copy(repo, OLD, made_set(repo.parent))
     commit(repo, "carried in")
     assert _range(repo) == []
 
 
 def test_a_listed_blob_passes_on_a_branch_and_is_refused_on_mains_tip(repo: Path) -> None:
-    copy(repo, OLD, repo.parent / "made")  # restored onto the tip
+    copy(repo, OLD, made_set(repo.parent))  # restored onto the tip
     commit(repo, "restore")
     assert _range(repo) == []
     assert any(OLD in r for r in _range(repo, "refs/heads/main"))
@@ -486,7 +484,7 @@ def test_the_hook_checks_a_new_branchs_commits_orphans_and_unparsable_cards(repo
 
 
 def test_a_listed_blob_is_refused_on_origin_main_and_passes_on_a_tag(repo: Path) -> None:
-    copy(repo, OLD, repo.parent / "made")  # restored onto the tip
+    copy(repo, OLD, made_set(repo.parent))  # restored onto the tip
     commit(repo, "restore")
     assert any(OLD in r for r in _range(repo, "refs/remotes/origin/main"))
     assert _range(repo, "refs/tags/v9") == []
@@ -851,7 +849,7 @@ def test_the_revs_entry_point_on_a_bare_remote_more_cases(repo: Path) -> None:
     r = _cli(repo, "--ref", "refs/heads/e", "--no-tip-build", "--revs", f"{main}..{head}")
     assert r.returncode == 1 and "eml/plain.eml" in r.stderr
     git(repo, "checkout", "-q", "-b", "k", main)
-    copy(repo, OLD, repo.parent / "made")
+    copy(repo, OLD, made_set(repo.parent))
     head = commit(repo, "a listed blob")
     r = _cli(repo, "--ref", "refs/heads/k", "--no-tip-build", "--revs", f"{main}..{head}")
     assert r.returncode == 0, r.stderr

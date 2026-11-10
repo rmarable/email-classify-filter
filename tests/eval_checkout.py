@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from ecf.eval import labels as label_file
+from ecf.eval import markers
 from ecf.eval import merged as mg
 from ecf.eval.builder import build_all
 
@@ -80,6 +81,62 @@ def _build(top: Path, public: tuple[str, ...], private: tuple[str, ...],
     mg.refresh_merged(pub)
     commit(top, first=True)
     return pub
+
+
+def split_set(top: Path, name: str, texts: dict[str, str], confirm: tuple[str, ...] = (),
+              on: date = date(2026, 10, 1)) -> Path:  # fmt: skip
+    """A set laid out as the real ones after the move, without git: each card of `texts` (ID ->
+    card text) in the private half when X1 marks it (bar the pinned starter), else in the public
+    half; both halves built, `confirm` confirmed in its card's own half, the merged view fresh.
+    Returns the public half, the path every reader is given."""
+    pub = top / "tests" / "eval" / name
+    priv = top / "eval" / "private" / name
+    halves = {False: pub}
+    for i, text in texts.items():
+        data = text.encode("utf-8")
+        marked = markers.reasons(markers.front_matter(text, source=f"{i}.md"))
+        private = bool(marked) and not markers.is_pinned_starter(i, data)
+        half = halves.setdefault(private, priv)
+        (half / "cases").mkdir(parents=True, exist_ok=True)
+        (half / "cases" / f"{i}.md").write_bytes(data)
+    (pub / "cases").mkdir(parents=True, exist_ok=True)
+    for half in halves.values():
+        assert not build_all(half).findings
+    for i in confirm:
+        half = priv if (priv / "cases" / f"{i}.md").is_file() else pub
+        label_file.confirm(half, i, on)
+    if priv in halves.values():  # no marked card: a public set alone, as before the move
+        mg.refresh_merged(pub)
+    return pub
+
+
+def card_path(pub: Path, card_id: str) -> Path:
+    """A card's source file in whichever half holds it."""
+    priv = pub.parents[2] / "eval" / "private" / pub.name
+    mine = priv / "cases" / f"{card_id}.md"
+    return mine if mine.is_file() else pub / "cases" / f"{card_id}.md"
+
+
+def settle_set(pub: Path, confirm: tuple[str, ...] = (), on: date = date(2026, 10, 1)) -> None:
+    """After a test edits cards of a `split_set`: both halves built, `confirm` confirmed in its
+    card's own half, the merged view refreshed (what `ecf eval build` and a confirm do)."""
+    priv = pub.parents[2] / "eval" / "private" / pub.name
+    for half in (pub, priv) if priv.is_dir() else (pub,):
+        assert not build_all(half).findings
+    for i in confirm:
+        label_file.confirm(card_path(pub, i).parents[1], i, on)
+    if priv.is_dir():
+        mg.refresh_merged(pub)
+
+
+def edit_in_place(path: Path, data: bytes) -> None:
+    """Write over a merged copy where it is (read-only by design): the in-place edit the loader's
+    sha256 check catches. No ecf tool writes there; the test lifts the mode itself, so the check
+    it exercises is the same one an edit through any other path meets."""
+    mode = path.stat().st_mode
+    path.chmod(0o600)
+    path.write_bytes(data)
+    path.chmod(mode & 0o777)
 
 
 def commit(top: Path, *, first: bool = False) -> None:

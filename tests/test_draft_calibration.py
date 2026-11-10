@@ -14,6 +14,7 @@ from ecf.eval import draftcalib, draftjudge
 from ecf.eval.drafts import DraftCase
 from ecf_server import draftcalibration, draftjudging
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import card_path, settle_set
 from tests.test_draft_judges import GOOD, _finished  # pyright: ignore[reportPrivateUsage]
 from tests.test_draft_runs import droot  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
@@ -230,20 +231,19 @@ def test_calibration_survives_a_rewrite_of_another_card_but_not_its_own(
     droot: Path,  # noqa: F811
 ) -> None:
     """D1: pinned to the pilot card by card."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     data = db_path.parent
     _pilot, cal, _null = _calibration(db_path, clock, droot)
     used = set(draftjudging.read_json(data / "evals" / f"{cal}{draftjudging.CALIB_SUFFIX}")
                ["cards"].values())  # fmt: skip
     other = next(c for c in ("d-benign", "d-inject", "d-none") if c not in used)
-    card = droot / "cases" / f"{other}.md"
+    card = card_path(droot, other)
     card.write_text(card.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
+    settle_set(droot)
     assert draftjudging.items(data, cal)["items"]  # still usable
-    mine = droot / "cases" / f"{sorted(used)[0]}.md"
+    mine = card_path(droot, sorted(used)[0])
     mine.write_text(mine.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
+    settle_set(droot)
     with pytest.raises(InvalidInputError, match="changed since the pilot"):
         draftjudging.items(data, cal)
 
@@ -261,14 +261,9 @@ def _rewrite(droot: Path, card: str, *, relabel: bool = True) -> None:  # noqa: 
     """Step 6: a card rewritten, rebuilt and (by default) re-labelled."""
     from datetime import date  # noqa: PLC0415
 
-    from ecf.eval import labels  # noqa: PLC0415
-    from ecf.eval.builder import build_all  # noqa: PLC0415
-
-    path = droot / "cases" / f"{card}.md"
+    path = card_path(droot, card)
     path.write_text(path.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
-    if relabel:
-        labels.confirm(droot, card, date(2026, 10, 2))
+    settle_set(droot, (card,) if relabel else (), date(2026, 10, 2))
 
 
 SEEDS = {"seeds": [_seed(1, {"commits": "hard"}), _seed(2, {"specific": "no"})]}

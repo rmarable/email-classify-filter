@@ -18,6 +18,7 @@ from ecf.eval.drafts import Checked, DraftCase
 from ecf.eval.tools import Reply
 from ecf_server import claude_eval, draftjudging
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import card_path, settle_set
 from tests.test_claude_eval import connector, start
 from tests.test_draft_runs import (
     _drive,  # pyright: ignore[reportPrivateUsage]
@@ -243,12 +244,11 @@ def test_an_incomplete_run_is_refused(db_path: Path, clock: FakeClock, droot: Pa
 
 def test_a_changed_set_is_refused(db_path: Path, clock: FakeClock, droot: Path) -> None:  # noqa: F811
     """J5C-2: the judges see the email and question the drafter answered."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     run_id = _finished(db_path, clock, droot)
-    card = droot / "cases" / "d-benign.md"
+    card = card_path(droot, "d-benign")
     card.write_text(card.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
+    settle_set(droot)
     with pytest.raises(InvalidInputError, match="not the run's"):
         draftjudging.items(db_path.parent, run_id)
 

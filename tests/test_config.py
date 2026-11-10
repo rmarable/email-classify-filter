@@ -30,6 +30,7 @@ from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.notify import FakeNotifier
 from ecf_server.stepper import FakeStepper
+from tests.eval_checkout import split_set
 from tests.test_addresses import call, make_state
 
 ME = "U0ME1"
@@ -297,10 +298,9 @@ def small_set(tmp_path: Path) -> Path:
     # a fraud card whose fraud text is only in hidden HTML, made up here (a moving card's text
     # never sits in a test: EVAL-PRIVATE.md, "Releases and CI"); its labels are the visible
     # invoice's, so only the trigger on the hidden text makes it fraud_guard (fraud_weak without)
-    made = tmp_path / "made"
-    (made / "cases").mkdir(parents=True)
-    (made / "cases" / f"{HIDDEN}.md").write_text(HIDDEN_CARD, encoding="utf-8")
-    assert not build_all(made).findings
+    # (its hidden text is an X1 marker, so it is built as a private card)
+    split_set(tmp_path / "made", "synthetic", {HIDDEN: HIDDEN_CARD})
+    made = tmp_path / "made" / "eval" / "private" / "synthetic"
     (root / "eml" / f"{HIDDEN}.eml").write_bytes((made / "eml" / f"{HIDDEN}.eml").read_bytes())
     lines += (made / "labels.jsonl").read_text().splitlines()
     (root / "labels.jsonl").write_text("\n".join(sorted(lines, key=lambda x: json.loads(x)["id"]))
@@ -378,7 +378,6 @@ def _drop_rule(text: str, rule_id: str) -> str:
 
 def _case_set(root: Path, cards: dict[str, str]) -> None:
     """Build `cards` (id -> card text) into a set under `root`, as `ecf eval build` does."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     (root / "cases").mkdir(parents=True)
     for cid, text in cards.items():

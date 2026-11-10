@@ -108,7 +108,9 @@ def test_the_list_is_the_marked_cards_but_the_pinned_starter(tmp_path: Path) -> 
     for name in ("starter-injection", "starter-control"):
         shutil.copy(EVAL / "synthetic" / "cases" / f"{name}.md", pub / "cases")
     (pub / "cases" / "made-inj.md").write_text(MARKED.format(id="made-inj"))
-    assert not build_all(pub).findings
+    # the list reads the cards; a public build of a marked card is refused (from the move on)
+    with pytest.raises(InvalidInputError, match="made-inj: marked card in a public set"):
+        build_all(pub)
     listed = mv.move_list(tmp_path, ("synthetic",))
     assert listed == {"synthetic": ["made-inj"]}
     assert mv.check_pin(listed, {"synthetic": 1}, mv.digest(listed)) == []
