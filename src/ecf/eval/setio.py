@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import stat
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -101,12 +102,16 @@ def _own_name(path: Path) -> Path:
     return path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
 
 
-def write_new(tmp: Path, data: bytes | str) -> None:
-    """Create `tmp` (refused if anything is there) and write `data` into it."""
+def write_new(tmp: Path, data: bytes | str, mode: int = 0o644, *, sync: bool = False) -> None:
+    """Create `tmp` (refused if anything is there) and write `data` into it; `sync` flushes it
+    to disk before it is renamed into place (a record that must survive a power cut)."""
     raw = data.encode("utf-8") if isinstance(data, str) else data
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     with os.fdopen(fd, "wb") as f:
         f.write(raw)
+        if sync:
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def copy_new(src: Path, tmp: Path) -> None:
@@ -137,18 +142,7 @@ def replace_file(path: Path, make: Callable[[Path], None]) -> None:
     temporary file (any OSError: a refusal, a missing folder, a full disk) is reported for
     `path`, the file being written: the temporary file is never the operator's to fix; one that
     names something else (a source) is left as it is (review round 24, B3, B5)."""
-    for _ in range(8):
-        tmp = _own_name(path)
-        try:
-            make(tmp)
-            break
-        except FileExistsError:
-            continue  # someone else's name: never touched
-        except BaseException as exc:
-            _drop(tmp)
-            _reraise_for(path, tmp, exc)
-    else:
-        raise InvalidInputError(f"{path}: no free temporary name beside it")
+    tmp = _made_own(path, make)
     try:
         os.replace(tmp, path)
     except FileNotFoundError as exc:
@@ -163,6 +157,58 @@ def replace_file(path: Path, make: Callable[[Path], None]) -> None:
     except BaseException as exc:
         _drop(tmp)
         _reraise_for(path, tmp, exc)
+
+
+def _made_own(path: Path, make: Callable[[Path], None]) -> Path:
+    """A temporary file of this write's own beside `path`, made by `make` (another name is tried
+    when one is taken: someone else's, never touched); a failure removes only its own."""
+    for _ in range(8):
+        tmp = _own_name(path)
+        try:
+            make(tmp)
+        except FileExistsError:
+            continue
+        except BaseException as exc:
+            _drop(tmp)
+            _reraise_for(path, tmp, exc)
+        return tmp
+    raise InvalidInputError(f"{path}: no free temporary name beside it")
+
+
+# A disk that can't hard-link (exFAT, some network shares): the new file is renamed in after a
+# check instead, so a file made at the name in between is replaced (a stated limit there)
+_NO_LINKS = {errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV, errno.EMLINK}
+
+
+def create_file(path: Path, data: bytes | str, mode: int = 0o644) -> None:
+    """Create `path` holding `data`, flushed to disk with its folder; refused when anything is
+    at the name, a link to nothing included, even one made while it was written: the new file
+    is hard-linked to the name, which never replaces anything, then its temporary name dropped
+    (review round 29, fourteenth delta check: a check then a rename replaced a file made in
+    between, and a fixed temporary name failed every write after a crash). A crash between
+    the link and dropping the temporary name leaves that name too (`.<name>.<hex>.tmp`, the same
+    file): a set or results folder sweeps it after an hour, any other folder (a corpus's) keeps
+    it until it is removed by hand, a stated limit (fifteenth delta check)."""
+    exists = InvalidInputError(f"{escaped(str(path))} already exists")
+    if os.path.lexists(path):
+        raise exists
+    tmp = _made_own(path, lambda t: write_new(t, data, mode=mode, sync=True))
+    try:
+        try:
+            os.link(tmp, path, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise exists from exc
+        except OSError as exc:
+            if exc.errno not in _NO_LINKS:
+                raise
+            if os.path.lexists(path):
+                raise exists from exc
+            os.rename(tmp, path)
+    except BaseException as exc:
+        _drop(tmp)
+        _reraise_for(path, tmp, exc)
+    _drop(tmp)
+    sync_folder(path.parent)
 
 
 def _drop(tmp: Path) -> None:
@@ -187,12 +233,13 @@ STALE_TEMP_S = 3600
 
 def sweep_old_temps(root: Path) -> tuple[list[Path], list[str]]:
     """Remove the crashed writes' temporary files older than `STALE_TEMP_S` from a half's own
-    folder and its `cases/`, `eml/`, `.build/`, `work/` and `work/call/` folders (round 28).
-    Best effort, and it never raises (review rounds 25-26): a root it can't check, or one inside
-    a merged view, is skipped with a line; each folder is opened without following a link (a
-    linked or missing one is skipped, and so is one that can't be listed), every entry is looked
-    at and removed relative to that open folder, only a plain file is removed, and one that
-    vanishes meanwhile is skipped. Returns what was removed, and one line for each old temporary
+    folder and its `cases/`, `eml/`, `.build/`, `work/`, `work/call/` and `grades/` folders
+    (rounds 28-29). Best effort, and it never raises (review rounds 25-26): a root it can't
+    check, or one inside a merged view, is skipped with a line; each folder is opened without
+    following a link, and one that is a link, not a folder, unreadable or can't be listed gets
+    a line (only a missing one is silent; review round 29), every entry is looked at and removed
+    relative to that open folder, only a plain file is removed, and one that vanishes meanwhile
+    is skipped. Returns what was removed, and one line for each old temporary
     file it couldn't remove, which is left in place."""
     try:
         writable_set(root)
@@ -214,23 +261,54 @@ def _old_temps(root: Path, *, remove: bool) -> tuple[list[Path], list[str]]:
     left: list[str] = []
     try:
         top = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError:
+    except OSError as exc:
+        # no link followed, even an alias of the set (review round 25, S1), but never skipped
+        # without a line (review round 29)
+        if os.path.islink(root):
+            left.append(f"{escaped(str(root))}: old temporary files not checked (the set folder"
+                        " is a symbolic link; run the command on the folder itself)")  # fmt: skip
+        elif os.path.lexists(root):
+            left.append(f"{escaped(str(root))}: old temporary files not checked ({reason(exc)})")
         return gone, left
     try:
-        # work/call too: a model call's schema file is written there (review round 28)
-        for name in ("", "cases", "eml", ".build", "work", "work/call"):
+        # work/call too: a model call's schema file was written there before each call had its
+        # own folder (review rounds 28-29), and a crashed call's folder is left there
+        said: list[str] = []  # folders already given a line: nothing below them is looked at
+        for name in ("", "cases", "eml", ".build", "work", "work/call", "grades"):
+            if any(name.startswith(f"{s}/") for s in said):
+                continue
             try:
                 fd = _open_below(top, name)
-            except OSError:
-                continue  # missing, a link or not a folder: nothing of a write's own there
+            except FileNotFoundError:
+                continue  # nothing there, so nothing of a write's own
+            except OSError as exc:  # a link, not a folder, or unreadable: said, not skipped
+                here = root / name
+                why = reason(exc)
+                if os.path.islink(here):
+                    why = "a symbolic link"
+                elif exc.errno == errno.ENOTDIR:
+                    why = "not a folder"
+                left.append(f"{escaped(str(here))}: old temporary files not checked ({why})")
+                said.append(name)
+                continue
             try:
-                _sweep_folder(fd, root / name if name else root, cutoff, gone, left, remove)
+                _sweep_here(fd, root, name, (cutoff, gone, left, remove))
             finally:
                 if fd != top:
                     os.close(fd)
     finally:
         os.close(top)
     return gone, left
+
+
+def _sweep_here(fd: int, root: Path, name: str,
+                how: tuple[float, list[Path], list[str], bool]) -> None:  # fmt: skip
+    """One open folder of a set: its crashed writes' temporary files, and in `work/call` its
+    crashed model calls' folders."""
+    where = root / name if name else root
+    _sweep_folder(fd, where, *how)
+    if name == "work/call":
+        _sweep_calls(fd, where, *how)
 
 
 def _open_below(top: int, name: str) -> int:
@@ -247,12 +325,29 @@ def _open_below(top: int, name: str) -> int:
     return fd
 
 
+def sweep_folder(where: Path) -> list[Path]:
+    """Remove the crashed writes' temporary files older than `STALE_TEMP_S` from one folder that
+    is no set (the install's results folder: review round 29, twelfth delta check), as
+    `sweep_old_temps` does in a set; best effort, never raises, follows no link."""
+    gone: list[Path] = []
+    try:
+        fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return gone
+    try:
+        _sweep_folder(fd, where, time.time() - STALE_TEMP_S, gone, [], True)
+    finally:
+        os.close(fd)
+    return gone
+
+
 def _sweep_folder(fd: int, where: Path, cutoff: float, gone: list[Path], left: list[str],
                   remove: bool) -> None:  # fmt: skip
     """`sweep_old_temps` for one open folder."""
     try:
         names = os.listdir(fd)
-    except OSError:
+    except OSError as exc:
+        left.append(f"{escaped(str(where))}: old temporary files not checked ({reason(exc)})")
         return
     for name in names:
         if not _OWN_TEMP.fullmatch(name):
@@ -282,9 +377,180 @@ def _sweep_folder(fd: int, where: Path, cutoff: float, gone: list[Path], left: l
         gone.append(where / name)
 
 
+# A model call's own folder in its call folder (`tools.CliAdapter.ask`): its schema and the
+# answer the tool writes itself. The call holds a lock on it while it runs, so a later call
+# removes only a crashed one's, whatever the clock did meanwhile (review round 29, sixteenth
+# and seventeenth delta checks: judges run side by side, and a Mac asleep mid-call for over an
+# hour made a live folder look old; the age is a second guard)
+CALL_FILES = ".call-"
+
+
+def call_folder(workdir: Path) -> tuple[Path, int]:
+    """A fresh 0700 folder for one model call in `workdir`, held until `end_call`."""
+    writable_root(workdir)  # never in a merged view
+    own = Path(tempfile.mkdtemp(prefix=CALL_FILES, dir=workdir))
+    try:
+        fd = os.open(own, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+    except BaseException:
+        shutil.rmtree(own, ignore_errors=True)
+        raise
+    return own, fd
+
+
+def end_call(own: Path, held: int) -> None:
+    """Remove a call's folder (its answer is the model's raw text), then let go of it."""
+    try:
+        shutil.rmtree(own, ignore_errors=True)
+    finally:
+        os.close(held)
+
+
+def sweep_call_folders(workdir: Path) -> None:
+    """Remove crashed calls' folders from a call folder, as `sweep_old_temps` does in a set's
+    `work/call`; best effort, never raises, follows no link."""
+    try:
+        writable_root(workdir)  # never in a merged view
+        fd = os.open(workdir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except (OSError, InvalidInputError):
+        return
+    try:
+        _sweep_calls(fd, workdir, time.time() - STALE_TEMP_S, [], [], True)
+    finally:
+        os.close(fd)
+
+
+def _sweep_calls(fd: int, where: Path, cutoff: float, gone: list[Path], left: list[str],
+                 remove: bool) -> None:  # fmt: skip
+    """The crashed calls' folders in one open call folder: a real folder, over `STALE_TEMP_S`
+    old and held by no call; removed below the open folder, never through a link."""
+    try:
+        names = [n for n in os.listdir(fd) if n.startswith(CALL_FILES)]
+    except OSError:
+        return  # said by `_sweep_folder` for the same folder
+    for name in names:
+        try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if not (stat.S_ISDIR(st.st_mode) and st.st_mtime < cutoff):
+                continue
+            cfd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError:
+            continue  # gone meanwhile, a link, or unreadable: left as it is
+        try:
+            try:
+                fcntl.flock(cfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue  # a live call's (one that slept), held
+            except OSError as exc:  # a disk without locks: said, never taken for a live call's
+                left.append(f"{escaped(str(where / name))}: a model call's folder; couldn't check"
+                            f" whether a call still uses it ({reason(exc)}); left in place, remove"
+                            " it when no eval is running")  # fmt: skip
+                continue
+            if not remove:
+                left.append(f"{escaped(str(where / name))}: a crashed model call's folder (it may"
+                            " hold a model's answer); remove it when you can")  # fmt: skip
+                continue
+            try:
+                shutil.rmtree(name, dir_fd=fd)
+            except OSError as exc:
+                left.append(f"{escaped(str(where / name))}: a crashed model call's folder, left in"
+                            f" place ({reason(exc)}); remove it when you can")  # fmt: skip
+                continue
+            gone.append(where / name)
+        finally:
+            os.close(cfd)
+
+
 def atomic_write(path: Path, data: bytes | str) -> None:
     """Write `data` over `path` through `replace_file`."""
     replace_file(path, lambda tmp: write_new(tmp, data))
+
+
+# What an eval write can raise: a system error, or a refusal by name (a link, hard link or pipe
+# at the name; no free temporary name). A handler that stops or logs a failed write catches both
+# (review round 29, fourteenth delta check: a journal refusal slipped past `except OSError`).
+WRITE_ERRORS: tuple[type[Exception], ...] = (OSError, InvalidInputError)
+
+
+def write_durable(path: Path, data: bytes | str, mode: int = 0o600) -> None:
+    """Write `data` over `path` as `replace_file` does, the new file flushed to disk before the
+    rename and the folder flushed after it, so a power cut leaves the old file or the new one:
+    the install's records (the draft-run registry, plan judges' answers, corpus labels; review
+    round 29, thirteenth delta check)."""
+    replace_file(path, lambda tmp: write_new(tmp, data, mode=mode, sync=True))
+    sync_folder(path.parent)
+
+
+# A folder that can't be opened or flushed (a network share, a folder others own): the file is
+# already in place, so its write isn't reported as failed (fifteenth delta check: a retry of
+# a new file then read "already exists")
+_CANT_FLUSH = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EACCES, errno.EPERM}
+
+
+def sync_folder(where: Path) -> None:
+    """Flush a folder's entries to disk (after a rename into it), where the disk allows it. A
+    linked folder is followed: the rename already went through the link, and a flush writes
+    nothing (review round 29, fourteenth delta check: refusing it failed every save in a linked
+    corpus folder). Any other error (a disk error) is raised: the file is in place, the folder
+    perhaps not on disk."""
+    try:
+        fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        if exc.errno in _CANT_FLUSH:
+            return
+        raise
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno not in _CANT_FLUSH:
+            raise
+    finally:
+        os.close(fd)
+
+
+def private_folder(where: Path) -> None:
+    """Make `where` 0700 for files that hold email text or case ids when it is new; a folder
+    already there is left as it is, its new files 0600 (review round 29, fourteenth delta check:
+    narrowing one the user already had, `~` or a shared folder, cut others off it)."""
+    where.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+
+def open_append(path: Path, mode: int = 0o644, *, read: bool = False) -> int:
+    """The one way an eval file is opened to add to it in place (review round 29, thirteenth
+    delta check): append-only (`read` adds reading, to cut a crash's short last line), created
+    `mode` when missing, opened without following a link and without waiting on a pipe, and
+    refused unless it is a regular file with one name (a hard link would write into another
+    file too). Returns the open descriptor."""
+    refused = InvalidInputError(
+        f"{escaped(str(path))}: a symbolic link, hard link or special file; nothing in an eval"
+        " is added to through one"
+    )
+    flags = (os.O_RDWR if read else os.O_WRONLY) | os.O_APPEND | os.O_CREAT
+    try:
+        fd = os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENXIO}:  # a link; a pipe with no reader
+            raise refused from exc
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise refused
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def write_all(fd: int, data: bytes) -> None:
+    """Write all of `data` to an open descriptor, finishing a short write."""
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
 
 
 def reason(exc: BaseException) -> str:
@@ -349,6 +615,28 @@ def _typed(path: Path) -> Path:
     return path if path.is_absolute() else Path.cwd() / path
 
 
+def logical(path: Path) -> Path:
+    """`path` made absolute, with no link resolved. A `..` is folded only when the name it
+    cancels isn't a link; after a link it would go where the link points, so such a path is
+    refused (review round 28, fourth delta check). Shared by the set location (`merged`) and
+    `writable_set`'s set folder (review round 29), so neither can be reached by `link/..`."""
+    p = _typed(path)
+    if ".." not in p.parts:
+        return Path(os.path.normpath(p))
+    out = Path(p.anchor)
+    for part in p.parts[1:]:
+        if part != "..":
+            out = out / part
+        elif os.path.islink(out):
+            raise InvalidInputError(
+                f"{escaped(str(path))}: a `..` after the symbolic link {escaped(str(out))};"
+                " give the folder without it"
+            )
+        else:
+            out = out.parent
+    return out
+
+
 def _odd_entry(top: Path, below: tuple[str, ...]) -> tuple[Path, str] | None:
     """The first entry of set `top` that a write to `top/below` could go through wrongly, and
     why: any of the set's folders and files by name that is a symbolic link or not what that
@@ -400,8 +688,8 @@ def writable_set(root: Path, path: Path | None = None) -> Path:
     set names the set: nothing in it is written through a link or into a special file
     (OD-705). The set's folders and files must be plain folders and files, and so must each
     name from `root` down to `path`, which must lie below `root` with no `..`; only `root`
-    itself may be a link (an alias of the whole set). The refusal names what caused it (review
-    round 28)."""
+    itself may be a link (an alias of the whole set), and a `..` in `root` after a link is
+    refused (`logical`; review round 29). The refusal names what caused it (review round 28)."""
     target = root if path is None else path
     writable_root(target)
     top, full = _typed(root), _typed(target)
@@ -410,7 +698,7 @@ def writable_set(root: Path, path: Path | None = None) -> Path:
         raise InvalidInputError(
             f"{escaped(str(target))}: not a path inside its set {escaped(str(root))}"
         )
-    odd = _odd_entry(top, below)
+    odd = _odd_entry(logical(root), below)
     if odd is not None:
         where, what = odd
         raise InvalidInputError(
@@ -421,21 +709,9 @@ def writable_set(root: Path, path: Path | None = None) -> Path:
 
 
 def append_text(path: Path, text: str) -> None:
-    """Append `text` to `path`, creating it 0644: the file is opened without following a link and
-    must be a regular file (review round 28), so an append never writes where a link points."""
-    refused = InvalidInputError(f"{escaped(str(path))}: a symbolic link or special file")
+    """Append `text` to `path`, creating it 0644, through `open_append` (review rounds 28-29)."""
+    fd = open_append(path)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                     0o644)  # fmt: skip
-    except OSError as exc:
-        if exc.errno in {errno.ELOOP, errno.ENXIO}:  # a link; a pipe with no reader
-            raise refused from exc
-        raise
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise refused
-    except BaseException:
+        write_all(fd, text.encode("utf-8"))
+    finally:
         os.close(fd)
-        raise
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
-        f.write(text)

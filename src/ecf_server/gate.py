@@ -46,11 +46,13 @@ from collections.abc import Generator
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import genset, gitcheck, merged
 from ecf.eval.metrics import wilson
+from ecf.eval.setio import reason
+from ecf.text import escaped
 from ecf_server import (
     claude_pins,
     config,
@@ -325,7 +327,7 @@ def _set_key(root: Path) -> tuple[Any, ...]:
     try:
         key = _key_of(root)
     except (InvalidInputError, OSError) as exc:
-        key = ("unreadable", str(root), str(exc))
+        key = _unreadable_key(root, exc)
     if p is not None:
         p.keys[str(root)] = key
     return key
@@ -375,6 +377,32 @@ def _perms(sp: merged.SetPaths) -> tuple[Any, ...]:
     return tuple(out)
 
 
+def _unreadable_state(root: Path, exc: InvalidInputError | OSError) -> SetState:
+    """A set the gate can't read, named with the file the error names when there is one: the
+    check's detail is all the operator sees (review round 29, seventh delta check)."""
+    text, name = reason(exc), _file_named(exc)
+    # ecf's own refusal names the set already (as typed: one spelling it otherwise shows twice)
+    if text.startswith(f"{escaped(str(root))}: "):
+        return SetState(None, f"the gate's set can't be read: {text}", (), "", {}, None)
+    where = f" ({escaped(name)})" if name and name != str(root) else ""
+    why = f"the gate's set {escaped(str(root))} can't be read{where}: {text}"
+    return SetState(None, why, (), "", {}, None)
+
+
+def _file_named(exc: BaseException) -> str | None:
+    """The path an error names, as text: a bytes path decoded, a file number or none -> None."""
+    name: object = getattr(exc, "filename", None)
+    if isinstance(name, str | bytes | os.PathLike):
+        return os.fsdecode(cast("str | bytes | os.PathLike[str]", name))
+    return None
+
+
+def _unreadable_key(root: Path, exc: InvalidInputError | OSError) -> tuple[Any, ...]:
+    """A key naming why a set can't be read, the file included, so two files failing alike
+    don't share one (review round 29, eighth delta check)."""
+    return ("unreadable", str(root), reason(exc), _file_named(exc))
+
+
 def set_state(root: Path, *, fresh: bool = False) -> SetState:
     p = _PASS.get()
     if not fresh and p is not None and str(root) in p.transient:
@@ -382,7 +410,7 @@ def set_state(root: Path, *, fresh: bool = False) -> SetState:
     try:  # the key never raises out of the gate: a set that can't be read fails the check
         key = _set_key(root)  # (review round 16; the service tick carries on)
     except (InvalidInputError, OSError) as exc:
-        return SetState(None, f"the gate's set can't be read: {exc}", (), "", {}, None)
+        return _unreadable_state(root, exc)
     # an "unreadable" key names an error, not the set's files: a state is never stored or looked
     # up under it (review round 18, performance B1)
     unkeyed = key[0] == "unreadable"
@@ -395,7 +423,7 @@ def set_state(root: Path, *, fresh: bool = False) -> SetState:
     try:
         racy = _racy(root)  # before the read: a write after this changes a stat or a hash
     except (InvalidInputError, OSError) as exc:
-        return SetState(None, f"the gate's set can't be read: {exc}", (), "", {}, None)
+        return _unreadable_state(root, exc)
     got = _read_state(root, fresh=fresh)
     if unkeyed and not got.transient:
         got = replace(got, transient=True)

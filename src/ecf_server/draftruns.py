@@ -32,6 +32,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ecf.errors import ConflictError, InvalidInputError
+from ecf.eval.setio import open_append, sweep_folder, write_all, write_durable
 
 REGISTRY = "draft-runs.json"
 JOURNAL_SUFFIX = ".journal.jsonl"
@@ -125,22 +126,15 @@ def load(data_dir: Path) -> Registry:
 
 
 def save(data_dir: Path, reg: Registry) -> None:
-    """Replace the record whole: a 0600 temporary file, fsynced, renamed over it, and the folder
-    fsynced, so a crash leaves the old record or the new one."""
+    """Replace the record whole: a 0600 temporary file of its own, fsynced, renamed over it, and
+    the folder fsynced, so a crash leaves the old record or the new one. Saved every 15 s, so it
+    also removes crashed writes' temporary files over an hour old from the folder (this one's,
+    a result's or a drafts record's; review round 29, twelfth delta check)."""
     d = folder(data_dir)
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = d / f"{REGISTRY}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(reg.model_dump_json(indent=1))
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, d / REGISTRY)
-    dfd = os.open(d, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+    sweep_folder(d)
+    # a temporary file of this write's own, never one planted at a fixed name (review round 29)
+    write_durable(d / REGISTRY, reg.model_dump_json(indent=1))
 
 
 def arm_key(models: dict[str, str], actor_prompt: str, options: dict[str, Any]) -> str:
@@ -265,17 +259,17 @@ def append_many(path: Path, events: list[dict[str, Any]]) -> None:
     """Append events in one write and one fsync. A last line a crash cut short is cut off first,
     so the next event never joins it into a bad line mid-file (diff review 5B-1); a short write
     is finished. The fsync covers a crash of the service process; macOS doesn't flush the drive's
-    cache on it, so a power cut can still lose the newest events (5B-12)."""
+    cache on it, so a power cut can still lose the newest events (5B-12). Opened as every eval
+    file added to is (`setio.open_append`): a link, hard link or pipe at the name is refused,
+    never cut or written through (review round 29, thirteenth delta check)."""
     if not events:
         return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     data = b"".join((json.dumps(e, sort_keys=True, default=str) + "\n").encode() for e in events)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+    fd = open_append(path, 0o600, read=True)
     try:
         _cut_partial(fd)
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view) :]
+        write_all(fd, data)
         os.fsync(fd)
     finally:
         os.close(fd)

@@ -26,6 +26,7 @@ from ecf.eval.metrics import (
     percentile,
     wilson,
 )
+from ecf.eval.setio import reason
 from ecf.schema import load_schema, load_schema_v2
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
@@ -213,7 +214,7 @@ def load_result(path: Path) -> ResultFile:
         text = path.read_text(encoding="utf-8")
         raw: Any = json.loads(text)
     except (OSError, ValueError) as exc:
-        raise InvalidInputError(f"{path}: not a valid result file: {exc}") from exc
+        raise InvalidInputError(f"{path}: not a valid result file: {reason(exc)}") from exc
     fmt = cast(dict[str, Any], raw).get("format") if isinstance(raw, dict) else None
     if isinstance(fmt, int) and not isinstance(fmt, bool) and fmt > RESULT_FORMAT:
         raise InvalidInputError(f"{path}: this result was written by a newer ecf (format {fmt});"

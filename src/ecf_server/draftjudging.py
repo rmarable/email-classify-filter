@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +21,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError, NotFoundError
 from ecf.eval import draftjudge, drafts, merged
 from ecf.eval.drafts import DraftCase, DraftsFile
+from ecf.eval.setio import write_durable
 from ecf_server import draftruns, evalrun
 
 JUDGEMENTS_SUFFIX = ".judgements.json"
@@ -164,23 +163,11 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, doc: dict[str, Any]) -> None:
-    """Replace a file whole: a unique 0600 temporary file, fsynced, renamed, the folder fsynced."""
+    """Replace a file whole, 0600, as every eval record is (`setio.write_durable`: a temporary
+    file of its own, fsynced, renamed, the folder fsynced; review round 29, thirteenth delta
+    check)."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(doc, indent=1, sort_keys=True))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-    dfd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+    write_durable(path, json.dumps(doc, indent=1, sort_keys=True))
 
 
 def judgements(data_dir: Path, run: str) -> dict[str, Any]:

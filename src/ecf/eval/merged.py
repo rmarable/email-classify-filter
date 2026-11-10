@@ -38,11 +38,11 @@ from ecf.eval.setio import (
     canonical,
     copy_new,
     is_merged,
+    logical,
     reason,
     replace_file,
     write_new,
 )
-from ecf.text import escaped
 from ecf.yamlio import load_yaml
 
 FORMAT = 2  # 2: manifest entries carry ctime (review round 5, B-4)
@@ -152,28 +152,6 @@ class SetPaths:
         return None if m is None else m.with_name(f"{self.name}.lock")
 
 
-def _logical(root: Path) -> Path:
-    """The path as given, made absolute, with no link resolved: a link at the set's location is
-    seen and refused. A `..` is folded only when the name it cancels isn't a link; after a
-    link it would go where the link points, so such a path is refused (review round 28, fourth
-    delta check)."""
-    p = root if root.is_absolute() else Path.cwd() / root
-    if ".." not in p.parts:
-        return Path(os.path.normpath(p))
-    out = Path(p.anchor)
-    for part in p.parts[1:]:
-        if part != "..":
-            out = out / part
-        elif os.path.islink(out):
-            raise InvalidInputError(
-                f"{escaped(str(root))}: a `..` after the symbolic link {escaped(str(out))};"
-                " give the folder without it"
-            )
-        else:
-            out = out.parent
-    return out
-
-
 def _shaped(p: Path, *, fold: bool) -> bool:
     """Whether `p` is laid out as `<top>/tests/eval/<set>`: by the names as stored (`fold`
     False; on a case-sensitive volume `tests/Eval` is another folder, review round 7, B1), or
@@ -208,7 +186,7 @@ def _locate(root: Path) -> tuple[Path, Path | None, str | None]:
     A checkout set is one whose stored names are exactly `tests/eval/<set>` (`setio.canonical`
     gives the stored case on a case-insensitive volume; on a case-sensitive one `tests/Eval` is
     another folder and no checkout set). No `git` call."""
-    p = _logical(root)
+    p = logical(root)
     if os.path.islink(p):
         return p, None, f"{root}: the set folder is a symbolic link; give the set's own path"
     c = canonical(p)
@@ -263,7 +241,7 @@ def is_private_root(root: Path) -> bool:
     """Whether `root` is the private half of a set, `<top>/eval/private/<set>`, by its layout as
     given or as stored (letter case ignored), so a link at `eval` can't hide it (review round 7,
     B4); `_locate` refuses such a link for every reader and writer."""
-    p = _logical(root)
+    p = logical(root)
     return _private_shaped(p) or _private_shaped(canonical(p))
 
 
@@ -273,10 +251,10 @@ def public_of(root: Path) -> Path:
     a public path is returned as it is."""
     if is_private_root(root):
         _usable(paths(root))  # a link at the private set or above it: refused (round 28)
-        c = canonical(_logical(root))  # the path is_private_root judged (review round 28)
+        c = canonical(logical(root))  # the path is_private_root judged (review round 28)
         return c.parents[2] / "tests" / "eval" / c.name
     _usable(paths(root))  # a link where the location is read: refused
-    return _logical(root)
+    return logical(root)
 
 
 def card_ids(root: Path) -> list[str]:
@@ -405,7 +383,7 @@ def ids_in(kind: str, text: str, source: str) -> list[str]:
         try:
             data: object = load_yaml(text, source=source) or {}
         except Exception as exc:  # a YAML error of any kind: the file is refused
-            raise InvalidInputError(f"{source}: doesn't parse ({exc})") from exc
+            raise InvalidInputError(f"{source}: doesn't parse ({reason(exc)})") from exc
         if not isinstance(data, dict):
             raise InvalidInputError(f"{source}: must be a mapping of card IDs")
         return [str(k) for k in cast("dict[Any, Any]", data)]
@@ -1285,7 +1263,7 @@ def resolve(root: Path) -> Path:
     """The set a reader should read for `root`: the public set when there is no private half;
     the merged view when there is one and it is fresh; refused otherwise. A path at or under
     `eval/private/`, or inside a merged view, is refused: readers pass the logical public path."""
-    p = _logical(root)
+    p = logical(root)
     real = p.resolve()
     if _under_private(real) or _under_private(p):
         raise InvalidInputError(f"{root}: give the public set's path (tests/eval/<set>), not a"

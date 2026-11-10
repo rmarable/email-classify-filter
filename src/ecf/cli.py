@@ -1041,6 +1041,7 @@ def _import_fixed(root: Path, path: Path) -> None:
     """One page's answers, split by the half that owns each card: every ID and answer of both
     parts is checked before either part is written (EVAL-PRIVATE.md, "The overlay")."""
     from ecf.eval import merged  # noqa: PLC0415
+    from ecf.eval.setio import reason  # noqa: PLC0415
 
     halves = merged.halves(root)
     if len(halves) == 1:
@@ -1050,7 +1051,7 @@ def _import_fixed(root: Path, path: Path) -> None:
         doc: Any = json.loads(path.read_text(encoding="utf-8"))
         answers = cast(dict[str, Any], doc["answers"])
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
+        raise InvalidInputError(f"{path}: not a fixed-label answers file ({reason(exc)})") from None
     owners = merged.owners(root)
     unknown = sorted(set(answers) - set(owners))
     if unknown:
@@ -1069,13 +1070,14 @@ def _import_fixed_half(root: Path, path: Path, part: dict[str, Any] | None, *,
     from datetime import date  # noqa: PLC0415
 
     from ecf.eval import fixed_labels  # noqa: PLC0415
+    from ecf.eval.setio import reason  # noqa: PLC0415
 
     try:
         doc: Any = json.loads(path.read_text(encoding="utf-8"))
         on = date.fromisoformat(doc["on"])
         item, answers = str(doc["item"]), doc["answers"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise InvalidInputError(f"{path}: not a fixed-label answers file ({exc})") from None
+        raise InvalidInputError(f"{path}: not a fixed-label answers file ({reason(exc)})") from None
     if not isinstance(answers, dict):
         raise InvalidInputError(f"{path}: answers must map case ids to answers")
     if part is not None:
@@ -1635,6 +1637,8 @@ def _claude_eval(  # noqa: PLR0913 - the CLI options, the newer ones keyword-onl
 def _stop_unwanted(c: Any) -> str:
     """Stop the run an older service registered without the options. Its stop route ends a
     running local `ecf eval run` too, so then nothing is stopped (W1)."""
+    from ecf.eval.setio import reason  # noqa: PLC0415
+
     try:
         if c.get("/v1/eval/runs")["current"]["state"] == "running":
             return (
@@ -1644,7 +1648,7 @@ def _stop_unwanted(c: Any) -> str:
         c.request("POST", "/v1/eval/runs/stop", {})
     except Exception as exc:  # the explanation matters more than the stop
         return (
-            f"the run it registered couldn't be stopped ({type(exc).__name__}: {exc}); it"
+            f"the run it registered couldn't be stopped ({type(exc).__name__}: {reason(exc)}); it"
             f" expires in 24 hours, or {_ecf('eval stop')}"
         )
     return "the run it registered was stopped"

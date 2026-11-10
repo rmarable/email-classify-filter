@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from email import policy
@@ -150,9 +152,11 @@ class BuildReport:
 
 def _same(path: Path, data: bytes, digest: str) -> bool:
     """Whether `path` already holds exactly `data` (its size, then its sha256): never judged by
-    the old label row alone, so `ecf eval build` still repairs a damaged set."""
+    the old label row alone, so `ecf eval build` still repairs a damaged set. Only a plain file
+    counts: a link or special file there, even to the same bytes, is replaced (review round 29)."""
     try:
-        if path.stat().st_size != len(data):
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size != len(data):
             return False
         return hashlib.sha256(path.read_bytes()).hexdigest() == digest
     except FileNotFoundError:

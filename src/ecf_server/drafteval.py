@@ -16,7 +16,6 @@ a draft set, and the `.drafts.json` file it writes.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +23,7 @@ from typing import Any, Literal
 
 from ecf.eval import drafts
 from ecf.eval.drafts import NOT_TEXT, Checked, DraftCase, DraftsFile, DraftSpec
+from ecf.eval.setio import replace_file, write_new
 from ecf_server import actor, draftcheck, outbound_plan, policy
 from ecf_server.rules import HIDE_ACTIONS
 
@@ -200,10 +200,11 @@ def clean(text: Any) -> str | None:
 
 
 def write(folder: Path, record: DraftsFile) -> Path:
-    """The run's draft record, 0600, beside its result file."""
+    """The run's draft record, 0600, beside its result file, written as the result file is: a
+    new file renamed over the name, so a link, hard link or pipe already there is replaced,
+    never written through (review round 29, tenth delta check)."""
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / f"{record.run_id}{drafts.DRAFTS_SUFFIX}"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(record.model_dump_json(indent=1))
+    text = record.model_dump_json(indent=1)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
     return path

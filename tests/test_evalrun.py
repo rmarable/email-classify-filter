@@ -6,9 +6,11 @@ Gemma and decision-model backends, the battery pause and the model queue are gon
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import stat
+import time
 from collections.abc import Iterator
 from datetime import date
 from email.message import EmailMessage
@@ -970,3 +972,124 @@ def test_a_copy_into_a_merged_view_is_refused_and_loses_nothing(
     assert evalrun.RUN.snapshot()["state"] == "done"
     assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 1
     assert not view.exists()
+
+
+def test_a_stray_merge_file_above_the_data_folder_never_blocks_the_record(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """The install's own result file and row are written whatever another tool left above the
+    data folder: only a `--copy-to` copy is checked for a merged view (review round 29)."""
+    (db_path.parent / "merge.json").write_text("")  # not JSON: would count as a view's record
+    _start(db_path, clock, root)
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    (path,) = conn.execute("SELECT path FROM eval_runs").fetchone()
+    assert Path(path).is_file()
+
+
+def test_a_run_removes_old_leftovers_from_the_results_folder(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path
+) -> None:
+    """A run's save removes crashed writes' temporary files over an hour old from the install's
+    results folder, and nothing else (review round 29, thirteenth delta check)."""
+    evals = db_path.parent / "evals"
+    evals.mkdir(mode=0o700, exist_ok=True)
+    old, young, other = (evals / ".r.json.0123456789ab.tmp", evals / ".s.json.0123456789ab.tmp",
+                         evals / "notes.tmp")  # fmt: skip
+    for p in (old, young, other):
+        p.write_text("x")
+    for p in (old, other):
+        os.utime(p, (time.time() - 7200, time.time() - 7200))
+    _start(db_path, clock, root)
+    assert evalrun.RUN.snapshot()["state"] == "done"
+    assert conn.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0] == 1
+    assert not old.exists() and young.exists() and other.exists()
+
+
+def test_a_rescore_beside_a_result_in_a_view_is_refused_before_scoring(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The API checks the folder a rescore goes in before any case is scored (review round 29,
+    second delta check)."""
+    from tests.test_addresses import TOKEN, call, make_state  # noqa: PLC0415
+
+    del conn  # migrated
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "results"
+    view.mkdir(parents=True)
+    (view / "x.json").write_text("{}")
+
+    def never(*_a: object, **_k: object) -> None:
+        raise AssertionError("scored")
+
+    monkeypatch.setattr(evalrun, "rescore_synthetic", never)
+    r = call(make_state(db_path, None), "POST", "/v1/eval/rescore",
+             {"result": str(view / "x.json"), "synthetic_root": str(root)}, TOKEN)  # fmt: skip
+    assert r.status_code == 400 and "merged eval set" in r.text
+    assert sorted(p.name for p in view.iterdir()) == ["x.json"]
+
+
+@pytest.mark.parametrize("through_policy", [False, True])
+def test_a_rescore_of_the_installs_own_result_survives_a_stray_merge_file(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    clock: FakeClock,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    through_policy: bool,
+) -> None:
+    """Through the route: a result in the install's own results folder is rescored beside it
+    whatever another tool left above the data folder, as its record was written (review round
+    29, eighth and ninth delta checks). Each rescore passes the data folder on to its write."""
+    from tests.test_addresses import TOKEN, call, make_state  # noqa: PLC0415
+
+    _start(db_path, clock, root)
+    (path,) = conn.execute("SELECT path FROM eval_runs").fetchone()
+    (db_path.parent / "merge.json").write_text("")  # not JSON: would count as a view's record
+    seen: list[Path | None] = []
+    real = evalrun._write_beside  # pyright: ignore[reportPrivateUsage]
+
+    def spy(result_path: Path, new: Any, name: str, data_dir: Path | None) -> Path:
+        seen.append(data_dir)
+        return real(result_path, new, name, data_dir)
+
+    monkeypatch.setattr(evalrun, "_write_beside", spy)
+    body = {"result": path, "synthetic_root": str(root), "through_policy": through_policy}
+    r = call(make_state(db_path, None), "POST", "/v1/eval/rescore", body, TOKEN)
+    assert seen == [db_path.parent], (r.status_code, r.text)
+    assert r.status_code == 200, r.text  # the rescore itself succeeded, not only its write
+    assert Path(r.json()["path"]).parent == Path(path).parent
+
+
+def test_the_corpus_rescore_route_passes_the_data_folder(
+    conn: sqlite3.Connection, db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run, not read: the corpus rescore gets the install's data folder, so a result there is
+    trusted as in the synthetic route (review round 29, tenth and eleventh delta checks)."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from ecf_server import corpus_session  # noqa: PLC0415
+    from tests.test_addresses import TOKEN, call, make_state  # noqa: PLC0415
+
+    del conn  # migrated
+    result = db_path.parent / "evals" / "r.json"
+    result.parent.mkdir(parents=True, exist_ok=True)
+    result.write_text("{}")
+    (db_path.parent / "merge.json").write_text("")  # a stray file above the data folder
+    got: dict[str, Any] = {}
+
+    def rescore(*_a: object, data_dir: Path | None = None, **_k: object) -> dict[str, Any]:
+        got["data_dir"] = data_dir
+        return {"path": str(result)}
+
+    def session(*_a: object) -> SimpleNamespace:
+        return SimpleNamespace(busy=False)
+
+    monkeypatch.setattr(corpus_session, "get", session)
+    monkeypatch.setattr(evalrun, "rescore", rescore)
+    r = call(make_state(db_path, None), "POST", "/v1/eval/rescore",
+             {"result": str(result), "corpus_session": "s"}, TOKEN)  # fmt: skip
+    assert r.status_code == 200, r.text
+    assert got == {"data_dir": db_path.parent}

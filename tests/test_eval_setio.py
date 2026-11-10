@@ -6,18 +6,25 @@ from __future__ import annotations
 import ast
 import contextlib
 import errno
+import functools
 import json
 import os
+import re
 import stat
+import symtable
 import threading
 import time
+from collections import Counter
+from collections.abc import Container
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from ecf.cli_evalgen import note_old_temps
 from ecf.errors import InvalidInputError
-from ecf.eval import fixed_labels, review, setio
+from ecf.eval import fixed_labels, generate, grade, review, setio
 from ecf.eval import labels as label_file
 from ecf.eval.builder import build_all
 from ecf.eval.setio import (
@@ -43,6 +50,26 @@ Body line
 ## html
 <p>Body line</p>
 """
+
+
+class _Asked:
+    """A model that records each call's folder and is never meant to be reached."""
+
+    provider, model = "test", "m"
+
+    def __init__(self) -> None:
+        self.calls: list[Path] = []
+
+    def describe(self) -> dict[str, Any]:
+        return {"model": self.model}
+
+    def ask(self, prompt: str, schema: dict[str, Any], folder: Path) -> Any:
+        self.calls.append(folder)
+        raise AssertionError("a model was asked")
+
+
+def _grading(root: Path) -> grade.Grading:
+    return grade.Grading(root, _Asked())  # type: ignore[arg-type]
 
 
 def _set(root: Path, *ids: str) -> Path:
@@ -132,9 +159,16 @@ ALLOWED = {
     ("eval/setio.py", "write_new"),
     ("eval/setio.py", "append_text"),  # appends without following a link (round 28)
     ("eval/setio.py", "copy_new"),
+    ("eval/setio.py", "write_durable"),  # replace_file, flushed (round 29, delta 13)
+    ("eval/setio.py", "create_file"),  # a new file, never replacing one (round 29, delta 14)
+    ("eval/setio.py", "private_folder"),  # a new page folder, 0700 (round 29, delta 14)
+    ("eval/setio.py", "open_append"),  # the one in-place opener (round 29, delta 13)
+    ("eval/setio.py", "write_all"),  # to `open_append`'s descriptor
     ("eval/setio.py", "_drop"),  # removes only this write's own temporary file
     ("eval/setio.py", "sweep_old_temps"),  # crashed writes' temporary files (round 24)
     ("eval/setio.py", "_sweep_folder"),  # the same, one folder (round 25)
+    ("eval/setio.py", "end_call"),  # a model call's own folder, once read (round 29, delta 16)
+    ("eval/setio.py", "_sweep_calls"),  # crashed calls' folders, held by none (delta 17)
     # refresh_merged, the one writer of the merged folder (EVAL-PRIVATE.md, "The merged set")
     ("eval/merged.py", "_place_copy"),
     ("eval/merged.py", "_place_link"),
@@ -171,6 +205,10 @@ _PATH_WRITES = {
     "write_new",
     "copy_new",
     "append_text",
+    "write_durable",
+    "create_file",
+    "open_append",
+    "private_folder",
     "rmdir",
     "chmod",
     "lchmod",
@@ -219,12 +257,16 @@ def _os_aliases(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
     return mods, funcs
 
 
-def _read_only(flags: ast.expr | None, mods: frozenset[str] = frozenset({"os"})) -> bool:
+def _read_only(flags: ast.expr | None, mods: frozenset[str] = frozenset({"os"}),
+               consts: dict[str, ast.expr] | None = None) -> bool:  # fmt: skip
     """Whether `os.open`'s flags are written out as read-only flags alone (`os.O_RDONLY | ...`,
     or `getattr(os, "O_EVTONLY", 0)`): flags held in a variable or computed count as a write
-    (review round 25, S3)."""
+    (review round 25, S3), except a module constant set once to such flags (`consts`, review
+    round 29, thirteenth delta check)."""
     if isinstance(flags, ast.BinOp) and isinstance(flags.op, ast.BitOr):
-        return _read_only(flags.left, mods) and _read_only(flags.right, mods)
+        return _read_only(flags.left, mods, consts) and _read_only(flags.right, mods, consts)
+    if isinstance(flags, ast.Name) and flags.id in (consts or {}):
+        return _read_only((consts or {})[flags.id], mods)
     if isinstance(flags, ast.Attribute):
         return flags.attr in _READ_FLAGS and getattr(flags.value, "id", "") in mods
     if isinstance(flags, ast.Call) and getattr(flags.func, "id", "") == "getattr":
@@ -604,7 +646,8 @@ def test_the_sweep_never_follows_a_linked_folder(tmp_path: Path, linked: str) ->
     if linked == "the set folder":
         root.parent.mkdir(parents=True)
         root.symlink_to(elsewhere, target_is_directory=True)
-        assert sweep_old_temps(root) == ([], [])
+        gone, [line] = sweep_old_temps(root)  # skipped, with a line (review round 29)
+        assert gone == [] and "the set folder is a symbolic link" in line
     else:
         root.mkdir(parents=True)
         (root / linked).symlink_to(elsewhere, target_is_directory=True)
@@ -943,6 +986,11 @@ def test_a_set_writer_never_writes_through_a_link(tmp_path: Path, name: str) -> 
         lambda: build_all(root),
         lambda: label_file.write(root, []),
         lambda: review.append_log(root, [{"id": "t-1"}]),
+        lambda: fixed_labels.write(root, []),
+        lambda: generate.Work(root).append("seeds", [{"n": 1}]),
+        lambda: generate.start(root, resume=True),
+        lambda: generate.write_manifest(SimpleNamespace(root=root), "stopped"),  # type: ignore[arg-type]
+        lambda: _grading(root).run(resume=True),
     ):
         with pytest.raises(InvalidInputError, match=f"{name}: a symbolic link;"):
             write()
@@ -967,14 +1015,14 @@ def test_an_append_never_follows_a_link(tmp_path: Path) -> None:
     outside.write_text("")
     link = tmp_path / "x.jsonl"
     link.symlink_to(outside)
-    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+    with pytest.raises(InvalidInputError, match="a symbolic link, hard link or special file"):
         setio.append_text(link, "row\\n")
     root = tmp_path / "gen"
     work = generate.Work(root)
     work.append("batches", [{"n": 1}])
     (root / "work" / "batches.jsonl").unlink()
     (root / "work" / "batches.jsonl").symlink_to(outside)
-    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+    with pytest.raises(InvalidInputError, match="a symbolic link, hard link or special file"):
         work.append("batches", [{"n": 2}])
     assert outside.read_text() == ""
 
@@ -1017,16 +1065,13 @@ def test_the_writer_check_sees_an_open_on_any_receiver(tmp_path: Path) -> None:
 
 
 def test_an_eval_result_copy_never_goes_into_a_view(tmp_path: Path) -> None:
-    """`ecf eval run --copy-to` and the service's result writer refuse a merged view (review
-    round 28)."""
+    """`ecf eval run --copy-to` refuses a merged view (review round 28); the service checks the
+    copy in `_save` (test_evalrun), not every result write (review round 29)."""
     from ecf.cli import _copy_folder  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
-    from ecf_server.evalrun import write_result  # noqa: PLC0415
 
     view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "results"
     with pytest.raises(InvalidInputError, match="merged eval set"):
         _copy_folder(view)
-    with pytest.raises(InvalidInputError, match="merged eval set"):
-        write_result(view, None, "x.json")  # type: ignore[arg-type]
     assert not view.exists()
 
 
@@ -1143,7 +1188,7 @@ def test_a_new_set_is_checked_as_a_set_before_it_holds_anything(tmp_path: Path) 
 def test_an_append_to_a_pipe_is_refused_by_name(tmp_path: Path) -> None:
     fifo = tmp_path / "reviews.jsonl"
     os.mkfifo(fifo)
-    with pytest.raises(InvalidInputError, match="a symbolic link or special file"):
+    with pytest.raises(InvalidInputError, match="a symbolic link, hard link or special file"):
         setio.append_text(fifo, "row\n")
 
 
@@ -1234,6 +1279,25 @@ SET_WRITERS = {
 }
 
 
+def _called(call: ast.Call) -> str:
+    """The name a call calls, however it is spelled: `f(...)` or `module.f(...)`. An import of a
+    guard under another name is refused by `test_no_guard_is_imported_under_another_name`, so
+    the last name is the function (review round 29, second delta check)."""
+    f = call.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
+
+
+def test_no_guard_is_imported_under_another_name() -> None:
+    """Nor `write_result`, whose callers are pinned by name (review round 29, fourth delta
+    check); every source file is read, as the pins read them."""
+    pinned = GUARDS | {"write_result"}
+    renamed = [f"{f.name}:{n.lineno}" for f in _ALL_SRC
+               for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+               if isinstance(n, ast.ImportFrom)
+               for a in n.names if a.name in pinned and a.asname not in (None, a.name)]  # fmt: skip
+    assert not renamed, "a guard imported under another name: " + ", ".join(renamed)
+
+
 def _callers(path: Path, name: str) -> set[str]:
     """The qualified names of the functions in `path` that call `name`."""
     found: set[str] = set()
@@ -1243,7 +1307,7 @@ def _callers(path: Path, name: str) -> set[str]:
             s = scope
             if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 s = [*scope, child.name]
-            if isinstance(child, ast.Call) and getattr(child.func, "id", "") == name and scope:
+            if isinstance(child, ast.Call) and _called(child) == name and scope:
                 found.add(".".join(scope))
             visit(child, s)
 
@@ -1272,7 +1336,7 @@ def test_a_model_call_folder_in_a_set_is_checked_as_part_of_it() -> None:
                 for n in ast.walk(fn)
                 if isinstance(n, ast.Assign)
                 and isinstance(n.value, ast.Call)
-                and getattr(n.value.func, "id", "") == "writable_set"
+                and _called(n.value) == "writable_set"
                 for t in n.targets
                 if isinstance(t, ast.Name)
             }
@@ -1281,7 +1345,7 @@ def test_a_model_call_folder_in_a_set_is_checked_as_part_of_it() -> None:
                     continue
                 arg = n.args[2] if len(n.args) > 2 else None
                 ok = (isinstance(arg, ast.Name) and arg.id in checked) or (
-                    isinstance(arg, ast.Call) and getattr(arg.func, "id", "") == "writable_set"
+                    isinstance(arg, ast.Call) and _called(arg) == "writable_set"
                 )
                 if not ok:
                     bad.append(f"{rel}:{n.lineno}")
@@ -1310,8 +1374,9 @@ def test_a_link_then_dot_dot_into_the_view_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_model_call_never_writes_its_schema_through_a_link(tmp_path: Path) -> None:
-    """The call folder's `schema.json` is replaced, never written through a link put there
-    (review round 28, third delta check)."""
+    """A call's schema is written in a fresh folder of its own, so a link at `schema.json` in
+    the call folder is never written through, nor touched (review round 28, third delta check;
+    round 29, sixteenth)."""
     from ecf.eval import tools  # noqa: PLC0415
     from tests.test_eval_generate import fake_tool  # noqa: PLC0415
 
@@ -1324,7 +1389,60 @@ def test_a_model_call_never_writes_its_schema_through_a_link(tmp_path: Path) -> 
     (call / "schema.json").symlink_to(victim)
     adapter.ask("p", {"type": "object"}, call)
     assert victim.read_text() == "mine"
-    assert not (call / "schema.json").is_symlink()
+    assert (call / "schema.json").is_symlink() and len(list(call.iterdir())) == 1
+
+
+def test_the_sweep_reports_and_removes_a_crashed_model_calls_folder(tmp_path: Path) -> None:
+    """A crashed model call's folder in `work/call` (it may hold a model's answer) is named by
+    `old_temps_left` and removed by the build's sweep once over an hour old; a call still
+    holding its folder, or a younger one, or a link, is left alone (review round 29,
+    seventeenth delta check)."""
+    root = _set(tmp_path / "s", "t-1")
+    call = root / "work" / "call"
+    call.mkdir(parents=True)
+    old = time.time() - 2 * STALE_TEMP_S
+    crashed = call / ".call-crashed"
+    crashed.mkdir()
+    (crashed / "out.json").write_text("raw")
+    young = call / ".call-young"
+    young.mkdir()
+    held, fd = setio.call_folder(call)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (call / ".call-link").symlink_to(elsewhere)
+    try:
+        for d in (crashed, held):
+            os.utime(d, (old, old))
+        os.utime(call / ".call-link", (old, old), follow_symlinks=False)
+        left = old_temps_left(root)
+        assert len(left) == 1 and ".call-crashed" in left[0] and "crashed model call" in left[0]
+        gone, left = sweep_old_temps(root)
+        assert gone == [crashed] and not left
+        assert held.is_dir() and young.is_dir() and (call / ".call-link").is_symlink()
+    finally:
+        setio.end_call(held, fd)
+    assert not held.exists()
+
+
+def test_a_call_folder_on_a_disk_without_locks_is_named_not_taken_for_a_live_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a lock held by a call counts as a live call: a disk that can't lock leaves a crashed
+    call's folder in place with a line saying so, never silently (review round 29, eighteenth
+    delta check)."""
+    root = _set(tmp_path / "s", "t-1")
+    crashed = root / "work" / "call" / ".call-crashed"
+    crashed.mkdir(parents=True)
+    old = time.time() - 2 * STALE_TEMP_S
+    os.utime(crashed, (old, old))
+
+    def no_locks(_fd: int, _op: int) -> None:
+        raise OSError(errno.ENOLCK, os.strerror(errno.ENOLCK))
+
+    monkeypatch.setattr(setio.fcntl, "flock", no_locks)
+    for left in (old_temps_left(root), sweep_old_temps(root)[1]):
+        assert len(left) == 1 and "couldn't check whether a call still uses it" in left[0]
+    assert crashed.is_dir()
 
 
 def test_the_sweep_removes_a_model_calls_old_temps(tmp_path: Path) -> None:
@@ -1334,16 +1452,21 @@ def test_the_sweep_removes_a_model_calls_old_temps(tmp_path: Path) -> None:
     (root / "work" / "call").mkdir(parents=True)
     t = _old_temp(root / "work" / "call", ".schema.json.0123456789ab.tmp")
     w = _old_temp(root / "work", ".seeds.jsonl.0123456789ab.tmp")
+    (root / "grades").mkdir()  # a grades file is written there too (review round 29)
+    g = _old_temp(root / "grades", ".m-1.json.0123456789ab.tmp")
     gone, left = sweep_old_temps(root)
-    assert sorted(gone) == sorted([t, w]) and not left
-    # a linked work folder is never walked, even by the listing (one name opened at a time)
+    assert sorted(gone) == sorted([t, w, g]) and not left
+    # a linked work folder is never walked, even by the listing (one name opened at a time);
+    # it gets one line, and nothing below it is looked at (review round 29, delta check)
     elsewhere = tmp_path / "elsewhere"
     (elsewhere / "call").mkdir(parents=True)
     _old_temp(elsewhere / "call", ".schema.json.0123456789ab.tmp")
     (root / "work" / "call").rmdir()
     (root / "work").rmdir()
     (root / "work").symlink_to(elsewhere, target_is_directory=True)
-    assert old_temps_left(root) == []
+    assert old_temps_left(root) == [
+        f"{root / 'work'}: old temporary files not checked (a symbolic link)"
+    ]
 
 
 def test_a_set_path_with_dot_dot_after_a_link_is_refused(tmp_path: Path) -> None:
@@ -1408,3 +1531,1489 @@ def test_a_grades_file_is_never_written_through_a_link(
     g._write({"cases": {}}, [], {}, Counter())  # pyright: ignore[reportPrivateUsage]
     assert victim.read_text() == "mine"
     assert not (root / "grades" / name).is_symlink()
+
+
+def test_a_model_call_or_grades_folder_linked_out_of_the_set_is_refused_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generate's and grade's model calls run in the set's `work/call`, and grade writes in its
+    `grades/`: a link there is refused before any call or write, as the set's own folder names
+    it (review round 29: the static checks alone passed a writer naming a subfolder as its set)."""
+    root = _set(tmp_path / "s", "t-1")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "work").mkdir()
+    (root / "work" / "call").symlink_to(elsewhere, target_is_directory=True)
+    asked = _Asked()
+    with pytest.raises(InvalidInputError, match="call: a symbolic link;"):
+        generate.Run._ask(SimpleNamespace(root=root, adapter=asked),  # type: ignore[arg-type]
+                          "seed", "g", "p", {}, [])  # fmt: skip
+
+    def fixed(value: object) -> Any:
+        def answer(*_a: object, **_k: object) -> object:
+            return value
+
+        return answer
+
+    monkeypatch.setattr(grade.gen, "verify", fixed({}))
+    monkeypatch.setattr(grade.models, "check_judge", fixed(None))
+    monkeypatch.setattr(grade.label_file, "read", fixed([{"id": "t-1"}]))
+    monkeypatch.setattr(grade, "case_view", fixed("view"))
+    with pytest.raises(InvalidInputError, match="call: a symbolic link;"):
+        grade.Grading(root, asked).run(resume=False)  # type: ignore[arg-type]
+    (root / "work" / "call").unlink()
+    (root / "grades").symlink_to(elsewhere, target_is_directory=True)
+    monkeypatch.setattr(grade, "set_version", fixed("v"))
+    with pytest.raises(InvalidInputError, match="grades: a symbolic link;"):
+        _grading(root)._write({"mode": "dev", "cases": {}}, [], {}, Counter())  # pyright: ignore[reportPrivateUsage]
+    assert asked.calls == []
+    assert not list(elsewhere.iterdir())
+
+
+# What a set writer may pass as its set: the set's own folder, never a folder inside it, which
+# `writable_set` would take as an alias of the whole set (review round 29). A name only counts
+# while it still holds the set: these are the only rebindings of one inside a set writer (the
+# delta check of round 29: `root = self.root / "work"` passed a check of names alone)
+SET_ROOTS = {"root", "self.root", "run.root", "path.parents[1]", "home"}
+REBINDS = {
+    "home = root",
+    "home = priv",  # new-case: the private half, for an injection card
+    "priv = merged.paths(root).private",
+    "root = writable_set(self.root)",  # Run._accept: the checked set itself
+    "root = root.expanduser().resolve()",  # generate: the typed set, made absolute
+}
+
+
+# Every source file: the scans below that pin who calls a guard or writer read all of them, so a
+# new caller anywhere is seen (review round 29, third delta check). Known gaps, not checked: a
+# local alias of a guard (`ws = writable_set`), a path built from a guard's result with `..`, and
+# a call at module level (no function to name); the behaviour tests that link a set's folders
+# are the protection there.
+_ALL_SRC = sorted([*SRC.rglob("*.py"), *(SRC.parent / "ecf_server").rglob("*.py")])
+# Callers of writable_set that only check a set before any work, writing nothing themselves
+SET_PREFLIGHT = {
+    ("cli_evalgen.py", "make_commands.generate"),
+    ("cli_evalgen.py", "make_commands.grade"),
+}
+
+
+def test_every_caller_of_writable_set_is_a_listed_set_writer() -> None:
+    callers = {(str(f.relative_to(SRC)) if f.is_relative_to(SRC) else f.name, q)
+               for f in _ALL_SRC for q in _callers(f, "writable_set")}  # fmt: skip
+    unlisted = sorted(callers - SET_WRITERS - SET_PREFLIGHT)
+    assert not unlisted, "writable_set called outside SET_WRITERS: " + ", ".join(
+        f"{rel}:{q}" for rel, q in unlisted
+    )
+
+
+def test_every_set_writer_names_the_set_itself() -> None:
+    bad: list[str] = []
+    for rel, qual in sorted(SET_WRITERS | SET_PREFLIGHT):  # a pre-flight check names it too
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        fn = _function(tree, qual)
+        held: set[str] = set()
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Call) and _called(n) == "writable_set":
+                arg = ast.unparse(n.args[0]) if n.args else ""
+                if arg not in SET_ROOTS:
+                    bad.append(f"{rel}:{n.lineno} ({qual})")
+                held.add(arg.removesuffix(".parents[1]"))
+        if "home" in held:
+            held |= {"root", "priv"}
+        for n in ast.walk(fn):
+            for t in _bound(n):
+                if ast.unparse(t) in held and ast.unparse(n) not in REBINDS:
+                    bad.append(f"{rel}:{t.lineno} ({qual}: {ast.unparse(n)[:60]})")
+    assert not bad, "a set writer names a folder other than its set: " + ", ".join(bad)
+
+
+def _bound(n: ast.AST) -> list[ast.expr]:
+    """The names a statement binds: assignments, loop and `with` targets, `:=`."""
+    if isinstance(n, ast.Assign):
+        found = list(n.targets)
+    elif isinstance(n, ast.AnnAssign | ast.AugAssign | ast.NamedExpr | ast.For | ast.AsyncFor):
+        found = [n.target]
+    elif isinstance(n, ast.withitem) and n.optional_vars is not None:
+        found = [n.optional_vars]
+    else:
+        return []
+    flat: list[ast.expr] = []
+    while found:  # `a, (b, *c) = ...` binds a, b and c (review round 29, second delta check)
+        t = found.pop()
+        if isinstance(t, ast.Tuple | ast.List):
+            found.extend(t.elts)
+        elif isinstance(t, ast.Starred):
+            found.append(t.value)
+        else:
+            flat.append(t)
+    return flat
+
+
+def _function(tree: ast.Module, qual: str) -> ast.FunctionDef:
+    body: list[ast.stmt] = tree.body
+    found: ast.AST = tree
+    for part in qual.split("."):
+        node = next(n for n in body if isinstance(n, ast.ClassDef | ast.FunctionDef)
+                    and n.name == part)  # fmt: skip
+        body = node.body
+        found = node
+    assert isinstance(found, ast.FunctionDef)
+    return found
+
+
+def test_a_dot_dot_after_a_link_in_the_set_folder_is_refused(tmp_path: Path) -> None:
+    """`S/link/..` is the link target's parent, not `S`: refused as the set location refuses it,
+    so a set's own layout is never skipped that way (review round 29)."""
+    s = tmp_path / "S"
+    s.mkdir()
+    other = tmp_path / "other" / "inner"
+    other.mkdir(parents=True)
+    (s / "lnk").symlink_to(other, target_is_directory=True)
+    with pytest.raises(InvalidInputError, match=r"a `\.\.` after the symbolic link"):
+        setio.writable_set(s / "lnk" / "..")
+    assert setio.writable_set(s / "plain" / "..") == s / "plain" / ".."  # no link: folded
+
+
+def test_the_sweep_names_a_set_reached_through_its_alias(tmp_path: Path) -> None:
+    """The sweep never follows a link, even an alias of the set (review round 25, S1), but it
+    says so: an alias is never skipped without a line (review round 29)."""
+    root = _set(tmp_path / "s", "t-1")
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    old = _old_temp(root / "cases")
+    (line,) = setio.old_temps_left(alias)
+    assert "the set folder is a symbolic link" in line
+    assert setio.sweep_old_temps(alias) == ([], [line])
+    assert old.exists()
+
+
+def test_a_linked_email_with_the_same_bytes_is_replaced_by_the_build(tmp_path: Path) -> None:
+    """A built email that is a link, even to the same bytes, is replaced by a plain file, so
+    the build never reports a set its readers then refuse (review round 29)."""
+    root = _set(tmp_path / "s", "t-1")
+    assert not build_all(root).findings
+    eml = root / "eml" / "t-1.eml"
+    same = tmp_path / "same.eml"
+    same.write_bytes(eml.read_bytes())
+    eml.unlink()
+    eml.symlink_to(same)
+    assert not build_all(root).findings
+    assert not eml.is_symlink() and eml.read_bytes() == same.read_bytes()
+
+
+def test_a_fixed_label_file_error_never_reads_empty_parentheses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ecf.cli import _import_fixed  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    root = _set(tmp_path / "s", "t-1")
+    page = tmp_path / "page.json"
+    page.write_text("{}")
+
+    def bare(*_a: object, **_k: object) -> str:
+        raise OSError
+
+    from ecf.eval import merged  # noqa: PLC0415
+
+    monkeypatch.setattr(Path, "read_text", bare)
+    for halves in ([root], [root, tmp_path / "private"]):  # one set; a public and private pair
+
+        def given(_r: Path, h: list[Path] = halves) -> list[Path]:
+            return h
+
+        monkeypatch.setattr(merged, "halves", given)
+        with pytest.raises(InvalidInputError) as got:
+            _import_fixed(root, page)
+        assert "()" not in str(got.value) and "OSError" in str(got.value)
+
+
+def test_a_rescore_is_never_written_into_a_view(tmp_path: Path) -> None:
+    """A rescore goes beside the result file the user names, so it checks that folder; the
+    install's own record is the only result written unchecked (review round 29, delta check)."""
+    from ecf_server import evalrun  # noqa: PLC0415
+
+    view = tmp_path / "eval" / "private" / ".merged" / "synthetic" / "results"
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        evalrun._write_beside(view / "x.json", None, "y.json", None)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    assert not view.exists()
+    callers = {(f.name, q) for f in _ALL_SRC for q in _callers(f, "write_result")}
+    assert callers == {("evalrun.py", "_save"), ("evalrun.py", "_write_beside")}, callers
+
+
+def test_a_new_card_from_generate_is_never_written_through_a_linked_cases_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Run._accept` names the set before its card is written (review round 29, delta check)."""
+    root = tmp_path / "gen"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "cases").symlink_to(elsewhere, target_is_directory=True)
+
+    def fixed(value: object) -> Any:
+        def answer(*_a: object, **_k: object) -> object:
+            return value
+
+        return answer
+
+    monkeypatch.setattr(generate, "card_text", fixed("text"))
+    monkeypatch.setattr(generate, "parse_card", fixed(SimpleNamespace(body="b")))
+    monkeypatch.setattr(generate, "problems", fixed((None, list[str]())))
+    run = SimpleNamespace(root=root, mode="prod", case_no=Counter(), show=None,
+                          adapter=SimpleNamespace(model="m"),
+                          dups=SimpleNamespace(seen=fixed(None)),
+                          work=SimpleNamespace(append=fixed(None)))  # fmt: skip
+    bucket = SimpleNamespace(group="bec", delivery=None)
+    with pytest.raises(InvalidInputError, match="cases: a symbolic link;"):
+        generate.Run._accept(run, bucket, {"id": "s"}, {"labels": {}}, False)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+    assert not list(elsewhere.iterdir())
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any folder")
+def test_the_sweep_names_a_folder_it_cannot_open(tmp_path: Path) -> None:
+    """A set folder the sweep can't open (unreadable, a link, not a folder) gets a line; a
+    missing one is silent (review round 29, delta check)."""
+    root = _set(tmp_path / "s", "t-1")
+    (root / "work").mkdir()
+    (root / "work" / "call").symlink_to(tmp_path, target_is_directory=True)
+    (root / ".build").write_text("")
+    os.chmod(root / "cases", 0)
+    try:
+        lines = setio.old_temps_left(root)
+    finally:
+        os.chmod(root / "cases", 0o700)
+    text = "\n".join(lines)
+    assert f"{root / 'cases'}: old temporary files not checked" in text
+    assert f"{root / 'work' / 'call'}: old temporary files not checked (a symbolic link)" in text
+    assert f"{root / '.build'}: old temporary files not checked (not a folder)" in text
+    assert "eml" not in text  # missing: nothing to say
+    assert len(lines) == 3
+
+
+def test_no_eval_message_prints_an_os_error_raw() -> None:
+    """An error caught as OSError (or any exception) becomes text only through `reason`, so no
+    message reads "()" or ends with nothing (review round 29 and its delta checks). In such a
+    handler the caught name may appear only inside `reason(...)`, `type(...)` or
+    `isinstance(...)`, re-raised or as a `raise ... from` cause, as `.errno`, `.filename` or
+    `.filename2`, or handed whole to one of `EXC_HELPERS`; any other use (an f-string, `str()`,
+    `print`, `echo`, a log field, `.args`, `.strerror`, a class built from it) fails. Not seen:
+    an OSError alias reached through a module (`except socket.timeout`); none is in these files.
+    `.filename` may be None (a descriptor call): a message using it gives a fallback
+    (`exc.filename or top`); that is read, not checked. Also stated, not checked: a module that
+    reaches `ecf.eval` only through another module or as `from ecf import eval` isn't scanned,
+    and a local alias or lambda given a helper's name would be trusted as that helper."""
+    raw: list[str] = []
+    for f in _eval_modules():
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        for h in ast.walk(tree):
+            if not (isinstance(h, ast.ExceptHandler) and h.name and h.type is not None):
+                continue
+            if _catches_os_error(h.type):
+                raw += [f"{f.name}:{line}" for line in sorted(set(_as_text(h, h.name)))]
+    assert not raw, "an exception made text without reason(): " + ", ".join(raw)
+
+
+def _catches_os_error(t: ast.expr) -> bool:
+    """Whether an `except` clause's type can catch an OSError: OSError or any subclass of it
+    (FileExistsError, TimeoutError, ...), or Exception/BaseException."""
+    import builtins  # noqa: PLC0415
+
+    for n in ast.walk(t):
+        last = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else ""
+        kind = getattr(builtins, last, None)
+        if isinstance(kind, type) and (issubclass(kind, OSError) or issubclass(OSError, kind)):
+            return True
+    return False
+
+
+def _as_text(handler: ast.ExceptHandler, name: str) -> list[int]:
+    """The lines where `handler` uses its caught `name` other than in an allowed way (review
+    round 29, fifth delta check: an allow-list, since every list of ways to make text leaked)."""
+    out: list[int] = []
+
+    def visit(n: ast.AST) -> None:
+        if isinstance(n, ast.Call):
+            last = _called(n)
+            if last in {"reason", "type", "isinstance"}:
+                return  # its text through reason; its class; a test of its class
+            if isinstance(n.func, ast.Name) and last in EXC_HELPERS:  # the helper itself
+                for c in [*n.args, *(k.value for k in n.keywords)]:
+                    if not (isinstance(c, ast.Name) and c.id == name):
+                        visit(c)
+                visit(n.func)
+                return
+        if isinstance(n, ast.Raise):
+            for c in (n.exc, n.cause):  # re-raised, or the cause of another error
+                if c is not None and not (isinstance(c, ast.Name) and c.id == name):
+                    visit(c)
+            return
+        if (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == name
+                and n.attr in {"errno", "filename", "filename2"}):  # fmt: skip
+            return  # the code or the path, not the error's text
+        if isinstance(n, ast.Name) and n.id == name:
+            out.append(n.lineno)
+        for c in ast.iter_child_nodes(n):
+            visit(c)
+
+    for stmt in handler.body:
+        visit(stmt)
+    return out
+
+
+# Helpers handed a caught error whole: each puts it in a message through `reason` or re-raises it.
+# Called by bare name only, and each defined once, so a method or a second def of the same name
+# is checked like any other call (review round 29, sixth delta check)
+EXC_HELPERS = {
+    "unreadable",
+    "denied",
+    "_reraise_for",
+    "_stop_or_fail",
+    "_unreadable_state",
+    "_unreadable_key",
+}
+
+
+def _eval_modules() -> list[Path]:
+    """Every eval module, chosen by rule so a new one is never missed: all of `ecf/eval`, and
+    every other module that imports from it (review round 29, sixth delta check)."""
+
+    def imports_eval(f: Path) -> bool:
+        return any(
+            (isinstance(n, ast.ImportFrom) and (n.module or "").startswith("ecf.eval"))
+            or (isinstance(n, ast.Import) and any(a.name.startswith("ecf.eval") for a in n.names))
+            for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+        )
+
+    return [f for f in _ALL_SRC if f.is_relative_to(SRC / "eval") or imports_eval(f)]
+
+
+def test_each_exception_helper_is_defined_once() -> None:
+    defs = [
+        n.name
+        for f in _ALL_SRC
+        for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name in EXC_HELPERS
+    ]
+    assert sorted(defs) == sorted(EXC_HELPERS), defs
+
+
+def test_the_sweep_names_a_folder_it_opened_but_could_not_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _set(tmp_path / "s", "t-1")
+    real = os.listdir
+
+    def failing(path: Any = ".") -> list[str]:
+        if isinstance(path, int):
+            raise OSError(errno.EIO, "Input/output error")
+        return list(real(path))  # pyright: ignore[reportUnknownArgumentType]
+
+    monkeypatch.setattr(os, "listdir", failing)
+    lines = setio.old_temps_left(root)
+    assert lines and all("old temporary files not checked (Input/output error)" in x
+                         for x in lines)  # fmt: skip
+
+
+def test_a_result_file_is_never_written_through_a_link(tmp_path: Path) -> None:
+    """A symbolic link, hard link or pipe at a result file's own name (a rescore's predictable
+    name, say) is replaced by the new file, never written through or waited on (review round
+    29, second and third delta checks)."""
+    from ecf.eval.results import ResultFile  # noqa: PLC0415
+    from ecf_server.evalrun import write_result  # noqa: PLC0415
+
+    folder = tmp_path / "results"
+    folder.mkdir()
+    target = tmp_path / "target.json"
+    target.write_text("keep")
+    (folder / "sym.json").symlink_to(target)
+    os.link(target, folder / "hard.json")
+    os.mkfifo(folder / "pipe.json")
+    result = ResultFile(run_id="a" * 32, pair="p", set_version="v", created_at="t", cases=[])
+    for name in ("sym.json", "hard.json", "pipe.json"):
+        path = write_result(folder, result, name)
+        st = os.lstat(path)
+        assert stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) & 0o077 == 0
+        assert json.loads(path.read_text())["run_id"] == "a" * 32
+    assert target.read_text() == "keep"
+    assert sorted(p.name for p in folder.iterdir()) == ["hard.json", "pipe.json", "sym.json"]
+
+
+def test_the_gate_names_a_set_it_cannot_read(tmp_path: Path) -> None:
+    """`reason` gives the system message only, so the gate's detail names the set and the file
+    the error names (review round 29, seventh delta check)."""
+    from ecf_server import gate  # noqa: PLC0415
+
+    root = tmp_path / "s"
+    root.write_text("")  # a file where the set's folder goes
+    unreadable = gate._unreadable_state  # pyright: ignore[reportPrivateUsage]
+    got = unreadable(root / "cases", NotADirectoryError(20, "Not a directory", str(root / "cases")))
+    assert got.error == f"the gate's set {root / 'cases'} can't be read: Not a directory"
+    other = unreadable(root, OSError(5, "Input/output error", str(root / "x")))
+    assert other.error == (
+        f"the gate's set {root} can't be read ({root / 'x'}): Input/output error"
+    )
+    real = gate.set_state(root, fresh=True)
+    assert real.error is not None and str(root) in real.error, real.error
+
+
+def test_the_gate_message_names_each_path_once_and_as_text(tmp_path: Path) -> None:
+    """ecf's own refusal already names the set: not repeated; a bytes path is decoded, a file
+    number shown as nothing; the unreadable key holds the file (review round 29, eighth delta
+    check)."""
+    from ecf_server import gate  # noqa: PLC0415
+
+    root = tmp_path / "s"
+    unreadable = gate._unreadable_state  # pyright: ignore[reportPrivateUsage]
+    own = unreadable(root, InvalidInputError(f"{root}: a symbolic link"))
+    assert own.error == f"the gate's set can't be read: {root}: a symbolic link"
+    raw = unreadable(root, OSError(5, "Input/output error", os.fsencode(str(root / "x"))))
+    assert raw.error == f"the gate's set {root} can't be read ({root / 'x'}): Input/output error"
+    fd = unreadable(root, OSError(9, "Bad file descriptor", 3))
+    assert fd.error == f"the gate's set {root} can't be read: Bad file descriptor"
+    key = gate._unreadable_key  # pyright: ignore[reportPrivateUsage]
+    one = key(root, OSError(13, "Permission denied", str(root / "a")))
+    two = key(root, OSError(13, "Permission denied", str(root / "b")))
+    assert one != two
+
+
+def test_a_rescore_of_the_installs_own_result_ignores_a_stray_merge_file(tmp_path: Path) -> None:
+    """The install's own results folder is trusted for a rescore as for the run's record; any
+    other folder is still checked (review round 29, eighth delta check)."""
+    from ecf_server.evalrun import rescore_folder  # noqa: PLC0415
+
+    (tmp_path / "merge.json").write_text("")  # another tool's stray file, not JSON
+    data = tmp_path / "home" / "data"
+    own = data / "evals" / "x.json"
+    assert rescore_folder(own, data) == own.parent
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        rescore_folder(tmp_path / "elsewhere" / "x.json", data)
+    with pytest.raises(InvalidInputError, match="merged eval set"):
+        rescore_folder(own, None)
+
+
+def test_a_drafts_record_is_never_written_through_a_link(tmp_path: Path) -> None:
+    """The drafts record beside a result is written as the result is (review round 29, tenth
+    delta check)."""
+    from ecf.eval.drafts import DraftsFile  # noqa: PLC0415
+    from ecf_server import drafteval  # noqa: PLC0415
+
+    folder = tmp_path / "evals"
+    folder.mkdir()
+    target = tmp_path / "target.json"
+    target.write_text("keep")
+    record = DraftsFile(run_id="r1", set_version="v", created_at="t", forced=False,
+                        complete=True, state="done", models={}, actor_prompt_digest="a",
+                        checker_digest="c", cases=[])  # fmt: skip
+    name = folder / "r1.drafts.json"
+    for plant in (lambda: name.symlink_to(target), lambda: os.link(target, name),
+                  lambda: os.mkfifo(name)):  # fmt: skip
+        plant()
+        path = drafteval.write(folder, record)
+        st = os.lstat(path)
+        assert stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) & 0o077 == 0
+        assert target.read_text() == "keep"
+        assert DraftsFile.model_validate_json(path.read_text()) == record  # what was written
+        path.unlink()
+
+
+def _no_questions(*_a: object) -> list[dict[str, Any]]:
+    return []
+
+
+@pytest.mark.parametrize(
+    "writer",
+    ["export page", "codex catalogue", "draft-run registry", "settle page", "judges' answers",
+     "corpus labels"],
+)  # fmt: skip
+def test_no_eval_writer_writes_through_a_link_hard_link_or_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str
+) -> None:
+    """Every eval file is a new file renamed over its name (review round 29, eleventh delta
+    check): a symbolic link, hard link or pipe at the name is replaced, its target untouched."""
+    from ecf import cli_evalgen  # noqa: PLC0415
+    from ecf.eval import codex_tool, tools  # noqa: PLC0415
+    from ecf_server import draftruns  # noqa: PLC0415
+
+    target = tmp_path / "target"
+    target.write_text("keep")
+    folder = tmp_path / "out"
+    folder.mkdir(mode=0o700)
+
+    def ran(*_a: object, **_k: object) -> tools.Ran:
+        doc = json.dumps({"models": [{"slug": "m", "tool_mode": "x"}]}).encode()
+        return tools.Ran(0, doc, b"", 0.0)
+
+    def in_folder(*_a: object) -> Path:
+        return folder / ("cat.json" if writer == "codex catalogue" else "")
+
+    def write() -> Path:
+        if writer == "export page":
+            cli_evalgen._write_private(folder / "page.json", "{}")  # pyright: ignore[reportPrivateUsage]
+            return folder / "page.json"
+        if writer == "codex catalogue":
+            monkeypatch.setattr(tools, "run_cli", ran)
+            monkeypatch.setattr(codex_tool, "catalog_path", in_folder)
+            codex_tool.write_catalog(None, "m", "codex", {}, tmp_path)  # type: ignore[arg-type]
+            return folder / "cat.json"
+        if writer == "settle page":
+            from ecf.eval import settle  # noqa: PLC0415
+
+            monkeypatch.setattr(settle, "questions", _no_questions)
+            settle.export(tmp_path / "set", folder)
+            return folder / "settle-page.json"
+        if writer == "judges' answers":
+            from ecf_server import draftjudging  # noqa: PLC0415
+
+            draftjudging.write_json(folder / "j.json", {})
+            return folder / "j.json"
+        if writer == "corpus labels":
+            from ecf.eval import corpus_labels  # noqa: PLC0415
+
+            corpus_labels.save(folder / "labels.jsonl", {})
+            return folder / "labels.jsonl"
+        monkeypatch.setattr(draftruns, "folder", in_folder)
+        draftruns.save(tmp_path, draftruns.Registry())
+        return folder / draftruns.REGISTRY
+
+    name = write()
+    for plant in (lambda: name.symlink_to(target), lambda: os.link(target, name),
+                  lambda: os.mkfifo(name)):  # fmt: skip
+        name.unlink()
+        plant()
+        assert write() == name
+        st = os.lstat(name)
+        assert stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) & 0o077 == 0
+        assert target.read_text() == "keep" and name.read_text() != "keep"
+    assert not [p for p in folder.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_the_draft_run_registry_is_flushed_before_it_is_renamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The registry must survive a power cut: its new file is flushed to disk before the rename,
+    as it was before it moved onto the shared write (review round 29, eleventh delta check)."""
+    from ecf_server import draftruns  # noqa: PLC0415
+
+    steps: list[str] = []
+    real_sync, real_replace = os.fsync, os.replace
+
+    def fsync(fd: int) -> None:
+        steps.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_sync(fd)
+
+    def replace(src: Any, dst: Any) -> None:
+        steps.append("rename")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    draftruns.save(tmp_path, draftruns.Registry())
+    assert steps == ["file", "rename", "dir"], steps  # flushed, renamed, then its folder
+
+
+def test_the_registry_save_removes_old_leftovers(tmp_path: Path) -> None:
+    """Saved every 15 s, the registry removes crashed writes' temporary files over an hour old
+    from its folder, and nothing else (review round 29, twelfth delta check)."""
+    from ecf_server import draftruns  # noqa: PLC0415
+
+    evals = draftruns.folder(tmp_path)
+    evals.mkdir(parents=True, mode=0o700)
+    old = _old_temp(evals, ".draft-runs.json.0123456789ab.tmp")
+    young = evals / ".r.json.0123456789ab.tmp"
+    young.write_text("now")
+    other = _old_temp(evals, "notes.tmp")
+    draftruns.save(tmp_path, draftruns.Registry())
+    assert not old.exists() and young.exists() and other.exists()
+
+
+# Every call in an eval module that can write a file, as an allow-list: a new write call fails
+# until it is listed here, so it is looked at (review round 29, thirteenth delta check: a list
+# of bad patterns kept missing one). Eval files are written through `setio`: `write_new` and
+# `copy_new` (a new file, never through a link), `replace_file` (renamed over the name),
+# `open_append` (added to in place, a regular file with one name). Anything else is listed
+# with why.
+WRITE_CALLS = {
+    ("setio.py", "write_new", "open"),  # O_EXCL | O_NOFOLLOW: a new file of its own
+    ("setio.py", "write_new", "fdopen"),
+    ("setio.py", "copy_new", "open"),
+    ("setio.py", "copy_new", "fdopen"),
+    ("setio.py", "replace_file", "replace"),  # the rename over the name
+    ("setio.py", "create_file", "link"),  # a new file's name: never replaces anything
+    ("setio.py", "create_file", "rename"),  # the same on a disk that can't hard-link
+    ("setio.py", "open_append", "open"),  # NOFOLLOW | NONBLOCK, a regular file, one name
+    ("draftruns.py", "_cut_partial", "ftruncate"),  # on `open_append`'s descriptor
+    ("tools.py", "canary", "write_text"),  # the canary's decoy, in its own temporary folder
+    ("merged.py", "_clone_or_link", "link"),  # a view file, linked to a new name of its own
+    ("merged.py", "_open_lock", "open"),  # the view's lock: NOFOLLOW, NONBLOCK, regular only;
+    # nothing is written to it
+    ("api.py", "create_session", "open"),  # a telemetry session, not a file
+    ("tools.py", "run_cli", "Popen"),  # a generator's command line: it writes only its answer,
+    # to a fresh 0700 folder of the call's own (`CliTool.ask`); a Claude call writes nothing
+    ("gitcheck.py", "<module>", "run"),  # git, reading only: status, rev-parse, ls-files
+    ("ruletest.py", "_conn", "connect"),  # an in-memory database (":memory:"), no file
+    ("merged.py", "_clonefile", "CDLL"),  # macOS clonefile: a view file cloned to a new name of
+    # its own (refused if anything is there; the source not followed: CLONE_NOFOLLOW)
+}
+# The calls that put bytes in a file or make one; removing, renaming away or chmod don't
+# write through a name and are left to the set writers' own check above
+_CONTENT_WRITES = {"write_text", "write_bytes", "truncate", "ftruncate", "mkstemp", "mktemp",
+                   "NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile", "copytree",
+                   "symlink_to", "hardlink_to", "touch", "unpack_archive", "make_archive",
+                   "extract", "extractall", "FileIO"}  # fmt: skip
+
+
+@functools.cache
+def _constants(tree: ast.Module) -> dict[str, ast.expr]:
+    """Module-level names assigned exactly once, to their value."""
+    seen = Counter(t.id for n in tree.body if isinstance(n, ast.Assign | ast.AnnAssign)
+                   for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+                   if isinstance(t, ast.Name))  # fmt: skip
+    return {
+        n.targets[0].id: n.value
+        for n in tree.body
+        if isinstance(n, ast.Assign) and len(n.targets) == 1
+        and isinstance(n.targets[0], ast.Name) and seen[n.targets[0].id] == 1
+    }  # fmt: skip
+
+
+def _open_mode(call: ast.Call, method: bool) -> ast.expr | bool | None:
+    """`open(path, mode)`'s mode, or `something.open(mode)`'s (Path.open); True when it can't be
+    told (`*args` or `**kwargs`: counted as a write; review round 29, fourteenth delta check)."""
+    if any(isinstance(a, ast.Starred) for a in call.args) or any(
+        k.arg is None for k in call.keywords
+    ):
+        return True
+    pos = 0 if method else 1
+    if len(call.args) > pos:
+        return call.args[pos]
+    return next((k.value for k in call.keywords if k.arg == "mode"), None)
+
+
+def _imports(tree: ast.Module, package: str = "") -> dict[str, str]:
+    """Each name an import binds, to what it names: `import os as _os` gives _os -> os, `import
+    logging.handlers` gives logging -> logging, `from io import open as o` gives o -> io.open, and
+    in package `package` `from . import setio` gives setio -> ecf.eval.setio. `_write_calls`
+    works it out once per module (review round 29, nineteenth delta check: once per call made
+    the scan quadratic)."""
+    out = {m: m for m in ("os", "shutil", "tempfile", "subprocess")}  # however reached
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(n, ast.ImportFrom):
+            mod = n.module or ""
+            if n.level:  # relative: from the module's own package, one level up per extra dot
+                base = package.split(".")[: len(package.split(".")) - (n.level - 1)]
+                mod = ".".join([*base, *([mod] if mod else [])]) if package else "." * n.level + mod
+            out |= {a.asname or a.name: f"{mod}.{a.name}" for a in n.names if a.name != "*"}
+    return out
+
+
+_STD_MODS = {"os", "shutil", "tempfile", "subprocess", "io", "codecs", "gzip", "bz2", "lzma",
+             "zipfile", "tarfile", "dbm", "shelve", "sqlite3", "logging", "asyncio", "pty",
+             "importlib", "builtins", "ctypes", "sys", "urllib", "posix", "nt", "_io",
+             "_posixsubprocess", "fileinput"}  # fmt: skip
+
+
+# The modules behind os, io and subprocess, reached by their own names
+_SAME_AS = {"posix": "os", "nt": "os", "_io": "io", "_posixsubprocess": "subprocess"}
+
+
+def _qualified(f: ast.expr, names: dict[str, str]) -> str:
+    """What a name or attribute chain names, through the module's imports: `_os.replace` and
+    `mv` (`from os import replace as mv`) give "os.replace", `open` the builtin "open"; on
+    anything else (a path, a file, a call's result) a method gives ".name"."""
+    parts: list[str] = []
+    while isinstance(f, ast.Attribute):
+        parts.append(f.attr)
+        f = f.value
+    if isinstance(f, ast.Name) and (f.id in names or not parts):
+        chain = [*names.get(f.id, f.id).split("."), *reversed(parts)]
+        # a module reached through another one's attribute (`tools.os.replace`) is that module
+        at = max((i for i, p in enumerate(chain) if p in _STD_MODS), default=0)
+        chain = chain[at:]
+        return ".".join([_SAME_AS.get(chain[0], chain[0]), *chain[1:]])
+    return "." + parts[0] if parts else ""  # `f()()`, `fs[0](...)`: nothing named
+
+
+# What can write when called, by what it names (review round 29, fifteenth delta check: a list of
+# method names missed `getattr(os, "replace")`, a renamed `open`, writer classes and programs).
+# A program run can write anything it is told to: each is listed with what it writes.
+_RUNS = {"subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
+         "subprocess.check_output", "subprocess.getoutput", "subprocess.getstatusoutput",
+         "os.system", "os.popen", "os.posix_spawn", "os.posix_spawnp", "os.execv", "os.execve",
+         "os.execvp", "os.execvpe", "os.execl", "os.execle", "os.execlp", "os.execlpe",
+         "os.spawnv", "os.spawnve", "os.spawnvp", "os.spawnvpe", "os.spawnl", "os.spawnle",
+         "os.spawnlp", "os.spawnlpe", "asyncio.create_subprocess_exec",
+         "asyncio.create_subprocess_shell", "pty.spawn"}  # fmt: skip
+_WRITERS = _RUNS | {"sqlite3.connect", "logging.FileHandler", "urllib.request.urlretrieve",
+                    ".subprocess_exec", ".subprocess_shell", "logging.config.dictConfig",
+                    "logging.config.fileConfig",
+                    "logging.handlers.RotatingFileHandler", "logging.handlers.WatchedFileHandler",
+                    "logging.handlers.TimedRotatingFileHandler", "io.FileIO", "os.mkfifo",
+                    "os.mknod", "os.truncate", "os.ftruncate", "os.posix_fallocate",
+                    "os.sendfile", "os.copy_file_range", "os.link", "os.symlink", "os.rename",
+                    "os.renames", "os.replace", "shutil.copy", "shutil.copy2", "shutil.copyfile",
+                    "shutil.copytree", "shutil.move", "shutil.make_archive",
+                    "shutil.unpack_archive", "tempfile.mkstemp", "tempfile.mktemp",
+                    "tempfile.NamedTemporaryFile", "tempfile.TemporaryFile",
+                    "tempfile.SpooledTemporaryFile", "zipfile.ZipFile.extract",
+                    "zipfile.ZipFile.extractall"}  # fmt: skip
+# A module or name reached by a computed name: whatever it is, it can't be told, so it counts
+_DYNAMIC = {
+    "__import__",
+    "importlib.import_module",
+    "importlib.__import__",
+    "builtins.__import__",
+    "vars",
+    "exec",
+    "eval",
+    "operator.methodcaller",
+    "operator.attrgetter",
+    "globals",
+    "locals",
+    # a system library's function, called with no Python check (merged.py's `clonefile`;
+    # review round 29, seventeenth delta check)
+    "ctypes.CDLL",
+    "ctypes.PyDLL",
+    "ctypes.LibraryLoader",
+    "ctypes.cdll",
+    "ctypes.pydll",
+}
+# Writers only when given a file or told to work in place: the argument's place and name
+_WRITES_IF = {"logging.basicConfig": (99, "filename"), "fileinput.input": (1, "inplace"),
+              "fileinput.FileInput": (1, "inplace")}  # fmt: skip
+# Openers whose mode (second, or `mode=`/`flag=`) says whether they write; the value is the
+# mode used when none is given
+_MODED = {"open": "r", "builtins.open": "r", "io.open": "r", "codecs.open": "r",
+          "gzip.open": "rb", "gzip.GzipFile": "rb", "bz2.open": "rb", "bz2.BZ2File": "r",
+          "lzma.open": "rb", "lzma.LZMAFile": "r", "zipfile.ZipFile": "r",
+          "zipfile.PyZipFile": "r", "tarfile.open": "r", "tarfile.TarFile": "r", "dbm.open": "r",
+          "dbm.dumb.open": "c", "dbm.gnu.open": "r", "dbm.ndbm.open": "r", "dbm.sqlite3.open": "r",
+          "shelve.open": "c", "shelve.DbfilenameShelf": "c", "os.fdopen": "r"}  # fmt: skip
+_READ_MODE = re.compile(r"[rbtU]+|r[:|][a-z0-9]*")  # open's, tarfile's (r:gz), dbm's (r)
+
+
+def _mode_writes(mode: ast.expr | bool | None, default: str) -> bool:
+    if mode is True:
+        return True
+    text = default if mode is None else getattr(mode, "value", None)
+    return not (isinstance(text, str) and _READ_MODE.fullmatch(text))
+
+
+def _dynamic(q: str) -> bool:
+    """A module or function reached by a computed name, or a system library loaded."""
+    return q in _DYNAMIC or q.startswith(("ctypes.cdll.", "ctypes.pydll."))
+
+
+def _writes_when_called(q: str) -> bool:
+    """Whether calling what `q` names can write (an opener only with some modes)."""
+    last = q.rsplit(".", 1)[-1]
+    return (q in _WRITERS or q in _MODED or _dynamic(q) or last in _CONTENT_WRITES
+            or q == "os.open" or q in _WRITES_IF
+            or (q.startswith(".") and last in {"open", "replace", "rename"}))  # fmt: skip
+
+
+def _can_write(call: ast.Call, tree: ast.Module | None = None,
+               names: dict[str, str] | None = None) -> bool:  # fmt: skip
+    """Whether a call can put bytes in a file: an os, shutil or tempfile write, a program run, a
+    database or log file opened, an open whose mode or flags aren't written out as read-only, or
+    a Path write, however the module or function is imported (`names`: the module's imports)."""
+    tree = tree or ast.Module(body=[], type_ignores=[])
+    names = names if names is not None else _imports(tree)
+    q = _qualified(call.func, names)
+    last = q.rsplit(".", 1)[-1]
+    if q in _WRITERS or _dynamic(q) or last in _CONTENT_WRITES:
+        return True
+    if q == "os.open":
+        mods = {n for n, m in names.items() if m == "os"} | {"os"}
+        return not _read_only(_arg(call, 1, "flags"), frozenset(mods), _constants(tree))
+    if q in _WRITES_IF:  # only with a file or in place: the argument at this place or name
+        pos, kw = _WRITES_IF[q]  # `*args` can't be told: counted
+        return (len(call.args) > pos or any(isinstance(x, ast.Starred) for x in call.args)
+                or any(k.arg in {kw, None} for k in call.keywords))  # fmt: skip
+    if q in _MODED or q == ".open":  # `.open`: Path.open(mode), the mode first
+        mode = _open_mode(call, method=q == ".open")
+        if mode is None:
+            mode = next((k.value for k in call.keywords if k.arg == "flag"), None)  # dbm, shelve
+        return _mode_writes(mode, _MODED.get(q, "r"))
+    if q.startswith(".") and last in {"replace", "rename"}:
+        kws = [k.arg for k in call.keywords]  # Path.replace(target); str's takes 2
+        return (len(call.args), tuple(kws)) in {(1, ()), (0, ("target",))}
+    return False
+
+
+def _arg(call: ast.Call, pos: int, kw: str) -> ast.expr | None:
+    if len(call.args) > pos:
+        return call.args[pos]
+    return next((k.value for k in call.keywords if k.arg == kw), None)
+
+
+@functools.cache
+def _is_module(q: str) -> bool:
+    """Whether `q` names a module: a standard one above, or one of ecf's own (a module of ours
+    used as a value reaches the modules it imports; review rounds 29, eighteenth and nineteenth
+    delta checks)."""
+    if q in _STD_MODS:
+        return True
+    if q.split(".", 1)[0] not in {"ecf", "ecf_server"}:
+        return False
+    *pkg, last = q.split(".")  # read from the source tree, nothing imported; names exact, as
+    folder = SRC.parent.joinpath(*pkg)  # on Linux, though macOS's disk ignores case
+    try:
+        listed = set(os.listdir(folder))
+    except OSError:
+        return False
+    return f"{last}.py" in listed or (last in listed and (folder / last / "__init__.py").is_file())
+
+
+def _getattr_owner(node: ast.AST, parent: ast.AST) -> bool:
+    """`node` is `getattr`'s object, the name it takes looked at on its own."""
+    return (
+        isinstance(parent, ast.Call)
+        and _called(parent) == "getattr"
+        and (bool(parent.args) and parent.args[0] is node)
+    )
+
+
+def _getattr_ref(node: ast.AST, names: dict[str, str]) -> str | None:
+    """`getattr(x, "name")` of something that writes, or of a module by a computed name."""
+    if isinstance(node, ast.Call) and _called(node) == "getattr" and len(node.args) >= 2:
+        got = node.args[1]
+        owner = _qualified(node.args[0], names)
+        if not isinstance(got, ast.Constant):
+            # a module's name that can't be told; a record's field read by name (results) is
+            # data, and a method so named on an object is a stated limit
+            return "getattr ?" if owner in set(names.values()) | _STD_MODS else None
+        if isinstance(got.value, str) and (
+            _writes_when_called(f"{owner}.{got.value}") or _writes_when_called(f".{got.value}")
+        ):
+            return f"getattr {got.value}"
+    return None
+
+
+def _value_ref(node: ast.Name | ast.Attribute, parent: ast.AST, q: str, names: dict[str, str],
+               rebound: Container[str]) -> str | None:  # fmt: skip
+    """`_write_ref` for a name or attribute taken as a value, not called. A name the module
+    also binds itself (a local `merged` list beside `from ecf.eval import merged`) isn't
+    taken for the module."""
+    if isinstance(node, ast.Name) and node.id not in names and node.id not in {"open", *_DYNAMIC}:
+        return None  # a local name
+    head = node
+    while isinstance(head, ast.Attribute):
+        head = head.value
+    if (_is_module(q) and not _getattr_owner(node, parent)
+            and str(getattr(head, "id", "")) not in rebound):  # fmt: skip
+        return f"{q} as a value"  # its functions then called under any name
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__dict__"
+        and q.split(".", 1)[0] in (set(names.values()) | _STD_MODS)
+    ):
+        return "__dict__"  # a module's names by a computed key (a record's fields aren't)
+    if _writes_when_called(q) and q not in {".open", ".replace", ".rename"}:
+        return q.rsplit(".", 1)[-1]  # an attribute `open` (a run's flag) is no write
+    return None
+
+
+def _write_ref(node: ast.AST, parent: ast.AST, names: dict[str, str],
+               rebound: Container[str] = frozenset()) -> str | None:  # fmt: skip
+    """Something that writes taken without calling it (`w = p.write_text`, `o = open`,
+    `partial(os.replace, ...)`, `getattr(os, "replace")`, `getattr(os, name)`): counted as its
+    call is (review round 29, fourteenth and fifteenth delta checks)."""
+    called = isinstance(parent, ast.Call) and parent.func is node
+    if not (isinstance(node, ast.Name | ast.Attribute) and isinstance(node.ctx, ast.Load)):
+        return _getattr_ref(node, names)
+    q = _qualified(node, names)
+    if q in {"sys.modules", "__builtins__"}:  # every module, every builtin, by a computed key
+        return q
+    if called or isinstance(parent, ast.Attribute):
+        return None
+    return _value_ref(node, parent, q, names, rebound)
+
+
+_COMPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, *_COMPS)
+_TABLE_NAMES: dict[type[ast.AST], str] = {
+    ast.Lambda: "lambda", ast.ListComp: "listcomp", ast.SetComp: "setcomp",
+    ast.DictComp: "dictcomp", ast.GeneratorExp: "genexpr",
+}  # fmt: skip
+
+
+class _Hidden:
+    """The names that, where a load sits, aren't the module's own binding: a name the scope
+    binds as its own (or takes from an enclosing function), as Python's `symtable` says, and an
+    inlined comprehension's loop names inside it (review round 29, nineteenth and twentieth
+    delta checks: a hand-made scope rule kept differing from Python's)."""
+
+    def __init__(self, table: symtable.SymbolTable, extra: frozenset[str] = frozenset(),
+                 outside: _Hidden | None = None, *, unmatched: bool = False) -> None:  # fmt: skip
+        self.table, self.extra, self.outside = table, extra, outside  # outside: where defined
+        # inside a type parameter's bound: its scopes' tables sit under the type parameters'
+        # own, so none is matched (a wrong one could hide a name; none can only add one)
+        self.unmatched = unmatched
+
+    def __contains__(self, name: object) -> bool:
+        if not isinstance(name, str):
+            return False
+        if name in self.extra:
+            return True
+        if self.table.get_type() == "module":  # a str, or a StrEnum from Python 3.13
+            return False  # a module level rebinding still counts as the module
+        try:
+            s = self.table.lookup(name)
+        except KeyError:
+            return False
+        return (s.is_local() and not s.is_global()) or s.is_free()
+
+
+def _split(node: ast.AST, deferred: bool = True) -> tuple[list[ast.AST], list[ast.AST]]:
+    """A scope's parts run where it is defined (defaults, decorators, bases, a comprehension's
+    first source; annotations too unless `deferred`, `from __future__ import annotations`),
+    and its own (body)."""
+    if isinstance(node, _COMPS):
+        first, *rest = node.generators
+        own = [x for x in ast.iter_child_nodes(node) if not isinstance(x, ast.comprehension)]
+        src: list[ast.AST] = [first.iter]
+        return src, [first.target, *first.ifs, *rest, *own]
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *node.keywords], list(node.body)
+    assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
+    a = node.args
+    outer: list[ast.AST] = [*a.defaults, *(d for d in a.kw_defaults if d is not None)]
+    if isinstance(node, ast.Lambda):
+        return outer, [node.body]
+    if not deferred:  # annotations run, where the function is defined
+        every = [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]
+        outer += [x.annotation for x in every if x is not None and x.annotation is not None]
+        outer += [node.returns] if node.returns is not None else []
+    return [*node.decorator_list, *outer], list(node.body)
+
+
+def _type_params(node: ast.AST) -> list[ast.AST]:
+    """A generic def's or class's type parameters' bounds and defaults (`[T: X = Y]`), looked at
+    where it is defined (review round 29, twenty-second delta check)."""
+    parts = [(getattr(p, "bound", None), getattr(p, "default_value", None))
+             for p in getattr(node, "type_params", [])]  # fmt: skip
+    return [x for pair in parts for x in pair if x is not None]
+
+
+def _defers_annotations(tree: ast.Module) -> bool:
+    return any(isinstance(n, ast.ImportFrom) and n.module == "__future__"
+               and any(a.name == "annotations" for a in n.names) for n in tree.body)  # fmt: skip
+
+
+def _comp_targets(node: ast.AST) -> frozenset[str]:
+    return frozenset(n.id for g in getattr(node, "generators", []) for n in ast.walk(g.target)
+                     if isinstance(n, ast.Name))  # fmt: skip
+
+
+def _write_calls(f: Path, package: str | None = None) -> set[tuple[str, str, str]]:
+    """(file, enclosing function or "<module>", call) for each write call in `f`. Whether a
+    name is the module of that name is Python's own answer (`symtable`), scope by scope."""
+    found: set[tuple[str, str, str]] = set()
+
+    def look(nodes: list[ast.AST], parent: ast.AST, fn: str, hidden: _Hidden) -> None:
+        # an annotation is a type, never run, under `from __future__ import annotations`
+        typed = [getattr(parent, a, None) for a in ("annotation", "returns")] if deferred else []
+        for child in nodes:
+            if any(child is x for x in typed):
+                continue
+            here = child.name if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) else fn
+            if isinstance(child, ast.ImportFrom) and any(a.name == "*" for a in child.names):
+                found.add((f.name, here, "import *"))  # its names can't be told
+            elif isinstance(child, ast.Call) and _can_write(child, tree, names):
+                found.add((f.name, here, _called(child)))
+            elif (ref := _write_ref(child, parent, names, hidden)) is not None:
+                found.add((f.name, here, ref))
+            if isinstance(child, ast.TypeAlias):  # `type X = ...`: its tables sit under its own,
+                lazy = [*_type_params(child), child.value]  # so none is matched (delta check 24)
+                look(lazy, child, here, _Hidden(hidden.table, hidden.extra, hidden.outside,
+                                                unmatched=True))  # fmt: skip
+            elif isinstance(child, _SCOPES):
+                outer, own = _split(child, deferred)
+                look(outer, child, fn, hidden)
+                bounds = _type_params(child)  # where defined; review round 29, delta checks 22-23
+                look(bounds, child, fn, _Hidden(hidden.table, hidden.extra, hidden.outside,
+                                                unmatched=True))  # fmt: skip
+                look(own, child, here, _inner(child, hidden))
+            else:
+                look(list(ast.iter_child_nodes(child)), child, here, hidden)
+
+    def _inner(node: ast.AST, hidden: _Hidden) -> _Hidden:
+        want = _TABLE_NAMES.get(type(node), getattr(node, "name", ""))
+        line = getattr(node, "lineno", 0)
+        kids = tables.setdefault(id(hidden.table), list(hidden.table.get_children()))
+        kind = "class" if isinstance(node, ast.ClassDef) else "function"
+        for i, k in enumerate([] if hidden.unmatched else kids):
+            wrapped = str(k.get_type()).startswith("type param")  # `def f[T]`: its own is inside
+            if (
+                k.get_name() != want
+                or k.get_lineno() != line
+                or (str(k.get_type()) != kind and not wrapped)
+            ):
+                continue  # matched by name, line and kind (review round 29, delta check 24)
+            del kids[i]  # each table once, in order
+            own = k
+            if wrapped:  # its own comes last, after the type variables' (one may share its name)
+                own = next(c for c in reversed(k.get_children())
+                           if c.get_name() == want and str(c.get_type()) == kind)  # fmt: skip
+            return _Hidden(own, outside=hidden)
+        # an inlined comprehension (Python 3.12+) has no table: its loop names are its own, and
+        # in a class body it sees not the class's names but those around the class
+        base = hidden
+        while base.table.get_type() == "class" and base.outside:  # class scopes never nest
+            base = base.outside
+        return _Hidden(
+            base.table, base.extra | _comp_targets(node), base.outside, unmatched=hidden.unmatched
+        )
+
+    if package is None:  # src/ecf/eval/tools.py is in ecf.eval
+        rel = (
+            f.resolve().relative_to(SRC.parent) if f.resolve().is_relative_to(SRC.parent) else None
+        )
+        package = ".".join(rel.parent.parts) if rel else ""
+    text = f.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    names = _imports(tree, package)
+    deferred = _defers_annotations(tree)
+    tables: dict[int, list[symtable.SymbolTable]] = {}
+    top = _Hidden(symtable.symtable(text, str(f), "exec"))
+    look(list(ast.iter_child_nodes(tree)), tree, "<module>", top)
+    return found
+
+
+@pytest.mark.parametrize(
+    ("code", "ref"),
+    [("w = p.write_text", "write_text"), ("f(os.ftruncate)", "ftruncate"),
+     ("getattr(p, 'write_bytes')", "getattr write_bytes"), ("getattr(p, 'open')", "getattr open"),
+     ("p.write_text(t)", "write_text"), ("x = p.read_text", None),
+     ("getattr(os, 'replace')", "getattr replace"), ("getattr(shutil, 'copy')", "getattr copy"),
+     ("getattr(os, n)", "getattr ?"), ("getattr(p, n)", None), ("o = open", "open"),
+     ("partial(open, mode='w')", "open"), ("x = f.open", None), ("r = subprocess.run", "run"),
+     ("h = logging.FileHandler", "FileHandler"), ("c = sqlite3.connect", "connect"),
+     ("x: subprocess.Popen[bytes] = f", None), ("getattr(os, 'rep' + t)", "getattr ?"),
+     ("d = os.__dict__", "__dict__"), ("d = p.__dict__", None), ("i = __import__", "__import__"),
+     ("m = os", "os as a value"), ("f(shutil)", "shutil as a value"),
+     ("getattr(os, 'O_EVTONLY', 0)", None), ("m = sys.modules['os']", "sys.modules"),
+     ("g = globals", "globals"), ("c = ctypes.CDLL", "CDLL"), ("x = os.path", None),
+     ("sys.modules.get('os').replace(a, t)", "sys.modules"), ("m = tools.os", "os as a value"),
+     ("m = setio", "ecf.eval.setio as a value"), ("f = setio.reason", None),
+     ("o = __builtins__['open']", "__builtins__"), ("m = posix", "os as a value"),
+     ("merged = [m]; x = merged", None)],
+)  # fmt: skip
+def test_the_write_scan_sees_a_write_method_taken_uncalled(
+    tmp_path: Path, code: str, ref: str | None
+) -> None:
+    mod = tmp_path / "m.py"
+    mod.write_text("from __future__ import annotations\n"
+                   "import os, shutil, subprocess, logging, sqlite3, sys, ctypes, posix\n"
+                   "from ecf.eval import setio, tools, merged\n"
+                   f"def g(p, t, f, n):\n    {code}\n")  # fmt: skip
+    assert _write_calls(mod) == ({("m.py", "g", ref)} if ref else set())
+
+
+def test_the_write_scan_counts_a_star_import(tmp_path: Path) -> None:
+    """`from os import *` binds names the scan can't tell: counted as a write to list (review
+    round 29, sixteenth delta check)."""
+    mod = tmp_path / "m.py"
+    mod.write_text("from os import *\n")
+    assert _write_calls(mod) == {("m.py", "<module>", "import *")}
+
+
+def test_a_local_name_hides_a_module_only_in_its_own_function(tmp_path: Path) -> None:
+    """A function's own `merged` list hides the module `merged` in that function only; a module
+    level rebinding still counts as the module (review round 29, nineteenth delta check)."""
+    mod = tmp_path / "m.py"
+    mod.write_text("from ecf.eval import merged, tools\n"
+                   "def h():\n    merged = []\n    return merged\n"
+                   "def k(os=None):\n    return os\n"
+                   "def j():\n    return merged, tools.os\n"
+                   "def n():\n    global merged\n    merged = 1\n    return merged\n")  # fmt: skip
+    assert _write_calls(mod) == {("m.py", "j", "ecf.eval.merged as a value"),
+                                 ("m.py", "j", "os as a value"),
+                                 ("m.py", "n", "ecf.eval.merged as a value")}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("body", "seen"),
+    [("def g(y):\n    a = [1 for merged in y]\n    return merged\n", True),
+     ("def g(y):\n    return [merged for merged in y]\n", False),
+     ("def g(y):\n    a = [merged for merged in y]\n    return a, merged.refresh\n", False),
+     ("def g(y):\n    return list(merged for merged in y)\n", False),
+     ("def f(merged=merged):\n    return 1\n", True),
+     ("def f(merged=1):\n    return merged\n", False),
+     ("f = lambda merged=merged: 0\n", True),
+     ("def deco(x):\n    return x\n@deco(merged)\ndef h(merged=1):\n    return merged\n", True),
+     ("def g():\n    merged = 1\n    def h():\n        global merged\n        return merged\n"
+      "    return h\n", True),
+     ("def g():\n    merged = 1\n    def h():\n        return merged\n    return h\n", False),
+     ("class C:\n    merged = 1\n    x = merged\n", False),
+     ("class C:\n    def m(self):\n        return merged\n", True),
+     ("class C:\n    merged = 1\n    y = [merged for q in z]\n", True),
+     ("class A:\n    merged = 1\n    class B:\n        y = [merged for q in z]\n", True),
+     ("def f[T: merged]():\n    return 1\n", True),
+     ("def f[T: (lambda: merged)](a=(lambda merged: 0)):\n    return a\n", True),
+     ("class C[T: (merged for q in z)]:\n    x = (0 for merged in z)\n", True),
+     ("def f[f: (lambda merged: 0)](): return (lambda: merged)\n", True),
+     ("class C[C: (lambda merged: 0)]: x = (lambda: merged)\n", True),
+     ("def f[f: int]():\n    merged = 1\n    return merged\n", False),
+     ("type X = (lambda: merged); y = (lambda merged: 0)\n", True),
+     ("type X[T: (lambda: merged)] = int; y = (lambda merged: 0)\n", True),
+     ("type X = int; y = (lambda merged: merged)\n", False),
+     ("class C:\n    merged = [1]\n    y = [q for q in merged]\n", False),
+     ("def f[T](x: T) -> T:\n    merged = 1\n    return merged\n", False),
+     ("x: (lambda merged: 0) = (lambda: merged)\n", True),
+     ("def g(a: merged = 1):\n    return a\n", True)],
+)  # fmt: skip
+def test_the_scan_decides_a_names_scope_as_python_does(
+    tmp_path: Path, body: str, seen: bool
+) -> None:
+    """Whether a name is the module of that name is Python's own answer (`symtable`): a
+    comprehension's loop name, a function's own argument, a closure, a class body, `global`;
+    defaults and decorators are looked at where they run (review round 29, twentieth delta
+    check)."""
+    mod = tmp_path / "m.py"
+    mod.write_text("from ecf.eval import merged\n" + body)
+    hits = {c for _f, _fn, c in _write_calls(mod)}
+    assert ("ecf.eval.merged as a value" in hits) is seen
+
+
+def test_a_module_of_ours_is_told_by_its_exact_name() -> None:
+    """Read from the source tree, nothing imported, and names exact as on Linux, though
+    macOS's disk ignores case (review round 29, twentieth delta check)."""
+    assert _is_module("ecf.eval.setio") and _is_module("ecf.eval") and _is_module("ecf_server")
+    assert not _is_module("ecf.eval.Setio") and not _is_module("ecf.eval.setio.reason")
+
+
+def test_a_relative_import_of_a_module_of_ours_is_resolved(tmp_path: Path) -> None:
+    """`from . import setio` in a module of `ecf.eval` is `ecf.eval.setio` (review round 29,
+    nineteenth delta check)."""
+    mod = tmp_path / "m.py"
+    mod.write_text("from . import setio\nfrom ..eval import tools\nx = setio\ny = tools\n")
+    assert _write_calls(mod, "ecf.eval") == {
+        ("m.py", "<module>", "ecf.eval.setio as a value"),
+        ("m.py", "<module>", "ecf.eval.tools as a value"),
+    }
+
+
+def test_every_eval_module_defers_its_annotations() -> None:
+    """An annotation runs unless the module has `from __future__ import annotations`: each eval
+    module with code has it, so the scan may take annotations for types (review round 29,
+    twenty-first delta check)."""
+    missing = [f.name for f in _eval_modules()
+               if (tree := ast.parse(f.read_text(encoding="utf-8"))).body
+               and not (len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr))
+               and not _defers_annotations(tree)]  # fmt: skip
+    assert not missing, missing
+
+
+def test_every_eval_write_call_is_listed() -> None:
+    found: set[tuple[str, str, str]] = set()
+    for f in _eval_modules():
+        found |= _write_calls(f)
+    assert found == WRITE_CALLS, sorted(found ^ WRITE_CALLS)
+
+
+@pytest.mark.parametrize(
+    ("code", "writes"),
+    [
+        ("open(p)", False), ("open(p, 'rb')", False), ("p.open()", False),
+        ("p.open('rb')", False), ("os.open(p, os.O_RDONLY | os.O_NOFOLLOW)", False),
+        ("s.replace('a', 'b')", False), ("d.copy()", False), ("os.fdopen(fd, 'rb')", False),
+        ("open(p, 'w')", True), ("open(p, mode)", True), ("open(p, mode='a')", True),
+        ("open(p, 'r+')", True), ("p.open('x')", True), ("p.open(m)", True),
+        ("os.open(p, flags)", True), ("os.open(p, os.O_RDONLY | extra)", True),
+        ("os.open(p, os.O_WRONLY | os.O_CREAT)", True), ("os.fdopen(fd, 'a')", True),
+        ("os.fdopen(fd, m)", True), ("p.write_text(t)", True), ("os.truncate(p, 0)", True),
+        ("os.ftruncate(fd, 0)", True), ("shutil.copy(a, b)", True),
+        ("shutil.copyfile(a, b)", True), ("shutil.move(a, b)", True),
+        ("tempfile.mkstemp()", True), ("tempfile.NamedTemporaryFile()", True),
+        ("os.replace(a, b)", True), ("tmp.replace(p)", True), ("p.touch()", True),
+        ("os.rename(a, b)", True), ("os.link(a, b)", True),
+        ("os.open(p, getattr(os, 'O_EVTONLY', 0))", False),
+        ("os.open(p, getattr(os, 'O_TRUNC', 0))", True),
+        ("os.open(p, _RO)", False), ("os.open(p, _RW)", True), ("os.open(p, _TWICE)", True),
+        ("_os.open(p, _os.O_WRONLY)", True), ("_os.open(p, _os.O_RDONLY)", False),
+        ("o(p, os.O_RDWR)", True), ("mv(a, b)", True), ("copy(a, b)", True),
+        ("_os.replace(a, b)", True), ("_os.link(a, b)", True),
+        ("open(*a)", True), ("open(p, **kw)", True), ("p.open(**kw)", True),
+        ("io.open(p, 'w')", True), ("io.open(p)", False), ("io.open('rb.txt')", False),
+        ("codecs.open(p, 'a')", True), ("io.FileIO(p)", True), ("shutil.unpack_archive(a)", True),
+        ("z.extractall(d)", True), ("t.extract(m)", True),
+        ("zipfile.ZipFile(p, 'w')", True), ("zipfile.ZipFile(p, mode='a')", True),
+        ("zipfile.ZipFile(p)", False), ("tarfile.open(p, 'r:gz')", False),
+        ("tarfile.open(p, 'w:xz')", True), ("tarfile.TarFile(p, 'a')", True),
+        ("gzip.open(p, 'wt')", True), ("gzip.open(p)", False), ("sqlite3.connect(p)", True),
+        ("logging.FileHandler(p)", True), ("logging.handlers.RotatingFileHandler(p)", True),
+        ("logging.basicConfig(filename=p)", True), ("logging.basicConfig(level=1)", False),
+        ("dbm.open(p, 'c')", True), ("dbm.open(p, 'n')", True), ("dbm.open(p, flag='w')", True),
+        ("dbm.open(p)", False), ("dbm.open(p, 'r')", False), ("shelve.open(p)", True),
+        ("shelve.open(p, flag='r')", False), ("subprocess.run(a)", True),
+        ("subprocess.Popen(a)", True), ("os.system(c)", True), ("run(a)", True),
+        ("io_open(p, 'w')", True), ("io_open(p)", False), ("open(p, 'rt')", False),
+        ("tools.os.replace(a, b)", True), ("tools.subprocess.run(a)", True),
+        ("__import__('os')", True), ("importlib.import_module('os')", True),
+        ("vars(os)", True), ("operator.methodcaller('write_text', t)", True),
+        ("p.rename(target=q)", True), ("s.replace('a', b='c')", False),
+        ("ctypes.CDLL(None)", True), ("ctypes.cdll.LoadLibrary(n)", True),
+        ("ctypes.cdll.libc.clonefile(a, b, 0)", True), ("globals()", True),
+        ("urllib.request.urlretrieve(u, p)", True), ("ctypes.c_int(1)", False),
+        ("posix.replace(a, b)", True), ("_io.open(p, 'w')", True), ("_io.open(p)", False),
+        ("loop.subprocess_exec(a)", True), ("logging.config.dictConfig(c)", True),
+        ("fileinput.input(fs, inplace=True)", True), ("fileinput.input(fs, True)", True),
+        ("fileinput.input(fs)", False), ("fileinput.input(*a)", True),
+    ],
+)  # fmt: skip
+def test_the_write_scan_sees_each_way_to_write(code: str, writes: bool) -> None:
+    tree = ast.parse(
+        "import os as _os\nimport io\nimport codecs\nimport zipfile, tarfile, gzip, sqlite3\n"
+        "import logging.handlers\nimport dbm, shelve\nfrom subprocess import run\n"
+        "from io import open as io_open\nimport importlib, operator\nfrom ecf.eval import tools\n"
+        "import ctypes, urllib.request, posix, _io, fileinput, logging.config\n"
+        "from os import open as o, replace as mv\nfrom shutil import copy\n"
+        "_RO = os.O_RDONLY | os.O_NOFOLLOW\n_RW = os.O_RDWR\n_TWICE = os.O_RDONLY\n"
+        "_TWICE = os.O_WRONLY\n"
+    )  # fmt: skip
+    call = ast.parse(code, mode="eval").body
+    assert isinstance(call, ast.Call)
+    assert _can_write(call, tree) is writes
+
+
+def test_the_default_mix_is_never_written_through_a_dangling_link(tmp_path: Path) -> None:
+    """`--write-mix` refuses an existing file, a link to nothing too: it is left as it is and
+    its target never created (review round 29, twelfth and thirteenth delta checks)."""
+    from ecf.eval import mix  # noqa: PLC0415
+
+    target = tmp_path / "elsewhere" / "made.yaml"
+    target.parent.mkdir()
+    name = tmp_path / "mix.yaml"
+    name.symlink_to(target)
+    with pytest.raises(InvalidInputError, match="already exists"):
+        mix.write_default(name)
+    assert not target.exists() and name.is_symlink()
+
+
+@pytest.mark.parametrize("plant", ["link", "hard link", "pipe"])
+def test_the_draft_run_journal_is_never_added_to_through_a_link_hard_link_or_pipe(
+    tmp_path: Path, plant: str
+) -> None:
+    """The journal is cut and added to in place, so a link, hard link or pipe at its name is
+    refused: never cut, written through or waited on (review round 29, thirteenth delta
+    check)."""
+    from ecf_server import draftruns  # noqa: PLC0415
+
+    target = tmp_path / "target"
+    target.write_text("keep, no newline")
+    name = tmp_path / "evals" / "r.journal.jsonl"
+    name.parent.mkdir(mode=0o700)
+    {"link": lambda: name.symlink_to(target), "hard link": lambda: os.link(target, name),
+     "pipe": lambda: os.mkfifo(name)}[plant]()  # fmt: skip
+    with pytest.raises(InvalidInputError, match="hard link or special file"):
+        draftruns.append(name, {"e": 1})
+    assert target.read_text() == "keep, no newline"
+
+
+@pytest.mark.parametrize("plant", ["link", "hard link", "pipe"])
+def test_a_refused_journal_stops_the_draft_run(tmp_path: Path, plant: str) -> None:
+    """A journal refused by name stops the run closed as a failed write does (5B-14): nothing
+    more is handed out, and the request fails (review round 29, fourteenth delta check)."""
+    from ecf.errors import ServiceUnavailableError  # noqa: PLC0415
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    target = tmp_path / "target"
+    target.write_text("keep")
+    name = tmp_path / "r.journal.jsonl"
+    {"link": lambda: name.symlink_to(target), "hard link": lambda: os.link(target, name),
+     "pipe": lambda: os.mkfifo(name)}[plant]()  # fmt: skip
+    run: Any = SimpleNamespace(journal=name, clock=None, stop=threading.Event(),
+                               state="ready", detail="", run_id="r" * 16)  # fmt: skip
+    with pytest.raises(ServiceUnavailableError, match="the draft run stopped"):
+        claude_eval._j_many(run, [{"e": "claim"}])  # pyright: ignore[reportPrivateUsage]
+    assert run.state == "failed" and run.stop.is_set() and run.journal is None
+    assert "hard link or special file" in run.detail and target.read_text() == "keep"
+
+
+def test_a_refused_heartbeat_save_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The heartbeat only times a run's end: a save refused by name is logged like a failed one,
+    never raised into the request (review round 29, fourteenth delta check)."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    def refused(*_a: object, **_k: object) -> None:
+        raise InvalidInputError("draft-runs.json: a symbolic link, hard link or special file")
+
+    monkeypatch.setattr(claude_eval, "_update_record", refused)
+    run: Any = SimpleNamespace(draft=True, open=True, last_beat=None, data_dir=tmp_path,
+                               run_id="r" * 16)  # fmt: skip
+    clock: Any = SimpleNamespace(now=lambda: datetime(2026, 11, 9, tzinfo=UTC))
+    claude_eval._beat(clock, run)  # pyright: ignore[reportPrivateUsage]
+    assert run.last_beat is None
+
+
+def test_a_durable_write_in_a_linked_folder_succeeds(tmp_path: Path) -> None:
+    """A record saved in a folder reached through a link (a corpus on another disk) is written
+    and flushed without a false error (review round 29, fourteenth delta check)."""
+    from ecf.eval import corpus_labels  # noqa: PLC0415
+
+    real = tmp_path / "disk"
+    real.mkdir()
+    (tmp_path / "corpora").symlink_to(real)
+    setio.write_durable(tmp_path / "corpora" / "a.json", "{}")
+    corpus_labels.save(tmp_path / "corpora" / "c.labels.jsonl", {})
+    setio.create_file(tmp_path / "corpora" / "new.txt", "x")
+    assert sorted(p.name for p in real.iterdir()) == ["a.json", "c.labels.jsonl", "new.txt"]
+
+
+@pytest.mark.parametrize("err", [errno.EINVAL, errno.ENOTSUP, errno.EACCES, errno.EIO])
+@pytest.mark.parametrize("where", ["open", "fsync"])
+def test_a_folder_that_cant_be_flushed_fails_no_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int, where: str
+) -> None:
+    """A folder the disk can't open or flush (a network share, one others own) leaves a new
+    file written and reported so, so a retry doesn't read "already exists"; a disk error is
+    still raised (review round 29, fifteenth delta check)."""
+    real_open, real_fsync = os.open, os.fsync
+
+    def opened(path: Any, flags: int, *a: Any, **k: Any) -> int:
+        if where == "open" and flags & os.O_DIRECTORY:
+            raise OSError(err, os.strerror(err), str(path))
+        return real_open(path, flags, *a, **k)
+
+    def synced(fd: int) -> None:
+        if where == "fsync" and stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(err, os.strerror(err))
+        real_fsync(fd)
+
+    monkeypatch.setattr(setio.os, "open", opened)
+    monkeypatch.setattr(setio.os, "fsync", synced)
+    writes = [lambda: setio.create_file(tmp_path / "new.txt", "x"),
+              lambda: setio.write_durable(tmp_path / "rec.json", "{}")]  # fmt: skip
+    for write in writes:
+        if err == errno.EIO:
+            with pytest.raises(OSError, match=os.strerror(errno.EIO)):
+                write()
+        else:
+            write()
+    assert (tmp_path / "new.txt").read_text() == "x" and (tmp_path / "rec.json").exists()
+
+
+@pytest.mark.parametrize(
+    "there", ["file", "dangling link", "made meanwhile", "made meanwhile, no hard links"]
+)
+def test_a_new_file_never_replaces_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, there: str
+) -> None:
+    """`create_file` refuses a name already taken, a link to nothing too, and one taken while it
+    wrote (the hard link refuses it; a check then a rename would replace it), leaving no
+    temporary file (review round 29, fourteenth delta check)."""
+    name, target = tmp_path / "x.labels.jsonl", tmp_path / "elsewhere"
+    if there == "file":
+        name.write_text("theirs")
+    elif there == "dangling link":
+        name.symlink_to(target)
+    else:
+        real = setio.write_new
+
+        def racing(tmp: Path, data: bytes | str, mode: int = 0o644, *, sync: bool = False) -> None:
+            real(tmp, data, mode, sync=sync)
+            name.write_text("theirs")
+
+        monkeypatch.setattr(setio, "write_new", racing)
+        if there.endswith("no hard links"):  # checked again before the rename
+            monkeypatch.setattr(os, "link", _no_hard_links)
+    with pytest.raises(InvalidInputError, match="already exists"):
+        setio.create_file(name, "ours")
+    assert not target.exists()
+    assert name.is_symlink() or name.read_text() == "theirs"
+    assert [p.name for p in tmp_path.iterdir()] == [name.name]
+
+
+def _no_hard_links(*_a: object, **_k: object) -> None:
+    raise OSError(errno.ENOTSUP, "Operation not supported")
+
+
+def test_a_new_file_falls_back_on_a_disk_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "link", _no_hard_links)
+    setio.create_file(tmp_path / "x", "ours", 0o600)
+    assert (tmp_path / "x").read_text() == "ours"
+    assert stat.S_IMODE((tmp_path / "x").stat().st_mode) == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["x"]
+
+
+def test_a_merged_corpus_labels_file_is_never_written_over(tmp_path: Path) -> None:
+    """The merge's labels file is a new file: one already there is refused and kept, and no
+    fixed temporary name is left to fail the next merge (review round 29, fourteenth delta
+    check)."""
+    from ecf_server import corpus_merge  # noqa: PLC0415
+
+    corpus = tmp_path / "merged.sqlite"
+    labels = {("a", "b"): {"id": "a"}}
+    assert corpus_merge._write_labels(corpus, labels, "c1") == 1  # pyright: ignore[reportPrivateUsage]
+    first = corpus.with_name(corpus.name + corpus_merge.LABELS_SUFFIX)
+    kept = first.read_text()
+    with pytest.raises(InvalidInputError, match="already exists"):
+        corpus_merge._write_labels(corpus, labels, "c2")  # pyright: ignore[reportPrivateUsage]
+    assert first.read_text() == kept and stat.S_IMODE(first.stat().st_mode) == 0o600
+    assert sorted(p.name for p in tmp_path.iterdir()) == [first.name]
+
+
+def test_the_draft_run_journal_still_cuts_a_short_last_line(tmp_path: Path) -> None:
+    from ecf_server import draftruns  # noqa: PLC0415
+
+    name = tmp_path / "r.journal.jsonl"
+    draftruns.append(name, {"e": 1})
+    with name.open("ab") as f:
+        f.write(b'{"e": 2')  # a crash mid-line
+    draftruns.append(name, {"e": 3})
+    assert draftruns.read(name) == [{"e": 1}, {"e": 3}]
+    assert stat.S_IMODE(name.stat().st_mode) == 0o600
+
+
+def test_an_append_only_log_refuses_a_hard_link(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_text("keep")
+    name = tmp_path / "log.txt"
+    os.link(target, name)
+    with pytest.raises(InvalidInputError, match="hard link"):
+        setio.append_text(name, "more")
+    assert target.read_text() == "keep"
+
+
+@pytest.mark.parametrize("writer", ["settle page", "export page"])
+def test_an_existing_page_folder_is_left_as_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str
+) -> None:
+    """A new page folder is 0700; one already there (`~`, a shared folder) is never narrowed,
+    its new files 0600 (review round 29, fourteenth delta check)."""
+    from ecf import cli_evalgen  # noqa: PLC0415
+    from ecf.eval import settle  # noqa: PLC0415
+
+    monkeypatch.setattr(settle, "questions", _no_questions)
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    old.chmod(0o755)
+    for d in (old, new):
+        if writer == "settle page":
+            settle.export(tmp_path / "set", d)
+        else:
+            cli_evalgen._write_private(d / "page.json", "{}")  # pyright: ignore[reportPrivateUsage]
+    assert stat.S_IMODE(old.stat().st_mode) == 0o755
+    assert stat.S_IMODE(new.stat().st_mode) == 0o700
+    assert all(stat.S_IMODE(f.stat().st_mode) == 0o600 for d in (old, new) for f in d.iterdir())
+
+
+def test_a_settle_page_folder_is_made_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ecf.eval import settle  # noqa: PLC0415
+
+    monkeypatch.setattr(settle, "questions", _no_questions)
+    out = tmp_path / "page"
+    settle.export(tmp_path / "set", out)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o700

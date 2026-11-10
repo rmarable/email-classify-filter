@@ -305,7 +305,7 @@ def test_a_dev_run_writes_a_generated_set_with_no_labels(tmp_path: Path) -> None
     # one seed call per group, then emails K at a time, from an empty work folder
     log = calls(tmp_path)
     assert sum(c["seeds"] for c in log) == 15  # 10 scam groups + 5 categories
-    assert all(c["cwd_files"] == ["schema.json"] for c in log)
+    assert all(len(f := c["cwd_files"]) == 1 and f[0].startswith(".call-") for c in log)
     text = "".join((root / "work" / f).read_text() for f in ("calls.jsonl", "outcomes.jsonl"))
     assert "Opening" not in text  # no email text in the call and outcome logs (P27)
 

@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import re
 import sqlite3
@@ -82,7 +81,7 @@ from ecf.eval.results import (
     spawn_figures,
     window_figures,
 )
-from ecf.eval.setio import canonical, writable_root
+from ecf.eval.setio import canonical, replace_file, sweep_folder, writable_root, write_new
 from ecf.ids import new_random_id
 from ecf.schema import (
     CURRENT_VERSION,
@@ -1139,7 +1138,10 @@ class Asker(Protocol):
 
     def stop_reason(self, exc: Exception) -> str | None: ...
 
-    def fatal(self, exc: Exception) -> str | None: ...
+    def fatal(self, exc: Exception) -> str | None:
+        """Why `exc` ends the run, or None to re-raise it. Never for an OSError: `_stop_or_fail`
+        puts a fatal error's `str(exc)` in the run's detail (review round 29, sixth delta check)."""
+        ...
 
     def fault_limit(self, n: int) -> int: ...
 
@@ -1587,15 +1589,40 @@ def environment(power: Callable[[], schedule.Power], battery: Callable[[], int |
 
 def write_result(folder: Path, result: ResultFile, name: str | None = None) -> Path:
     """A result file, 0600, in `folder`, in this ecf's format (P16; a rescore of an older file
-    is written by this code, so it gets it too)."""
-    writable_root(folder)  # never into a merged eval set (`--copy-to`; review round 28)
+    is written by this code, so it gets it too). No merged-view check here: the install's own
+    record goes in its data folder (a stray `merge.json` above it refused every run's record,
+    review round 29); the callers that write where the user says check the folder themselves
+    (`_save`'s `--copy-to` copy, `_write_beside` for a rescore). Written as every set file is,
+    a new file renamed over the name (`setio.replace_file`), so a link, hard link or pipe
+    already at the name is replaced, never written through (review round 29, third delta check).
+    A write cut off between the two (the service killed) leaves its hidden 0600 temporary file
+    (`.<name>.<hex>.tmp`) in the folder, ignored by every listing of results: in the install's
+    results folder the next run's save (`_save`) and the draft-run registry's save remove it
+    once it is over an hour old; in a `--copy-to` folder nothing does (it holds only the user's
+    own result: a stated limit)."""
     result = result.model_copy(update={"format": max(result.format, RESULT_FORMAT)})
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / (name or f"{result.run_id}.json")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(result.model_dump_json(indent=1))
+    text = result.model_dump_json(indent=1)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
     return path
+
+
+def rescore_folder(result_path: Path, data_dir: Path | None) -> Path:
+    """The folder a rescore of `result_path` goes in, beside it, checked before any scoring:
+    never a merged eval set, except the install's own results folder, trusted as the run's
+    record is (a stray `merge.json` above the data folder refused rescoring the install's own
+    results; review round 29, eighth delta check)."""
+    folder = result_path.parent
+    if data_dir is not None and canonical(folder).is_relative_to(canonical(data_dir / "evals")):
+        return folder
+    return writable_root(folder)
+
+
+def _write_beside(result_path: Path, new: ResultFile, name: str, data_dir: Path | None) -> Path:
+    """A rescore, written beside the result file the user names (`rescore_folder`). A refusal
+    loses nothing; the original file stays."""
+    return write_result(rescore_folder(result_path, data_dir), new, name)
 
 
 def corpus_folder(data_dir: Path, corpus_id: str) -> Path:
@@ -1607,6 +1634,7 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
     """The result file, the `eval_runs` row the go-live gate reads, and a copy in `copy_to`
     (`ecf eval run --copy-to`, plan 0.3) so it outlives the install."""
     summary = result.summary or {}
+    sweep_folder(data_dir / "evals")  # crashed writes' leftovers there (round 29, delta 13)
     path = write_result(data_dir / "evals", result)
     with write_tx(conn):
         conn.execute(
@@ -1624,7 +1652,7 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
         )  # fmt: skip
     if copy_to is not None:
         try:  # the install's file and row are the record; a failed copy loses nothing
-            write_result(copy_to, result)
+            write_result(writable_root(copy_to), result)  # never into a merged eval set
         except (OSError, InvalidInputError) as exc:  # a refused folder too (review round 28)
             log.warning("eval.copy_failed", run_id=result.run_id[:8],
                         error_type=type(exc).__name__)  # fmt: skip
@@ -1703,7 +1731,8 @@ def _spawns_again(summary: dict[str, object], cases: list[CaseResult]) -> None:
         summary["claude"] = cast(dict[str, Any], claude) | {"spawns": spawns}
 
 
-def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+def rescore_synthetic(root: Path, result_path: Path, clock: Clock, *,
+                      data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore --synthetic`: a synthetic result made before the current schema scored
     against the set's current labels, without running a model (E1): v1 answers mapped to v2
     (V1_TO_V2), and v2 answers completed to v3 with the fixed items derived from them (OD-498;
@@ -1759,7 +1788,7 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
     name = f"{old.run_id}-rescore-v{CURRENT_VERSION}-{version[:12]}.json"
-    path = write_result(result_path.parent, new, name)
+    path = _write_beside(result_path, new, name, data_dir)
     return {"path": str(path), "summary": summary}
 
 
@@ -1894,7 +1923,8 @@ def _as_run(case: Case | None, old: ResultFile) -> Case | None:
     return replace(case, sensitivity=sens)
 
 
-def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+def rescore_through_policy(root: Path, result_path: Path, clock: Clock, *,
+                           data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore --synthetic --through-policy` (pre-classifier plan step 7, M8): a
     synthetic result's recorded answers planned again with today's facts, keywords, rules and
     policy, without running a model. Each card's facts are recomputed as a run computes them
@@ -1980,12 +2010,13 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
     tag = f"{triggers.keywords_digest()[:6]}{rules.composed_digest(schema, None)[:6]}"
-    path = write_result(result_path.parent, new, f"{old.run_id}-policy-{tag}.json")
+    path = _write_beside(result_path, new, f"{old.run_id}-policy-{tag}.json", data_dir)
     return {"path": str(path), "summary": summary}
 
 
 def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
-            schema: CompiledSchema | None = None) -> dict[str, Any]:  # fmt: skip
+            schema: CompiledSchema | None = None, *,
+            data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore`: a corpus result scored again against the corpus's current labels,
     from what the run recorded (its classification, rule and actions; R53, R113, R120, R178).
     No model runs. The new file sits beside the original, which is kept; its set version and
@@ -2026,6 +2057,6 @@ def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=run.version,
                      created_at=to_ts(clock.now()), cases=cases, digest=old.digest,
                      summary=summary)  # fmt: skip
-    path = write_result(result_path.parent, new,
-                        f"{old.run_id}-rescore-{run.labels_hash[:12]}.json")  # fmt: skip
+    path = _write_beside(result_path, new, f"{old.run_id}-rescore-{run.labels_hash[:12]}.json",
+                         data_dir)  # fmt: skip
     return {"path": str(path), "summary": summary}

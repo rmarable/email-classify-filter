@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
 from ecf.eval import tools
-from ecf.eval.setio import writable_root
+from ecf.eval.setio import replace_file, writable_root, write_new
 from ecf.paths import Paths
 
 MIN_VERSION = (0, 163, 0)
@@ -78,9 +77,8 @@ def write_catalog(paths: Paths, model: str, exe: str, env: dict[str, str], workd
     text = json.dumps({"models": [entry | {"tool_mode": "direct"}]}, sort_keys=True)
     path = writable_root(catalog_path(paths, model))
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
+    # a new file renamed over the name: never through a link, hard link or pipe (round 29)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
     return {"catalog_sha256": hashlib.sha256(text.encode()).hexdigest(),
             "catalog_tool_mode": entry["tool_mode"]}  # fmt: skip
 

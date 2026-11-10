@@ -145,17 +145,14 @@ def _settle_terminal(root: Path, today: Any) -> None:
 
 
 def _write_private(path: Path, text: str) -> None:
-    """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6)."""
-    import os  # noqa: PLC0415
-
-    from ecf.eval.setio import writable_root  # noqa: PLC0415
+    """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6),
+    as every eval file is, a new file renamed over the name, so a link, hard link or pipe there
+    is replaced, never written through (review round 29, eleventh delta check)."""
+    from ecf.eval.setio import private_folder, replace_file, writable_root, write_new  # noqa: PLC0415
 
     writable_root(path)  # an --export folder, never in a merged view (review round 27)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-    path.chmod(0o600)  # an existing file keeps its old mode through O_CREAT
+    private_folder(path.parent)  # 0700 when new; an existing one left as it is (round 29)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
 
 
 def _notice(role: str, provider: str, yes: bool) -> None:

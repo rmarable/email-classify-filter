@@ -85,6 +85,7 @@ from ecf.eval.results import (
     load_result,
     spawn_figures,
 )
+from ecf.eval.setio import WRITE_ERRORS, reason
 from ecf.ids import new_random_id
 from ecf.plugin_digest import actor_prompt_digest, plugin_digest
 from ecf.schema import CompiledSchema, read_bytes
@@ -702,7 +703,7 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
             with run.lock:
                 run.state = "failed"
                 run.detail = (
-                    str(exc)
+                    reason(exc)
                     if isinstance(exc, evalrun.CaseChanged)
                     else f"preparing the cases failed ({type(exc).__name__})"
                 )
@@ -2011,13 +2012,14 @@ def _j_many(run: Run, events: list[dict[str, Any]]) -> None:
     now = run.clock.now() if run.clock is not None else datetime.now().astimezone()
     try:
         draftruns.append_many(run.journal, [{"at": to_ts(now)} | e for e in events])
-    except OSError as exc:
+    except WRITE_ERRORS as exc:  # a refused link or pipe too (review round 29, delta 14)
         run.journal = None
         run.stop.set()
-        run.state, run.detail = "failed", f"its record couldn't be written ({exc.strerror or exc})"
-        log.error("claude_eval.journal_failed", run_id=run.run_id[:8], errno=exc.errno)
+        run.state, run.detail = "failed", f"its record couldn't be written ({reason(exc)})"
+        log.error("claude_eval.journal_failed", run_id=run.run_id[:8],
+                  errno=getattr(exc, "errno", None))  # fmt: skip
         raise ServiceUnavailableError(f"the draft run stopped: its record couldn't be written"
-                                      f" ({exc.strerror or exc}); a service restart resumes it"
+                                      f" ({reason(exc)}); a service restart resumes it"
                                       " from what was written") from exc  # fmt: skip
 
 
@@ -2042,8 +2044,9 @@ def _beat(clock: Clock, run: Run) -> None:
         return
     try:
         _update_record(run.data_dir, run.run_id, heartbeat_at=now)
-    except OSError as exc:
-        log.error("claude_eval.heartbeat_failed", run_id=run.run_id[:8], errno=exc.errno)
+    except WRITE_ERRORS as exc:
+        log.error("claude_eval.heartbeat_failed", run_id=run.run_id[:8],
+                  errno=getattr(exc, "errno", None))  # fmt: skip
         return
     run.last_beat = now
 

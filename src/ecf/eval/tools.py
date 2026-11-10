@@ -31,7 +31,13 @@ from typing import Any, Literal, Protocol, cast
 
 from ecf.claude_wrapper import ENV_ALLOW
 from ecf.errors import InvalidInputError
-from ecf.eval.setio import atomic_write, writable_root
+from ecf.eval.setio import (
+    call_folder,
+    end_call,
+    sweep_call_folders,
+    writable_root,
+    write_new,
+)
 
 Status = Literal["ok", "refused", "failed", "limit"]
 # Set in the environment, these would send a run to another account or endpoint (P4)
@@ -282,16 +288,21 @@ class CliAdapter:
                 } | self._facts  # fmt: skip
 
     def ask(self, prompt: str, schema: dict[str, Any], workdir: Path) -> Reply:
-        """One call from `workdir` (made empty but for the call's files). The answer file holds
-        the generator's raw text: it is deleted once read, whatever the outcome."""
+        """One call from `workdir`, its files in a folder of its own there. The answer file
+        holds the generator's raw text: it is deleted once read, whatever the outcome."""
         refuse_key_env(self._environ)
         writable_root(workdir)  # never a call folder in a merged view (review round 27)
         workdir.mkdir(parents=True, exist_ok=True)
-        schema_path, out_path = workdir / "schema.json", workdir / "out.json"
-        out_path.unlink(missing_ok=True)
-        atomic_write(schema_path, json.dumps(schema))  # never through a link there (round 28)
-        argv = [self._exe(), *self.tool.argv(self.model, schema_path, out_path)]
+        sweep_call_folders(workdir)
+        # Each call's own files (its schema, and the answer the tool writes itself) go in a
+        # fresh 0700 folder of the call's own, held while it runs: nothing can be at their names
+        # first, and judges running side by side in one call folder never touch each other's
+        # (review round 29, fifteenth to seventeenth delta checks; `setio.CALL_FILES`)
+        own, held = call_folder(workdir)
         try:
+            schema_path, out_path = own / "schema.json", own / "out.json"
+            write_new(schema_path, json.dumps(schema))
+            argv = [self._exe(), *self.tool.argv(self.model, schema_path, out_path)]
             ran = run_cli(argv, prompt, self.env(), workdir, timeout=self.timeout_s)
             if ran.code is None:
                 return Reply("failed", detail="timed out", seconds=ran.seconds)
@@ -299,7 +310,7 @@ class CliAdapter:
                 return Reply("limit", detail="usage limit", seconds=ran.seconds)
             reply = self.tool.read(ran, out_path)
         finally:
-            out_path.unlink(missing_ok=True)
+            end_call(own, held)
         reply = Reply(reply.status, reply.answer, reply.detail, reply.usage, ran.seconds,
                       reply.items)  # fmt: skip
         if self.tool.allowed_items is not None and (

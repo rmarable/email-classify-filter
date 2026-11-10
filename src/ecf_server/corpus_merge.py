@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import uuid
 from collections.abc import Sequence
@@ -24,6 +23,7 @@ from typing import Any, cast
 
 from ecf import __version__
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import create_file
 from ecf_server import corpus, export_keys, install_identity, stepup
 from ecf_server.clock import Clock, to_ts
 from ecf_server.db import write_tx
@@ -207,21 +207,13 @@ def _comparable(row: dict[str, Any]) -> dict[str, Any]:
 def _write_labels(
     corpus_path: Path, labels: dict[tuple[str, str], dict[str, Any]], corpus_id: str
 ) -> int:
-    """Beside the merged corpus: 0600, O_EXCL then rename, rows sorted by key (R86, R90)."""
+    """Beside the merged corpus: 0600, a new file refused if anything is at the name, flushed to
+    disk, rows sorted by key (R86, R90; `setio.create_file`, review round 29, fourteenth delta
+    check)."""
     if not labels:
         return 0
     final = corpus_path.with_name(corpus_path.name + LABELS_SUFFIX)
-    tmp = final.with_name(f".{final.name}.partial")
     body = "".join(json.dumps(labels[k] | {"corpus_id": corpus_id}, sort_keys=True) + "\n"
                    for k in sorted(labels))  # fmt: skip
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(body)
-        if final.exists():
-            raise InvalidInputError(f"{final} already exists")
-        tmp.rename(final)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    create_file(final, body, mode=0o600)
     return len(labels)

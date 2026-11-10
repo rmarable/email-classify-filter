@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import reason
 from ecf.eval.tools import Adapter, Breaker, CliAdapter, Reply
 
 Request = Callable[[str, str, dict[str, Any] | None], dict[str, Any]]
@@ -68,7 +69,7 @@ def run(request: Request, adapter: Adapter, run: str, workdir: Path,
                         {"judge": judge, "answers": {}, "prompt_digest": digest,
                          "spent": adapter.spent})  # fmt: skip
             except Exception as exc:  # never hides the error that stopped the loop
-                echo(f"the spend (US${adapter.spent:.2f}) wasn't saved: {exc}")
+                echo(f"the spend (US${adapter.spent:.2f}) wasn't saved: {reason(exc)}")
     spend = f", US${adapter.spent:.2f} spent on this run" if api else ""
     echo(f"{judge}: {round(time.monotonic() - start)} s{spend}")
     return dict(counts), detail
