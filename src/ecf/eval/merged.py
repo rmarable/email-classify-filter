@@ -58,8 +58,8 @@ COPIED = ("cases", "eml")  # plain copies, made read-only
 LINKED = ".build"  # large: a clone, else a hard link, else a copy
 POLL_S = 0.02
 
-BUSY = ("the set is being read (by an eval run: see `ecf eval status`; or for a moment by the"
-        " service): try again, or run `ecf eval build` after the run ends")  # fmt: skip
+BUSY = "the set is being read (by an eval run, or for a moment by the service)"
+BUSY_ADVICE = "see `ecf eval status`; try again, or run `ecf eval build` after the run ends"
 CLI_WAIT_S = 2.0  # a writer's refresh waits out the service's brief reads (57-190 ms measured)
 
 
@@ -76,13 +76,13 @@ def unreadable(path: object, exc: OSError) -> Unreadable:
     never its temporary file (`setio.replace_file`, round 23)."""
     why = reason(exc)
     if not (isinstance(path, (str, bytes, os.PathLike)) and path not in ("", b"")):
-        return Unreadable(f"a file of the set: can't be read or written ({why}); fix its"
-                          " permissions and run `ecf eval build`")  # fmt: skip
+        return Unreadable(f"a file of the set: can't be read or written ({why})",
+                          advice="fix its permissions and run `ecf eval build`")  # fmt: skip
     where = _blame(Path(os.fsdecode(cast("str | bytes | os.PathLike[str]", path))))
     look = f"ls -ldO {shlex.quote(str(where.parent))} {shlex.quote(str(where))}"
-    return Unreadable(f"{where}: can't be read or written ({why}); check the permissions and"
-                      f" any lock flag of it and its folder (`{look}`), then run"
-                      " `ecf eval build`")  # fmt: skip
+    return Unreadable(f"{where}: can't be read or written ({why})",
+                      advice=f"check the permissions and any lock flag of it and its folder"
+                             f" (`{look}`), then run `ecf eval build`")  # fmt: skip
 
 
 def _blame(p: Path) -> Path:
@@ -711,7 +711,7 @@ def _stats(  # noqa: PLR0912, PLR0915 - one walk, each kind of entry handled in 
             continue
         if (now.st_dev, now.st_ino) != (own.st_dev, own.st_ino):  # swapped since its stat: the
             if refuse:  # listing may be another folder's (round 22, P2)
-                raise InvalidInputError(f"{p}: changed while it was read; try again")
+                raise InvalidInputError(f"{p}: changed while it was read", advice="try again")
             out[d] = (p, now.st_size, now.st_mtime_ns, now.st_ino, now.st_ctime_ns)
             continue
         for e in entries:
@@ -983,7 +983,7 @@ def _clear_extras(m: Path) -> None:
             _remove(p)
         except OSError as exc:
             why = f"{p}: can't be removed from the merged set ({reason(exc)})"
-            raise InvalidInputError(f"{why}; remove it and run `ecf eval build` again") from exc
+            raise InvalidInputError(why, advice="remove it and run `ecf eval build` again") from exc
 
 
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -1093,8 +1093,8 @@ def _build(sp: SetPaths) -> None:
     )
     if moved:  # a source changed under the refresh (and maybe back): stay stale, never fresh
         raise InvalidInputError(
-            f"a source file changed while the merged view was refreshed"
-            f" ({', '.join(moved[:5])}): run `ecf eval build` again"
+            f"a source file changed while the merged view was refreshed ({', '.join(moved[:5])})",
+            advice="run `ecf eval build` again",
         )
     doc = {
         "format": FORMAT,
@@ -1166,7 +1166,7 @@ def refresh_merged(root: Path, *, wait: float = 0.0,
         if on_wait is not None:
             on_wait(time.monotonic() - t0)
         if not got:
-            raise RefreshBusy(BUSY)
+            raise RefreshBusy(BUSY, advice=BUSY_ADVICE)
         try:
             with one_read():
                 if is_fresh(sp):
@@ -1192,7 +1192,9 @@ def take_shared(root: Path, *, wait: float = 0.0) -> int | None:
     try:
         fd = _open_lock(sp.lock, os.O_RDONLY)
     except FileNotFoundError as exc:
-        raise InvalidInputError(f"{sp.name}: run `ecf eval build` (no merged set yet)") from exc
+        raise InvalidInputError(
+            f"{sp.name}: no merged set yet", advice="run `ecf eval build`"
+        ) from exc
     try:
         got = _take(fd, fcntl.LOCK_SH, wait)
     except BaseException:
@@ -1200,7 +1202,7 @@ def take_shared(root: Path, *, wait: float = 0.0) -> int | None:
         raise
     if not got:
         os.close(fd)
-        raise RefreshBusy("a refresh is running; try again")
+        raise RefreshBusy("a refresh is running", advice="try again")
     return fd
 
 
@@ -1266,16 +1268,18 @@ def resolve(root: Path) -> Path:
     p = logical(root)
     real = p.resolve()
     if _under_private(real) or _under_private(p):
-        raise InvalidInputError(f"{root}: give the public set's path (tests/eval/<set>), not a"
-                                " private or merged one")  # fmt: skip
+        raise InvalidInputError(f"{root} is a private or merged set's path",
+                                advice="give the public set's path (tests/eval/<set>)")  # fmt: skip
     sp = _usable(paths(p))
     if sp.top is not None:
         priv_dir = sp.top / "eval" / "private"
         if priv_dir.exists() and any(_same_dir(d, priv_dir) for d in (real, *real.parents)):
-            raise InvalidInputError(f"{root}: give the public set's path, not a private one")
+            raise InvalidInputError(
+                f"{root} is a private set's path", advice="give the public set's path"
+            )
     if sp.private is None or sp.merged is None:
         return p
     if not _fresh(sp):  # a part it can't read is named (`named`), never "out of date"
-        raise InvalidInputError(f"the merged {sp.name} set is missing or out of date: run"
-                                " `ecf eval build`")  # fmt: skip
+        raise InvalidInputError(f"the merged {sp.name} set is missing or out of date",
+                                advice="run `ecf eval build`")  # fmt: skip
     return sp.merged

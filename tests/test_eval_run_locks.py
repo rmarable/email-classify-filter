@@ -245,7 +245,7 @@ def test_a_stale_set_refuses_a_run_until_ecf_eval_build(
 
     card = next(((mg.paths(marked).private or marked) / "cases").glob("*.md"))
     card.write_text(card.read_text() + "\n")
-    with pytest.raises(InvalidInputError, match="out of date: run `ecf eval build`"):
+    with pytest.raises(InvalidInputError, match="out of date; run `ecf eval build`"):
         null_start(db_path, clock, marked, backend="null")
     assert evalrun.RUN.state == "idle"
     r = CliRunner().invoke(app, ["eval", "build", "--root", str(marked)])

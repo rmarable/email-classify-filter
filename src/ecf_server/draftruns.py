@@ -80,7 +80,7 @@ class Registration(BaseModel):
     claude_versions: list[str] = Field(default_factory=list[str])
     ended_at: datetime | None = None
     end: End | None = None
-    end_detail: str = ""
+    end_detail: str = ""  # how it ended; while open after a write stop, its cause and advice
     stop_reason: str | None = None
     complete: bool | None = None  # every case of the slot scored
     attempt_over: bool = False  # lost, and not resumed: the attempt ended incomplete
@@ -205,9 +205,10 @@ def assign(reg: Registry, *, arm: str, baseline: bool, kind: Kind, digest: str,
                          None):  # fmt: skip
             raise InvalidInputError(f"the pilots run on one arm: the baseline's models or actor"
                                     f" instructions changed since pilot run {other.run_id[:8]}"
-                                    " (5B-3). Restore the pins and ecf version the pilot ran on;"
-                                    " starting the pilot over on the new ones is the operator's"
-                                    " decision")  # fmt: skip
+                                    " (5B-3)",
+                                    advice="restore the pins and ecf version the pilot ran on;"
+                                           " starting the pilot over on the new ones is the"
+                                           " operator's decision")  # fmt: skip
         names, keyed = PILOT_SLOTS[kind], None
     else:
         if digest != reg.confirmation.set_digest:
@@ -224,9 +225,10 @@ def assign(reg: Registry, *, arm: str, baseline: bool, kind: Kind, digest: str,
                                 " resume")  # fmt: skip
         if state == "waiting":
             if new_attempt is None:
-                raise InvalidInputError(f"slot {name}'s attempt ended incomplete: the operator may"
-                                        " allow one new attempt (--new-attempt REASON); it runs"
-                                        " only the cases still unscored")  # fmt: skip
+                raise InvalidInputError(f"slot {name}'s attempt ended incomplete",
+                                        advice="the operator may allow one new attempt"
+                                               " (--new-attempt REASON); it runs only the cases"
+                                               " still unscored")  # fmt: skip
             return name, n + 1, keyed
         if new_attempt is not None:
             raise InvalidInputError(f"--new-attempt is for a slot whose attempt ended incomplete;"

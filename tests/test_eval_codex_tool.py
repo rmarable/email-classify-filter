@@ -4,6 +4,7 @@ file) and checks it was given the direct-mode catalogue. No network, no real Cod
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -304,3 +305,31 @@ def test_a_call_that_slept_past_an_hour_keeps_its_folder(
         (tmp_path / "release").touch()  # the first call ends only now, even on a failure
         t.join(timeout=60)
     assert slow == ["ok"] and not list(call.iterdir())
+
+
+@pytest.mark.parametrize("err", [errno.ENOTSUP, errno.ENOLCK])
+def test_a_call_runs_on_a_disk_without_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    """A call folder on a disk that can't lock (NFS without locking) runs unheld rather than
+    failing every call; the sweep can't lock there either, so it never removes it (review
+    round 30). Any other lock error still fails the call."""
+    from ecf.eval import setio  # noqa: PLC0415
+
+    a = _adapter(tmp_path, monkeypatch, {"answer": {"word": "ok", "decoy": "none"}})
+    a.preflight(tmp_path / "w0")
+
+    def no_locks(_fd: int, _op: int) -> None:
+        raise OSError(err, os.strerror(err))
+
+    monkeypatch.setattr(setio.fcntl, "flock", no_locks)
+    assert a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call").status == "ok"
+    assert not list((tmp_path / "call").iterdir())
+
+    def broken(_fd: int, _op: int) -> None:
+        raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+
+    monkeypatch.setattr(setio.fcntl, "flock", broken)
+    with pytest.raises(OSError, match=os.strerror(errno.EBADF)):
+        a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call")
+    assert not list((tmp_path / "call").iterdir())

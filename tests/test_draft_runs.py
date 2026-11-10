@@ -6,18 +6,21 @@ without it."""
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import random
+import re
 import stat
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from ecf.errors import ConflictError, InvalidInputError
+from ecf.errors import ConflictError, EcfError, InvalidInputError
 from ecf.eval import drafts
 from ecf.eval.drafts import DraftsFile
 from ecf.eval.results import load_result
@@ -34,6 +37,7 @@ from tests.test_claude_eval import (
     start,
 )
 from tests.test_draft_eval import _act, make_droot  # pyright: ignore[reportPrivateUsage]
+from tests.test_eval_setio import ADVICE, predicts_a_restart
 
 pytestmark = pytest.mark.usefixtures("conn")
 
@@ -325,6 +329,11 @@ def test_a_restart_after_a_read_scores_the_case_missing_in_the_resumed_run(
     assert "lost, resumed as" in lines[0]
     old = _reg(db_path).get(first["run_id"])
     assert old is not None and old.end == "lost" and old.resumed_by == _run().run_id
+    # the status says it resumed, and as which run (review round 30, delta check 3)
+    st = claude_eval.draft_status(db_path.parent)
+    assert st is not None
+    shown = [r for slot in st["slots"] for r in slot["runs"] if r["run_id"] == first["run_id"]]
+    assert shown[0]["resumed_by"] == _run().run_id
     lost = db_path.parent / "evals" / f"{first['run_id']}{drafts.DRAFTS_SUFFIX}"
     assert lost.is_file()  # both runs are reported
     resumed = _run()
@@ -657,8 +666,40 @@ def test_the_status_lists_the_slots_without_outcomes() -> None:
          "runs": [{"run_id": "r" * 32, "attempt": 1, "end": "stopped", "complete": False,
                    "detail": "stopped after 1 of 3 cases"}]}]})  # fmt: skip
     assert lines[1] == "Draft eval slots (set not yet confirmed: pilot only):"
-    assert lines[2] == "  arm aaaaaaaa pilot-forced: waiting (rrrrrrrr attempt 1 stopped)"
+    assert lines[2] == ("  arm aaaaaaaa pilot-forced: waiting (rrrrrrrr attempt 1 stopped"
+                        " (stopped after 1 of 3 cases))")  # fmt: skip
     assert draft_lines(None) == []
+    # what became of a run stopped on a write error: resumed, or its attempt ended, and why
+    lines = draft_lines({"frozen_checker": None, "confirmation": None, "slots": [
+        {"arm": "a" * 16, "slot": "run-1", "set_digest": "s" * 16, "state": "running",
+         "runs": [{"run_id": "r" * 32, "attempt": 1, "end": "lost", "complete": False,
+                   "detail": "lost to a service restart", "resumed_by": "n" * 32},
+                  {"run_id": "n" * 32, "attempt": 1, "end": None, "complete": None,
+                   "detail": ""}]}]})  # fmt: skip
+    assert lines[2] == (
+        "  arm aaaaaaaa run-1: running (rrrrrrrr attempt 1 lost, resumed as"
+        " nnnnnnnn (lost to a service restart); nnnnnnnn attempt 1 open)"
+    )
+    # shown on a terminal: control characters in a detail come out escaped
+    st = {"frozen_checker": None, "confirmation": None, "slots": [
+        {"arm": "a" * 16, "slot": "run-1", "set_digest": "s" * 16, "state": "waiting",
+         "runs": [{"run_id": "r" * 32, "attempt": 1, "end": "lost", "complete": False,
+                   "detail": "the eval set /x\x1b[2Jy couldn't be read"}]}]}  # fmt: skip
+    assert "\x1b" not in draft_lines(st)[2] and "\\u001b" in draft_lines(st)[2]
+    # every record value, the slot, state, end and the pilots' folder included (delta 5)
+    bad = "x\x1b[2J"
+    st = {"frozen_checker": None, "confirmation": None,
+          "pilot_set": {"digest": bad, "root": f"/sets/{bad}"}, "slots": [
+        {"arm": bad, "slot": bad, "set_digest": None, "state": bad,
+         "runs": [{"run_id": bad, "attempt": bad, "end": bad, "complete": False,
+                   "detail": "", "resumed_by": bad}]}]}  # fmt: skip
+    assert not any("\x1b" in line for line in draft_lines(st))
+    # the confirm-set command only when it pastes as shown (delta 6)
+    assert "confirm-set --root" not in "\n".join(draft_lines(st))
+    st["pilot_set"] = {"digest": "d" * 16, "root": "/sets/my set"}
+    assert "`ecf eval confirm-set --root '/sets/my set' --digest dddddddddddddddd`" in (
+        "\n".join(draft_lines(st))
+    )
 
 
 def test_before_the_confirmation_the_status_names_the_digest_to_confirm(
@@ -916,7 +957,7 @@ def test_the_pilots_run_on_one_arm(
     start(db_path, clock, droot, forced_draft=True)
     _drive(db_path, clock)
     monkeypatch.setattr(claude_eval, "actor_prompt_digest", lambda: "f" * 64)
-    with pytest.raises(InvalidInputError, match=r"pilots run on one arm.*Restore"):
+    with pytest.raises(InvalidInputError, match=r"pilots run on one arm.*restore the pins"):
         start(db_path, clock, droot)
 
 
@@ -1084,7 +1125,8 @@ def test_a_journal_write_failure_ends_the_run_closed(
     db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """5B-14: a disk error on the journal fails the request and stops the run, nothing handed out;
-    the record stays open, so a restart resumes it from what was written."""
+    the record stays open for the restart, keeping the stop's cause, which a refused registration
+    repeats with where to read the outcome (review round 30, delta check 3)."""
     from ecf.errors import ServiceUnavailableError  # noqa: PLC0415
 
     first = start(db_path, clock, droot)
@@ -1098,10 +1140,475 @@ def test_a_journal_write_failure_ends_the_run_closed(
         nxt(db_path, clock, S1, limit=10)
     assert not _run().open
     rec = _reg(db_path).get(first["run_id"])
-    assert rec is not None and rec.open
-    monkeypatch.undo()  # a new registration waits for the restart that resumes it (delta 2)
-    with pytest.raises(ConflictError, match="restart the service"):
+    assert rec is not None and rec.open and "No space left on device" in rec.end_detail
+    monkeypatch.undo()  # a new registration waits for the restart, repeating the stop's cause
+    with pytest.raises(ConflictError, match="No space left on device") as got:
         start(db_path, clock, droot, forced_draft=True)
+    assert "fix what stopped the write" in str(got.value)
+    assert not predicts_a_restart(str(got.value)) and not predicts_a_restart(rec.end_detail)
+    assert claude_eval.SEE_STATUS in str(got.value)
+
+
+def test_a_stop_whose_cause_cant_be_saved_gives_the_general_advice(
+    db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disk-wide error refuses the record's write too: the refused registration gives the
+    general advice, and still never says what the restart will do (review round 30, delta 3)."""
+    from ecf.errors import ServiceUnavailableError  # noqa: PLC0415
+
+    first = start(db_path, clock, droot)
+
+    def full(*_a: Any, **_k: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    for name in ("append_many", "append", "save"):
+        monkeypatch.setattr(draftruns, name, full)
+    with pytest.raises(ServiceUnavailableError, match="fix what stopped the write"):
+        nxt(db_path, clock, S1, limit=10)
+    monkeypatch.undo()
+    rec = _reg(db_path).get(first["run_id"])
+    assert rec is not None and rec.open and not rec.end_detail
+    with pytest.raises(ConflictError, match="fix what stopped the write") as got:
+        start(db_path, clock, droot, forced_draft=True)
+    assert claude_eval.SEE_STATUS in str(got.value) and not predicts_a_restart(str(got.value))
+
+
+def test_a_resume_that_stops_on_its_first_write_owns_the_attempt(
+    db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At service start a lost run is resumed as a new one whose first journal write fails: the
+    new run owns the attempt (its open record keeps its own stop's cause), and the lost one stays
+    resumed by it, never "not resumed" with the request's advice; the next restart resumes the
+    new one (review round 30, delta check 4)."""
+    first = start(db_path, clock, droot)
+    real = draftruns.append_many
+
+    def full_for_new(path: Path, events: Any) -> None:
+        if not path.name.startswith(first["run_id"]):
+            raise OSError(28, "No space left on device")
+        real(path, events)
+
+    monkeypatch.setattr(draftruns, "append_many", full_for_new)
+    lines = _restart(db_path, clock)
+    monkeypatch.undo()
+    assert ", which stopped" in lines[0]
+    reg = _reg(db_path)
+    old = reg.get(first["run_id"])
+    assert old is not None and old.resumed_by is not None and not old.attempt_over
+    assert "not resumed" not in old.end_detail
+    new = reg.get(old.resumed_by)
+    assert new is not None and new.open and "No space left on device" in new.end_detail
+    for r in reg.runs:  # a record says what happened, never a request's advice
+        assert claude_eval.SEE_STATUS not in r.end_detail, r.end_detail
+        assert not predicts_a_restart(r.end_detail), r.end_detail
+    assert not any(predicts_a_restart(x) for x in lines)
+    assert claude_eval.current() is None  # the failed start left no run in the slot
+    again = _restart(db_path, clock)
+    assert f"{new.run_id[:8]} lost, resumed as" in again[0]
+
+
+def test_a_resume_stopped_by_any_error_after_its_save_owns_the_attempt(
+    db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not only a write error: any error after the new run's record is saved leaves the lost
+    run resumed by it, never "attempt over" beside an open run (review round 30, delta 5)."""
+    first = start(db_path, clock, droot)
+
+    def broken(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("after the save")
+
+    monkeypatch.setattr(evalrun, "determinism_sample", broken)
+    lines = _restart(db_path, clock)
+    monkeypatch.undo()
+    assert ", which stopped" in lines[0], lines
+    old = _reg(db_path).get(first["run_id"])
+    assert old is not None and old.resumed_by is not None and not old.attempt_over
+    assert claude_eval.current() is None
+
+
+def _set_read_errors(root: Path) -> dict[str, Exception]:
+    """The errors reading a set can raise at a resume, built by the code that raises them (an
+    unreadable file, a card's bad target, a case's file edited under the run); the busy set's
+    error is built as `merged.refresh_merged` builds it, since a set with no private half takes
+    no lock."""
+    from ecf.eval import merged  # noqa: PLC0415
+
+    def caught(make: Callable[[], object]) -> Exception:
+        try:
+            make()
+        except EcfError as exc:
+            return exc
+        raise AssertionError("not refused")
+
+    case = evalrun.read_set(root).selected(fraud_only=False)[0]
+    kept = case.path.read_bytes()
+    case.path.write_bytes(kept + b"x")
+    try:
+        changed = caught(lambda: evalrun.case_bytes(case))
+    finally:
+        case.path.write_bytes(kept)
+    return {
+        "unreadable": merged.unreadable(root / "labels.jsonl", PermissionError(13, "denied")),
+        "card": caught(lambda: evalrun.check_target("c1", "payment_related:maybe", {})),
+        "busy": merged.RefreshBusy(merged.BUSY, advice=merged.BUSY_ADVICE),
+        "changed": changed,
+    }  # fmt: skip
+
+
+_DEEP = "(" * 1200 + "x" + ")" * 1200  # nested past the parser's depth: RecursionError
+_BOB = "Dear Bob 1234"  # the card's own text, never told
+_BAD_RE = drafts.FORBID_REGEX_AT
+
+
+@pytest.mark.parametrize(
+    ("block", "told"),
+    [
+        ({"allowed": f"{_BOB}, the wire goes"}, "allowed: should be true or false"),
+        ({"forbid": ["fine", f"({_BOB}"]}, f"forbid: {_BAD_RE.format(2, 0)}"),
+        # Python's message quotes a group name, and a bad escape
+        ({"forbid": [f"(?P<{_BOB}>x)"]}, f"forbid: {_BAD_RE.format(1, 4)}"),
+        ({"forbid": ["\\q1234"]}, f"forbid: {_BAD_RE.format(1, 0)}"),
+        # not re.error: a repeat past the C limit, nesting past the parser's depth (delta check 11)
+        ({"forbid": ["a{4294967296}"]}, f"forbid: {drafts.REGEX_TOO_BIG.format(1)}"),
+        ({"forbid": ["ok", _DEEP]}, f"forbid: {drafts.FORBID_TOO_DEEP.format(2, drafts.MAX_OPEN)}"),
+        ({"followed_pattern": f"({_BOB}"}, "followed_pattern: not a valid regex (at position 0)"),
+        ({"identity": {"first": _BOB, "last": "Smith"}}, f"identity.first: {drafts.NAME_FORM}"),
+        ({_BOB: True}, "an unknown field"),
+        ({"identity": {"first": "Dana", "last": "Smith", _BOB: 1}}, "identity: an unknown field"),
+        ({"group": "bait", "allowed": False}, drafts.ALLOWED_TRUE),  # the whole block (no field)
+        ({"group": _BOB}, "group: not one of the allowed values"),
+        ({"kind": _BOB}, "kind: not in the allowed form"),
+        ({"identity": _BOB}, "identity: should be an object"),
+        # a regex matching an empty text matches every draft, told by its place from 1
+        # (delta checks 13-14)
+        ({"forbid": ["ok", ""]}, f"forbid: {drafts.FORBID_MATCHES_EMPTY.format(2)}"),
+        ({"forbid": [".*"]}, f"forbid: {drafts.FORBID_MATCHES_EMPTY.format(1)}"),
+        ({"forbid": ["ok", "a?"]}, f"forbid: {drafts.FORBID_MATCHES_EMPTY.format(2)}"),
+        ({"forbid": ["^"]}, f"forbid: {drafts.FORBID_MATCHES_EMPTY.format(1)}"),
+        ({"group": "injection", "kind": "link", "followed_pattern": ""},
+         f"followed_pattern: {drafts.FOLLOWED_MATCHES_EMPTY}"),
+        ({"group": "injection", "kind": "link", "followed_pattern": "(?:x)*"},
+         f"followed_pattern: {drafts.FOLLOWED_MATCHES_EMPTY}"),
+        ({"forbid": _BOB}, "forbid: should be a list"),
+        ({"forbid": 5}, "forbid: should be a list"),
+    ],
+)  # fmt: skip
+def test_an_invalid_draft_block_is_told_without_the_cards_text(
+    block: dict[str, Any], told: str
+) -> None:
+    """What is wrong with a card's draft block, read by the real model (`drafts.parse`), is told
+    in fixed wording, exactly: each field and its problem, never the card's own text (not
+    pydantic's input, a validator's message, an unknown key or Python's regex message), and a
+    regex that can't compile for any reason is a refused block, not an internal error (review
+    round 30, delta checks 8-11)."""
+    base: dict[str, Any] = {"allowed": True, "group": "benign_short", "sender": "known",
+                            "question": "When?", "forbid": []}  # fmt: skip
+    with pytest.raises(ValueError) as caught:
+        drafts.parse({"draft": base | block})
+    assert claude_eval._invalid_block(caught.value) == told  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_draft_block_is_told_only_in_fixed_wording() -> None:
+    """The allow-list: a validator's text is told only from a BlockProblem (one of PROBLEMS,
+    numbers filled in), any other text or error type reads UNTOLD, and a long summary is cut
+    to BLOCK_WHY_MAX (delta check 11)."""
+    invalid_block = claude_eval._invalid_block  # pyright: ignore[reportPrivateUsage]
+    block_part = claude_eval._block_part  # pyright: ignore[reportPrivateUsage]
+    assert invalid_block(ValueError("Dear Bob 1234")) == drafts.UNTOLD
+    assert str(drafts.BlockProblem("Dear Bob 1234")) == drafts.UNTOLD  # not in PROBLEMS
+    assert str(drafts.BlockProblem(drafts.FORBID_REGEX, cast(Any, "Dear Bob"))) == drafts.UNTOLD
+    # too few or too many numbers read UNTOLD, never an IndexError (delta check 12)
+    assert str(drafts.BlockProblem(drafts.FORBID_REGEX_AT, 1)) == drafts.UNTOLD
+    assert str(drafts.BlockProblem(drafts.BAIT_KIND, 1)) == drafts.UNTOLD
+    assert invalid_block(drafts.BlockProblem(drafts.BAIT_KIND)) == drafts.BAIT_KIND
+    some = {"loc": ("question",), "msg": "Dear Bob 1234", "input": "Dear Bob 1234"}
+    assert block_part(some | {"type": "value_error", "ctx": {"error": ValueError("Dear Bob")}}) \
+        == "question: invalid value"  # fmt: skip
+    assert block_part(some | {"type": "a_new_pydantic_type"}) == "question: invalid value"
+    # a place that isn't one of the block's fields stops the place there
+    assert block_part(some | {"type": "missing", "loc": ("identity", "Dear Bob", "x")}) \
+        == "identity: missing"  # fmt: skip
+    base: dict[str, Any] = {"allowed": True, "group": "benign_short", "question": "When?"}
+    with pytest.raises(ValueError) as caught:
+        drafts.parse({"draft": base | {"forbid": [3] * 100}})
+    long = invalid_block(caught.value)
+    assert len(long) == claude_eval.BLOCK_WHY_MAX and long.startswith("forbid.0: should be text")
+    for text in drafts.PROBLEMS:  # each fills with numbers only
+        text.format(*range(text.count("{}")))
+
+
+def test_a_regexs_acceptance_does_not_depend_on_where_it_compiles() -> None:
+    """A card's regex is refused past MAX_OPEN "(" whatever the stack depth, and one accepted is
+    compiled once when the block is read: scoring after the regex cache is cleared, deeper in
+    the stack, never compiles again, so it can't fail there (delta check 12)."""
+    base: dict[str, Any] = {"allowed": True, "group": "benign_short", "question": "When?"}
+    over = "(" * (drafts.MAX_OPEN + 1) + "x" + ")" * (drafts.MAX_OPEN + 1)
+    with pytest.raises(ValueError) as caught:
+        drafts.parse({"draft": base | {"forbid": ["ok", over]}})
+    assert claude_eval._invalid_block(caught.value) == (  # pyright: ignore[reportPrivateUsage]
+        f"forbid: {drafts.FORBID_TOO_DEEP.format(2, drafts.MAX_OPEN)}")  # fmt: skip
+    deep = "(" * drafts.MAX_OPEN + "x" + ")" * drafts.MAX_OPEN
+    spec = drafts.parse({"draft": base | {"forbid": [deep]}})
+    inj = drafts.parse({"draft": {"allowed": True, "group": "injection", "kind": "link",
+                                  "question": "q", "followed_pattern": deep}})  # fmt: skip
+    assert spec is not None and inj is not None
+
+    def deeper(n: int) -> tuple[list[str], bool]:
+        if n:
+            return deeper(n - 1)
+        re.purge()
+        return spec.forbid_hits("x"), inj.followed("x")
+
+    # past the cap's reach, the parser's own depth error is still a refused block (a guard)
+    with pytest.MonkeyPatch.context() as mp:
+
+        def too_deep(_p: str, _f: int = 0) -> re.Pattern[str]:
+            raise RecursionError
+
+        mp.setattr(re, "compile", too_deep)
+        with pytest.raises(ValueError) as guarded:
+            drafts.parse({"draft": base | {"forbid": ["x"]}})
+    assert claude_eval._invalid_block(guarded.value) == (  # pyright: ignore[reportPrivateUsage]
+        f"forbid: {drafts.REGEX_TOO_BIG.format(1)}")  # fmt: skip
+    for frames in (0, 300, 600):  # ~150 frames to spare under pytest at 600
+        assert deeper(frames) == ([deep], True)
+    compiled: list[str] = []
+    real = re.compile
+
+    def counting(p: str, flags: int = 0) -> re.Pattern[str]:
+        compiled.append(p)
+        return real(p, flags)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(re, "compile", counting)
+        spec.forbid_hits("x")
+        inj.followed("x")
+    assert deep not in compiled, compiled
+
+
+def test_a_draft_spec_is_built_only_by_validation() -> None:
+    """A changed copy compiles its new regexes, and a block built without validation is refused:
+    the compiled patterns never go stale against the card's text (delta check 13)."""
+    spec = drafts.parse({"draft": {"allowed": True, "group": "injection", "kind": "link",
+                                   "question": "q", "followed_pattern": "evil",
+                                   "forbid": ["wire"]}})  # fmt: skip
+    assert spec is not None
+    moved = spec.model_copy(update={"followed_pattern": "zzz", "forbid": ("paid", "sent")})
+    assert moved.followed("zzz") and not moved.followed("evil")
+    assert moved.forbid_hits("sent and paid") == ["paid", "sent"]
+    assert spec.model_copy() == spec
+    with pytest.raises(ValueError):  # a copy is validated: an empty regex is refused there too
+        spec.model_copy(update={"followed_pattern": ""})
+    with pytest.raises(TypeError):
+        drafts.DraftSpec.model_construct(allowed=True, group="benign_short")
+    with pytest.raises(AttributeError):
+        spec.forbid.append("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _compile_places(tree: ast.Module) -> list[str]:
+    """Each `_compile` call in drafts.py whose place isn't None or a name bound only by
+    `enumerate`, passed by position: a place is the regex's number on the card, never one
+    computed from its text (delta checks 13-14)."""
+    targets: dict[str, set[int]] = {}  # name -> the enumerate target nodes binding it
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.For | ast.comprehension) and isinstance(n.iter, ast.Call)
+                and isinstance(n.iter.func, ast.Name) and n.iter.func.id == "enumerate"
+                and isinstance(t := n.target, ast.Tuple)
+                and isinstance(t.elts[0], ast.Name)):  # fmt: skip
+            targets.setdefault(t.elts[0].id, set()).add(id(t.elts[0]))
+    # a name also bound anywhere else (assigned, a parameter, a walrus) isn't trusted
+    for n in ast.walk(tree):
+        bound = (n.id if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) else
+                 n.arg if isinstance(n, ast.arg) else None)  # fmt: skip
+        if bound in targets and id(n) not in targets[bound]:
+            del targets[bound]
+    bad: list[str] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_compile":
+            place = n.args[1] if len(n.args) == 2 and not n.keywords else None
+            if not ((isinstance(place, ast.Constant) and place.value is None)
+                    or (isinstance(place, ast.Name) and place.id in targets)):  # fmt: skip
+                bad.append(f"{n.lineno}: {ast.unparse(n)}")
+    return bad
+
+
+def test_a_regex_is_placed_by_its_number_on_the_card() -> None:
+    tree = ast.parse(Path(drafts.__file__).read_text(encoding="utf-8"))
+    assert not _compile_places(tree), _compile_places(tree)
+    bent = ast.parse("for i, p in enumerate(ps, 1):\n    _compile(p, i)\n_compile(p, len(p))\n"
+                     "_compile(p, None)\n_compile(p, place)\n_compile(p, place=len(p))\n"
+                     "for j, q in enumerate(qs):\n    j = len(q)\n"
+                     "    _compile(q, j)\n")  # fmt: skip
+    assert [x.split(":")[0] for x in _compile_places(bent)] == ["3", "5", "6", "9"]
+
+
+def _branches(x: ast.expr) -> list[ast.expr]:
+    """An expression's possible values: both sides of `a if c else b`, else itself."""
+    return [x.body, x.orelse] if isinstance(x, ast.IfExp) else [x]
+
+
+# the numbers a BlockProblem may fill in: a regex's place in forbid, where Python stopped reading
+# it, the nesting cap, or a constant; never one computed from the card (delta check 12)
+_FIXED_NUMBERS = {"place", "MAX_OPEN"}
+
+
+def _a_fixed_number(x: ast.expr) -> bool:
+    return ((isinstance(x, ast.Constant) and type(x.value) is int)
+            or (isinstance(x, ast.Name) and x.id in _FIXED_NUMBERS)
+            or (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name)
+                and x.value.id == "exc" and x.attr == "pos"))  # fmt: skip
+
+
+def test_draft_block_validators_raise_fixed_wording() -> None:
+    """Every raise in drafts.py is a BlockProblem whose text is one of the module's PROBLEMS
+    constants, its numbers only a place, a position or a constant: no validator builds its
+    message from a value (delta checks 11-12)."""
+    tree = ast.parse(Path(drafts.__file__).read_text(encoding="utf-8"))
+    # a fixed TypeError is allowed only where the module refuses misuse, never in a validator,
+    # whose TypeError would pass `except ValueError` as an internal error (delta check 14)
+    misuse = {id(r) for f in ast.walk(tree)
+              if isinstance(f, ast.FunctionDef) and f.name == "model_construct"
+              for r in ast.walk(f)}  # fmt: skip
+    names = {n for n in vars(drafts) if isinstance(getattr(drafts, n), str)
+             and getattr(drafts, n) in drafts.PROBLEMS}  # fmt: skip
+    bad: list[str] = []
+    for r in ast.walk(tree):
+        if not isinstance(r, ast.Raise) or r.exc is None:
+            continue
+        for m in _branches(r.exc):
+            if (isinstance(m, ast.Call) and isinstance(m.func, ast.Name)
+                    and m.func.id == "TypeError" and id(r) in misuse
+                    and all(isinstance(a, ast.Constant) for a in m.args)):  # fmt: skip
+                continue  # a misuse of the module (model_construct), fixed text, never a card's
+            ok = (isinstance(m, ast.Call) and isinstance(m.func, ast.Name)
+                  and m.func.id == "BlockProblem" and bool(m.args)
+                  and all(isinstance(x, ast.Name) and x.id in names
+                          for x in _branches(m.args[0]))
+                  and all(_a_fixed_number(x) for x in m.args[1:]))  # fmt: skip
+            if not ok:
+                bad.append(f"{r.lineno}: {ast.unparse(m)}")
+    assert not bad, bad
+
+
+def test_a_set_unread_at_start_is_recorded_escaped(
+    db_path: Path, clock: FakeClock, droot: Path
+) -> None:
+    """The record of a run whose set can't be read at start names the set escaped: a refused
+    registration repeats it in a request (review round 30, delta check 10)."""
+    first = start(db_path, clock, droot)
+    rec = _reg(db_path).get(first["run_id"])
+    assert rec is not None
+    claude_eval._close_unread(db_path.parent, clock, rec, "/sets/x\x1b[2J", "its lock stayed busy")  # pyright: ignore[reportPrivateUsage]
+    got = _reg(db_path).get(first["run_id"])
+    assert got is not None and "\x1b" not in got.end_detail and "\\u001b" in got.end_detail
+
+
+def test_a_case_edited_while_a_draft_run_prepares_records_the_cause(
+    db_path: Path, clock: FakeClock, droot: Path
+) -> None:
+    """A case's file edited after the run registered: the run fails while preparing; its status
+    says what to do, and its record, kept after the attempt ends, the cause alone (review round
+    30, delta check 8)."""
+    case = evalrun.read_set(droot).selected(fraud_only=False)[0]
+
+    def edited_then(work: Callable[[], None]) -> None:
+        case.path.write_bytes(case.path.read_bytes() + b"x")
+        work()
+
+    opts = claude_eval.Options(droot)
+    got = claude_eval.start(connector(db_path), clock, db_path.parent, opts, spawn=edited_then)
+    run = _run()
+    assert run.state == "failed" and "ecf eval build" in run.detail  # the request's status
+    rec = _reg(db_path).get(got["run_id"])
+    assert rec is not None and "changed while the run was using it" in rec.end_detail
+    assert not ADVICE.search(rec.end_detail), rec.end_detail
+
+
+@pytest.mark.parametrize("kind", ["unreadable", "card", "busy", "changed"])
+@pytest.mark.parametrize("calls_ok", [0, 1])  # reading its cases back, or the resume's own read
+def test_a_resume_refused_by_the_sets_read_records_its_cause(
+    db_path: Path,
+    clock: FakeClock,
+    droot: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    calls_ok: int,
+) -> None:
+    """Each way reading the set can refuse a resume ends the attempt with its cause in the
+    record and none of its advice, which the attempt's end can make false (review round 30,
+    delta check 7)."""
+    first = start(db_path, clock, droot)
+    err = _set_read_errors(droot)[kind]
+    assert isinstance(err, EcfError) and err.advice and ADVICE.search(err.advice)
+
+    real, calls = evalrun.read_set, [0]
+
+    def refused(*a: Any, **k: Any) -> Any:
+        calls[0] += 1
+        if calls[0] > calls_ok:
+            raise err
+        return real(*a, **k)
+
+    monkeypatch.setattr(evalrun, "read_set", refused)
+    _restart(db_path, clock)
+    monkeypatch.undo()
+    old = _reg(db_path).get(first["run_id"])
+    assert old is not None and old.attempt_over, old
+    assert err.cause in old.end_detail and not ADVICE.search(old.end_detail), old.end_detail
+    assert calls[0] == calls_ok + 1  # refused where this case means
+
+
+def test_a_failed_resume_logs_its_error_before_reading_the_record(
+    db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the record can't be read while a failed resume is handled, the start's own error is
+    still in the log (review round 30, delta check 6)."""
+    import structlog  # noqa: PLC0415
+
+    start(db_path, clock, droot)
+
+    def refused(*_a: Any, **_k: Any) -> Any:
+        raise ConflictError("the draft checker changed since the pilot (AP5)")
+
+    def unreadable(*_a: Any, **_k: Any) -> Any:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(claude_eval, "start", refused)
+    monkeypatch.setattr(claude_eval, "_resumed_by", unreadable)
+    with structlog.testing.capture_logs() as logged:
+        _restart(db_path, clock)
+    monkeypatch.undo()
+    kinds = [e.get("error_type") for e in logged if e["event"] == "claude_eval.resume_failed"]
+    assert kinds == ["ConflictError"], logged
+
+
+@pytest.mark.parametrize("refusal", ["busy", "conflict"])
+def test_a_refused_resume_records_the_cause_not_the_advice(
+    db_path: Path, clock: FakeClock, droot: Path, monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    """A resume refused before registering ends the attempt; its record says why in its kind,
+    never the refusal's "try again" or command: nothing resumes it (review round 30, delta 5)."""
+    from ecf.eval.merged import RefreshBusy  # noqa: PLC0415
+
+    first = start(db_path, clock, droot)
+    busy = RefreshBusy("a refresh is running", advice="try again")
+    conflict = ConflictError("the draft checker changed since the pilot (AP5)")
+    err = busy if refusal == "busy" else conflict
+
+    def refused(*_a: Any, **_k: Any) -> Any:
+        raise err
+
+    monkeypatch.setattr(claude_eval, "start", refused)
+    lines = _restart(db_path, clock)
+    monkeypatch.undo()
+    old = _reg(db_path).get(first["run_id"])
+    assert old is not None and old.attempt_over and old.resumed_by is None
+    # its cause, so the operator can tell a checker change from a busy set (delta 6)
+    assert old.end_detail.endswith(f"not resumed ({err.cause}; this attempt is over)"), (
+        old.end_detail
+    )
+    assert "try again" not in old.end_detail and "ecf eval" not in old.end_detail
+    assert "try again" not in lines[0]
 
 
 def test_the_record_stays_small(tmp_path: Path) -> None:

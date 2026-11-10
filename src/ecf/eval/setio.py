@@ -111,7 +111,7 @@ def write_new(tmp: Path, data: bytes | str, mode: int = 0o644, *, sync: bool = F
         f.write(raw)
         if sync:
             f.flush()
-            os.fsync(f.fileno())
+            flush_to_disk(f.fileno())
 
 
 def copy_new(src: Path, tmp: Path) -> None:
@@ -150,7 +150,8 @@ def replace_file(path: Path, make: Callable[[Path], None]) -> None:
             # a write paused for over an hour (a debugger, a sleeping laptop) whose temporary
             # file a build swept meanwhile (review round 25, S4)
             raise InvalidInputError(
-                f"{path}: its temporary file was removed while it was being written; try again"
+                f"{path}: its temporary file was removed while it was being written",
+                advice="try again",
             ) from exc
         _drop(tmp)
         _reraise_for(path, tmp, exc)
@@ -385,6 +386,9 @@ def _sweep_folder(fd: int, where: Path, cutoff: float, gone: list[Path], left: l
 CALL_FILES = ".call-"
 
 
+_NO_LOCKS = {errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENOLCK, errno.EINVAL}
+
+
 def call_folder(workdir: Path) -> tuple[Path, int]:
     """A fresh 0700 folder for one model call in `workdir`, held until `end_call`."""
     writable_root(workdir)  # never in a merged view
@@ -393,6 +397,14 @@ def call_folder(workdir: Path) -> tuple[Path, int]:
         fd = os.open(own, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            if exc.errno not in _NO_LOCKS:
+                os.close(fd)
+                raise
+            # a disk without locks (NFS without locking): the call runs unheld; a sweep on this
+            # mount can't lock either, so it leaves the folder with a line, never removing a live
+            # one; one from another computer mounting the share with locks could, past an hour
+            # (a computer asleep mid-call, or clocks far apart): a stated limit (review round 30)
         except BaseException:
             os.close(fd)
             raise
@@ -485,29 +497,40 @@ def write_durable(path: Path, data: bytes | str, mode: int = 0o600) -> None:
     sync_folder(path.parent)
 
 
-# A folder that can't be opened or flushed (a network share, a folder others own): the file is
-# already in place, so its write isn't reported as failed (fifteenth delta check: a retry of
-# a new file then read "already exists")
-_CANT_FLUSH = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EACCES, errno.EPERM}
+# The full flush not offered here (a disk or file that doesn't take it, a volume that doesn't
+# implement it: macFUSE's ENOSYS): `fsync` instead
+_NO_FULL_FLUSH = {errno.ENOTSUP, errno.EOPNOTSUPP, errno.EINVAL, errno.ENOTTY, errno.ENOSYS}
+
+
+def flush_to_disk(fd: int) -> None:
+    """Flush an open file or folder to the disk itself: on macOS `fsync` leaves it in the
+    drive's cache, which a power cut loses; `F_FULLFSYNC` doesn't (review round 30). Where that
+    isn't offered, `fsync`; a disk error is raised (review round 30, delta check 1)."""
+    full = getattr(fcntl, "F_FULLFSYNC", None)
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError as exc:
+            if exc.errno not in _NO_FULL_FLUSH:
+                raise  # a disk error: an fsync after it could report a flush that never was
+    os.fsync(fd)
 
 
 def sync_folder(where: Path) -> None:
-    """Flush a folder's entries to disk (after a rename into it), where the disk allows it. A
-    linked folder is followed: the rename already went through the link, and a flush writes
-    nothing (review round 29, fourteenth delta check: refusing it failed every save in a linked
-    corpus folder). Any other error (a disk error) is raised: the file is in place, the folder
-    perhaps not on disk."""
+    """Flush a folder's entries to disk after a rename or link into it, as far as the disk
+    allows. The file is already in place, so a folder that can't be opened or flushed (a
+    network share, one others own, a disk error) never turns a written file into a failed
+    write: a retry would read "already exists" (review rounds 29-30). A linked folder is
+    followed: the rename already went through the link."""
     try:
         fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError as exc:
-        if exc.errno in _CANT_FLUSH:
-            return
-        raise
+    except OSError:
+        return
     try:
-        os.fsync(fd)
-    except OSError as exc:
-        if exc.errno not in _CANT_FLUSH:
-            raise
+        flush_to_disk(fd)
+    except OSError:
+        pass
     finally:
         os.close(fd)
 
@@ -556,7 +579,9 @@ def write_all(fd: int, data: bytes) -> None:
 def reason(exc: BaseException) -> str:
     """An error's reason for a message: its system message, else its text, else its type (an
     OSError raised without a message has no strerror; review rounds 27-28). Every eval message
-    that reports an OSError's reason uses this, so none reads "None" or "()"."""
+    that reports an OSError's reason uses this, so none reads "None" or "()". An ecf error gives
+    its whole message, what to do included: this is for whoever is told now; a record kept after
+    the attempt ends takes `claude_eval._cause_of` instead (review round 30, delta checks 8-9)."""
     code = getattr(exc, "errno", None)
     text = getattr(exc, "strerror", None) or (os.strerror(code) if isinstance(code, int) else "")
     return escaped(text or str(exc) or type(exc).__name__)
@@ -629,8 +654,8 @@ def logical(path: Path) -> Path:
             out = out / part
         elif os.path.islink(out):
             raise InvalidInputError(
-                f"{escaped(str(path))}: a `..` after the symbolic link {escaped(str(out))};"
-                " give the folder without it"
+                f"{escaped(str(path))}: a `..` after the symbolic link {escaped(str(out))}",
+                advice="give the folder without it",
             )
         else:
             out = out.parent
@@ -676,8 +701,9 @@ def writable_root(path: Path) -> Path:
     if by is not None:
         raise InvalidInputError(
             f"{escaped(str(path))} is in a merged eval set ({escaped(by)}), which is rebuilt"
-            " from its sources and never written: choose a folder outside it (a card or label"
-            " goes in the public or private set that owns the card)"
+            " from its sources and never written",
+            advice="choose a folder outside it (a card or label goes in the public or private"
+            " set that owns the card)",
         )
     return path
 
@@ -703,7 +729,8 @@ def writable_set(root: Path, path: Path | None = None) -> Path:
         where, what = odd
         raise InvalidInputError(
             f"{escaped(str(where))}: {what}; nothing in an eval set is written through a link"
-            " or into a special file (put the folder or file itself there)"
+            " or into a special file",
+            advice="put the folder or file itself there",
         )
     return target
 

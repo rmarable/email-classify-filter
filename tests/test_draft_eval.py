@@ -120,7 +120,7 @@ def _spec(**kw: Any) -> DraftSpec:
         ({"group": "bait", "kind": "price", "sender": "first_time"}, "known senders"),
         ({"followed_pattern": "x"}, "for injection cards"),
         ({"kind": "price"}, "for bait and injection"),
-        ({"forbid": ["(unclosed"]}, "isn't a valid regex"),
+        ({"forbid": ["(unclosed"]}, "pattern 1: not a valid regex"),
         ({"identity": {"first": "Dana", "last": "Whit field"}}, "a name is letters"),
     ],
 )

@@ -1968,24 +1968,44 @@ def status_lines(st: dict[str, Any]) -> list[str]:
 def draft_lines(dr: dict[str, Any] | None) -> list[str]:
     """The draft eval's record (M8 plan §4): the frozen checker, the set's confirmation, and each
     slot's state and runs; no outcomes."""
+    from ecf.text import escaped  # noqa: PLC0415
+
     if not dr:
         return []
     if dr.get("error"):
-        return ["", f"Draft eval slots: {dr['error']}"]
+        return ["", f"Draft eval slots: {escaped(dr['error'])}"]
     conf: dict[str, Any] | None = dr.get("confirmation")
     pilot: dict[str, Any] | None = dr.get("pilot_set")
-    where = (f"set confirmed at {conf['set_digest'][:16]}" if conf
-             else f"set not yet confirmed: the pilots ran on {pilot['digest']}; confirm it with"
-                  f" `ecf eval confirm-set --root {shlex.quote(str(pilot['root']))}"
-                  f" --digest {pilot['digest']}`"
+    # every value from the record is escaped here, at the terminal (review round 30, delta 5)
+    e = escaped
+    where = (f"set confirmed at {e(conf['set_digest'][:16])}" if conf
+             else f"set not yet confirmed: the pilots ran on {e(pilot['digest'])}; "
+                  + _confirm_with(str(pilot["root"]), str(pilot["digest"]))
              if pilot else "set not yet confirmed: pilot only")  # fmt: skip
     out = ["", f"Draft eval slots ({where}):"]
     for slot in dr["slots"]:
-        runs = "; ".join(f"{r['run_id'][:8]} attempt {r['attempt']} {r['end'] or 'open'}"
+        runs = "; ".join(f"{e(r['run_id'][:8])} attempt {e(r['attempt'])} {e(r['end'] or 'open')}"
                          + (", complete" if r["complete"] else "")
+                         + (f", resumed as {e(r['resumed_by'][:8])}"
+                            if r.get("resumed_by") else "")
+                         + (f" ({e(r['detail'])})" if r.get("detail") else "")
                          for r in slot["runs"])  # fmt: skip
-        out.append(f"  arm {slot['arm'][:8]} {slot['slot']}: {slot['state']} ({runs})")
+        out.append(f"  arm {e(slot['arm'][:8])} {e(slot['slot'])}: {e(slot['state'])} ({runs})")
     return out
+
+
+def _confirm_with(root: str, digest: str) -> str:
+    """The confirm-set command, only when it can be pasted as shown: a path or digest holding
+    control characters is shown escaped, as information (review round 30, delta check 6)."""
+    from ecf.text import escaped  # noqa: PLC0415
+
+    if escaped(root) == root and escaped(digest) == digest:
+        return (f"confirm it with `ecf eval confirm-set --root {shlex.quote(root)}"
+                f" --digest {digest}`")  # fmt: skip
+    return (
+        f"confirm it with `ecf eval confirm-set` on the set at {escaped(root)} (its path"
+        f" holds control characters, shown escaped), digest {escaped(digest)}"
+    )
 
 
 def _recall(m: dict[str, Any]) -> str:

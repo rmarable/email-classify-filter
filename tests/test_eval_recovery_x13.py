@@ -126,8 +126,7 @@ def test_a_set_held_by_another_installs_run_closes_with_the_fixed_detail(
     assert rec.attempt_over and not rec.open and rec.end == "lost"
     assert rec.end_detail == (
         f"the eval set {pub.resolve()} couldn't be read at service start (its lock stayed busy or"
-        f" it is still stale): run `ecf eval build --root {pub.resolve()}`; this attempt can't be"
-        " resumed"
+        f" it is still stale); this attempt is over"
     )
     assert any("couldn't be read" in x for x in lines)
 
@@ -377,7 +376,9 @@ def test_a_raise_in_step_3_closes_only_that_record(
     monkeypatch.setattr(claude_eval, "_recover_one", flaky)
     lines = _restart(db_path, clock)
     ra, rb = _rec(db_path, a), _rec(db_path, b)
-    assert ra.attempt_over and ra.end_detail == "recovery failed (RuntimeError)"
+    assert (
+        ra.attempt_over and ra.end_detail == "recovery failed (RuntimeError; this attempt is over)"
+    )
     assert rb.open and not rb.attempt_over and b in seen and "ok" in lines  # only a closed
 
 

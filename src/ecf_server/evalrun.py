@@ -409,8 +409,8 @@ def case_bytes(case: Case) -> bytes:
     """The case's message, re-checked against the hash it was read with ("Torn reads")."""
     data = case.path.read_bytes()
     if case.sha256 and hashlib.sha256(data).hexdigest() != case.sha256:
-        raise CaseChanged(f"case {case.id}'s file changed while the run was using it: run"
-                          " `ecf eval build` and start again")  # fmt: skip
+        raise CaseChanged(f"case {case.id}'s file changed while the run was using it",
+                          advice="run `ecf eval build` and start again")  # fmt: skip
     return data
 
 
@@ -471,12 +471,14 @@ def check_target(case_id: str, target: Any, labels: dict[str, Any]) -> None:
         bool_target(target)
         level_target(target)
     except ValueError as exc:
-        raise InvalidInputError(f"{case_id}: {exc} (fix its card, then ecf eval build)") from exc
+        raise InvalidInputError(
+            f"{case_id}: {exc}", advice="fix its card, then run `ecf eval build`"
+        ) from exc
     if target_met(target, labels):  # the card's labels, derived ones, or ones hand-set for it
         raise InvalidInputError(f"{case_id}: injection_target {target!r}: its labels already give"
-                                " it (stated, derived, or hand-set in fixed_labels.jsonl); fix"
-                                " its card (then ecf eval build) or its hand-set"
-                                " label")  # fmt: skip
+                                " it (stated, derived, or hand-set in fixed_labels.jsonl)",
+                                advice="fix its card (then run `ecf eval build`) or its hand-set"
+                                       " label")  # fmt: skip
 
 
 def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
@@ -759,10 +761,10 @@ def reference_counts(cases: list[Case]) -> dict[str, int]:
 
 def _check_options(opts: Options) -> None:
     if opts.backend.startswith(REMOVED_BACKENDS):
-        raise InvalidInputError(f"the {opts.backend} backend was removed in v3.0.0 (ADR"
-                                " 0031): use `--classifier-backend null`, or Claude through"
-                                " `ecf eval run --claude`; old results still rescore (ecf eval"
-                                " rescore)")  # fmt: skip
+        raise InvalidInputError(f"the {opts.backend} backend was removed in v3.0.0 (ADR 0031)",
+                                advice="use `--classifier-backend null`, or Claude through"
+                                       " `ecf eval run --claude`; old results still rescore"
+                                       " (ecf eval rescore)")  # fmt: skip
     if opts.backend not in BACKENDS:
         raise InvalidInputError(f"classifier backend {opts.backend!r}: {', '.join(BACKENDS)}")
     if not opts.redact and not opts.fraud_only:
@@ -831,22 +833,26 @@ def _start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Pa
            mine: Callable[[tuple[Any, ...]], None]) -> dict[str, Any]:  # fmt: skip
     if opts.backend == JEV:
         if asker is None:
-            raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
-                                    " --provider typesafe`")  # fmt: skip
+            raise InvalidInputError("no TypeSafe key",
+                                    advice="set it with `ecf models api-key set --provider"
+                                           " typesafe`")  # fmt: skip
         check_schema(connect)
     read = read_set(opts.root)
     cases, version = read.selected(fraud_only=opts.fraud_only), read.version
     if not cases:
-        raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
+        raise InvalidInputError("no cases to run", advice="build the set with `ecf eval build`")
     if opts.backend == JEV and (unconfirmed := [c.id for c in cases if not c.confirmed]):
         # only the reviewed synthetic set goes to TypeSafe (J14; operator decision 2026-10-14)
         raise InvalidInputError(f"a jev run sends only confirmed cards to TypeSafe, and"
                                 f" {len(unconfirmed)} in this set aren't (first:"
-                                f" {unconfirmed[0]}); confirm them (`ecf eval label`) or use"
-                                " the reviewed synthetic set")  # fmt: skip
+                                f" {unconfirmed[0]})",
+                                advice="confirm them (`ecf eval label`) or use the reviewed"
+                                       " synthetic set")  # fmt: skip
     with RUN.lock:
         if RUN.state == "running":
-            raise ConflictError(f"eval {RUN.run_id} is already running; see `ecf eval status`")
+            raise ConflictError(
+                f"eval {RUN.run_id} is already running", advice="see `ecf eval status`"
+            )
         mine((RUN.run_id, RUN.state, RUN.done, RUN.total, RUN.detail, RUN.result,
               RUN.started_at, RUN.set_name))  # fmt: skip
         RUN.run_id, RUN.state, RUN.done, RUN.total = new_random_id(), "running", 0, len(cases)

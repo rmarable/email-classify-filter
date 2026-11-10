@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import errno
+import fcntl
 import functools
 import json
 import os
@@ -15,7 +16,7 @@ import symtable
 import threading
 import time
 from collections import Counter
-from collections.abc import Container
+from collections.abc import Container, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -327,7 +328,7 @@ def _is_write(
 def _writes(path: Path) -> list[tuple[str, int, bool]]:
     """(enclosing function's qualified name, line, whether that function calls writable_root
     before the write) for every file write in `path` (the order: review round 27)."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = _parsed(path)
     mods, funcs = _os_aliases(tree)
     modules = frozenset(  # every module name bound by an import
         (a.asname or a.name).split(".")[0]
@@ -1292,7 +1293,7 @@ def test_no_guard_is_imported_under_another_name() -> None:
     check); every source file is read, as the pins read them."""
     pinned = GUARDS | {"write_result"}
     renamed = [f"{f.name}:{n.lineno}" for f in _ALL_SRC
-               for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+               for n in ast.walk(_parsed(f))
                if isinstance(n, ast.ImportFrom)
                for a in n.names if a.name in pinned and a.asname not in (None, a.name)]  # fmt: skip
     assert not renamed, "a guard imported under another name: " + ", ".join(renamed)
@@ -1311,7 +1312,7 @@ def _callers(path: Path, name: str) -> set[str]:
                 found.add(".".join(scope))
             visit(child, s)
 
-    visit(ast.parse(path.read_text(encoding="utf-8")), [])
+    visit(_parsed(path), [])
     return found
 
 
@@ -1327,7 +1328,7 @@ def test_a_model_call_folder_in_a_set_is_checked_as_part_of_it() -> None:
     round 28, second delta check). A temporary folder (judge-drafts, the canary) is no set."""
     bad: list[str] = []
     for rel in ("eval/generate.py", "eval/grade.py"):
-        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        tree = _parsed(SRC / rel)
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef):
                 continue
@@ -1609,7 +1610,7 @@ def test_every_caller_of_writable_set_is_a_listed_set_writer() -> None:
 def test_every_set_writer_names_the_set_itself() -> None:
     bad: list[str] = []
     for rel, qual in sorted(SET_WRITERS | SET_PREFLIGHT):  # a pre-flight check names it too
-        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        tree = _parsed(SRC / rel)
         fn = _function(tree, qual)
         held: set[str] = set()
         for n in ast.walk(fn):
@@ -1804,7 +1805,7 @@ def test_no_eval_message_prints_an_os_error_raw() -> None:
     and a local alias or lambda given a helper's name would be trusted as that helper."""
     raw: list[str] = []
     for f in _eval_modules():
-        tree = ast.parse(f.read_text(encoding="utf-8"))
+        tree = _parsed(f)
         for h in ast.walk(tree):
             if not (isinstance(h, ast.ExceptHandler) and h.name and h.type is not None):
                 continue
@@ -1870,10 +1871,21 @@ EXC_HELPERS = {
     "_stop_or_fail",
     "_unreadable_state",
     "_unreadable_key",
+    "_recovery_why",  # a failed recovery's reason: via _cause_of, and that it is over (r30)
+    "_cause_of",  # an error's cause for a record: ecf's own cause, reason(), else its kind (r30)
+    "_told",  # an ecf error's cause and advice, for a request's status only, never a record (r30)
 }
 
 
-def _eval_modules() -> list[Path]:
+@functools.cache
+def _parsed(path: Path) -> ast.Module:
+    """A source file's tree, parsed once per test run: the source scans share it and never
+    change it (review round 30: seven scans each parsed all 249 files again)."""
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+@functools.cache
+def _eval_modules() -> tuple[Path, ...]:
     """Every eval module, chosen by rule so a new one is never missed: all of `ecf/eval`, and
     every other module that imports from it (review round 29, sixth delta check)."""
 
@@ -1881,17 +1893,17 @@ def _eval_modules() -> list[Path]:
         return any(
             (isinstance(n, ast.ImportFrom) and (n.module or "").startswith("ecf.eval"))
             or (isinstance(n, ast.Import) and any(a.name.startswith("ecf.eval") for a in n.names))
-            for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+            for n in ast.walk(_parsed(f))
         )
 
-    return [f for f in _ALL_SRC if f.is_relative_to(SRC / "eval") or imports_eval(f)]
+    return tuple(f for f in _ALL_SRC if f.is_relative_to(SRC / "eval") or imports_eval(f))
 
 
 def test_each_exception_helper_is_defined_once() -> None:
     defs = [
         n.name
         for f in _ALL_SRC
-        for n in ast.walk(ast.parse(f.read_text(encoding="utf-8")))
+        for n in ast.walk(_parsed(f))
         if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name in EXC_HELPERS
     ]
     assert sorted(defs) == sorted(EXC_HELPERS), defs
@@ -2095,7 +2107,7 @@ def test_the_draft_run_registry_is_flushed_before_it_is_renamed(
     from ecf_server import draftruns  # noqa: PLC0415
 
     steps: list[str] = []
-    real_sync, real_replace = os.fsync, os.replace
+    real_sync, real_replace = setio.flush_to_disk, os.replace
 
     def fsync(fd: int) -> None:
         steps.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
@@ -2105,7 +2117,7 @@ def test_the_draft_run_registry_is_flushed_before_it_is_renamed(
         steps.append("rename")
         real_replace(src, dst)
 
-    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(setio, "flush_to_disk", fsync)
     monkeypatch.setattr(os, "replace", replace)
     draftruns.save(tmp_path, draftruns.Registry())
     assert steps == ["file", "rename", "dir"], steps  # flushed, renamed, then its folder
@@ -2574,7 +2586,7 @@ def _write_calls(f: Path, package: str | None = None) -> set[tuple[str, str, str
         )
         package = ".".join(rel.parent.parts) if rel else ""
     text = f.read_text(encoding="utf-8")
-    tree = ast.parse(text)
+    tree = _parsed(f)
     names = _imports(tree, package)
     deferred = _defers_annotations(tree)
     tables: dict[int, list[symtable.SymbolTable]] = {}
@@ -2702,7 +2714,7 @@ def test_every_eval_module_defers_its_annotations() -> None:
     module with code has it, so the scan may take annotations for types (review round 29,
     twenty-first delta check)."""
     missing = [f.name for f in _eval_modules()
-               if (tree := ast.parse(f.read_text(encoding="utf-8"))).body
+               if (tree := _parsed(f)).body
                and not (len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr))
                and not _defers_annotations(tree)]  # fmt: skip
     assert not missing, missing
@@ -2826,12 +2838,410 @@ def test_a_refused_journal_stops_the_draft_run(tmp_path: Path, plant: str) -> No
     name = tmp_path / "r.journal.jsonl"
     {"link": lambda: name.symlink_to(target), "hard link": lambda: os.link(target, name),
      "pipe": lambda: os.mkfifo(name)}[plant]()  # fmt: skip
-    run: Any = SimpleNamespace(journal=name, clock=None, stop=threading.Event(),
-                               state="ready", detail="", run_id="r" * 16)  # fmt: skip
-    with pytest.raises(ServiceUnavailableError, match="the draft run stopped"):
+    run: Any = SimpleNamespace(journal=name, clock=None, stop=threading.Event(), state="ready",
+                               detail="", run_id="r" * 16, data_dir=tmp_path)  # fmt: skip
+    with pytest.raises(ServiceUnavailableError, match="the draft run stopped") as got:
         claude_eval._j_many(run, [{"e": "claim"}])  # pyright: ignore[reportPrivateUsage]
     assert run.state == "failed" and run.stop.is_set() and run.journal is None
     assert "hard link or special file" in run.detail and target.read_text() == "keep"
+    # a restart alone would be refused again: it says what to remove and what that costs, and
+    # where to read the outcome, never the outcome (review round 30 and its delta checks 1-3)
+    assert (f"remove what is at {name} (its journal: the cases it scored go with it), then"
+            " restart the service" in str(got.value))  # fmt: skip
+    assert claude_eval.SEE_STATUS in str(got.value) and not predicts_a_restart(str(got.value))
+    # if its recovery fails, the record names the refused file (a typed cause; delta 5)
+    why = claude_eval._recovery_why(got.value)  # pyright: ignore[reportPrivateUsage]
+    assert why.startswith(f"{name}: a symbolic link"), why
+
+
+_PREDICTS = re.compile(
+    r"\b(?:resum(?:e|es|ing)\b|(?:be|get|gets|is) resumed|continu\w*|carr(?:y|ies) on"
+    r"|pick(?:s|ed)? (?:it |the run )?up|recover(?:s|ed)?\b|runs? again|retr(?:y|ies|ied))",
+    re.I,
+)
+
+
+def predicts_a_restart(text: str) -> bool:
+    """Text that says what a restart will do: "restart" with a resume or carry-on word."""
+    return "restart" in text.lower() and bool(_PREDICTS.search(text))
+
+
+def _texts(tree: ast.Module) -> Iterator[tuple[int, str]]:
+    """Every string a module can show or record: its constants and f-strings, never a docstring
+    (which describes the code to its reader)."""
+    docs = {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            and n.body and isinstance(n.body[0], ast.Expr)
+            and isinstance(n.body[0].value, ast.Constant)}  # fmt: skip
+    for n in ast.walk(tree):
+        if isinstance(n, ast.JoinedStr):
+            yield n.lineno, ast.unparse(n)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
+            yield n.lineno, n.value
+
+
+def test_no_text_predicts_what_a_restart_does() -> None:
+    """What a restart does to a stopped run depends on the disk, the attempt's limits and the
+    set, so no text anywhere in ecf says what it will do: it says what happened and what to do,
+    and the record says the outcome afterwards (review round 30, delta checks 2-3)."""
+    bad: list[str] = []
+    for path in sorted(SRC.parent.rglob("*.py")):
+        for line, text in _texts(_parsed(path)):
+            if predicts_a_restart(text):
+                bad.append(f"{path.relative_to(SRC.parent)}:{line}: {text[:80]}")
+    assert not bad, bad
+
+
+def test_the_restart_scan_finds_a_prediction() -> None:
+    """The scan above catches each way of saying it, and leaves docstrings and outcomes alone."""
+    for said in ("a service restart resumes it", "restart: the run carries on",
+                 "after a restart it will resume", "a restart picks it up",
+                 "it will be resumed after a restart", "restart to resume the run",
+                 "a restart continues it", "restart and it gets resumed",
+                 "it is picked up after a restart", "a restart recovers it",
+                 "after a restart it runs again", "the restart retries it"):  # fmt: skip
+        assert list(_texts(ast.parse(f"x = {said!r}")))
+        assert predicts_a_restart(said), said
+    assert not list(_texts(ast.parse('def f():\n    """a restart resumes it"""')))
+    for outcome in ("lost to a service restart; resumed as 1234abcd",
+                    "lost to a service restart; not resumed: its attempt passed 48 hours",
+                    "fix what stopped the write, then restart the service"):  # fmt: skip
+        assert not predicts_a_restart(outcome), outcome
+
+
+ADVICE = re.compile(
+    r"try again|restart the|\bsee `|\bremove (?:it|the|what)\b|\brun `|\brun it\b|\bgive the"
+    r"|\bpass --|with `ecf|\bcheck the\b|\bfix (?:its|the)\b|,? then (?:run|restart)\b|\buse `"
+    r"|start again|\bconfirm (?:them|it)\b|\bupgrade\b|\bchoose an?\b|\bput the\b"
+    r"|\brestore the\b|\bmay allow\b",
+    re.I,
+)
+# The modules whose errors can end a draft run's attempt: a resume's own (`claude_eval`,
+# `draftruns`), the set's read (`merged`, `setio`, `evalrun`) and what a start reads with it
+# (`drafts`, `cards`, `fixed_labels`, `config`)
+_ADVICE_MODULES = (SRC / "eval" / "merged.py", SRC / "eval" / "setio.py",
+                   SRC.parent / "ecf_server" / "claude_eval.py",
+                   SRC.parent / "ecf_server" / "draftruns.py",
+                   SRC.parent / "ecf_server" / "evalrun.py",
+                   SRC / "eval" / "drafts.py", SRC / "eval" / "cards.py",
+                   SRC / "eval" / "fixed_labels.py",
+                   SRC.parent / "ecf_server" / "config.py")  # fmt: skip
+
+
+def _error_kinds() -> set[str]:
+    """Every ecf error type's name, wherever it is defined (subclasses of subclasses too)."""
+    import importlib  # noqa: PLC0415
+
+    from ecf import errors  # noqa: PLC0415
+
+    for mod in ("ecf_server.claude_eval", "ecf_server.evalrun", "ecf.eval.merged"):
+        importlib.import_module(mod)  # the modules that define error types of their own
+
+    seen: set[str] = set()
+    todo: list[type] = [errors.EcfError]
+    while todo:
+        c = todo.pop()
+        seen.add(c.__name__)
+        todo += c.__subclasses__()
+    return seen
+
+
+def _string_constants(tree: ast.Module) -> dict[str, str]:
+    """A module's top-level string constants, so text passed by name is read too."""
+    out: dict[str, str] = {}
+    for n in tree.body:
+        if not (isinstance(n, ast.Assign) and len(n.targets) == 1):
+            continue
+        target, value = n.targets[0], n.value
+        if (isinstance(target, ast.Name) and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)):  # fmt: skip
+            out[target.id] = value.value
+    return out
+
+
+def _cause_texts(path: Path, kinds: set[str]) -> Iterator[tuple[int, str]]:
+    """Each ecf error's cause text in a module, called by name or through a module, built in a
+    variable or raised at once, with any module constant it names read in."""
+    tree = _parsed(path)
+    consts = _string_constants(tree)
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and n.args):
+            continue
+        name = (n.func.id if isinstance(n.func, ast.Name)
+                else n.func.attr if isinstance(n.func, ast.Attribute) else "")  # fmt: skip
+        if name in kinds:
+            arg = n.args[0]
+            named = [
+                consts[x.id] for x in ast.walk(arg) if isinstance(x, ast.Name) and x.id in consts
+            ]
+            yield n.lineno, " ".join([ast.unparse(arg), *named])
+
+
+def test_an_errors_cause_holds_no_advice() -> None:
+    """In the modules whose errors can end a draft run's attempt, an error's first argument is
+    its cause alone and any advice goes in `advice=`, so a record keeps the cause and never a
+    "try again" made false by the attempt's end (review round 30, delta checks 6-7)."""
+    kinds = _error_kinds()
+    assert {"Unreadable", "RefreshBusy", "InvalidInputError"} <= kinds
+    bad = [f"{path.name}:{line}" for path in _ADVICE_MODULES
+           for line, text in _cause_texts(path, kinds) if ADVICE.search(text)]  # fmt: skip
+    assert not bad, bad
+
+
+def test_the_advice_scan_finds_each_form() -> None:
+    """The scan reads a prefixed call, an error built in a variable and a constant's text."""
+    import tempfile  # noqa: PLC0415
+
+    kinds = {"InvalidInputError", "RefreshBusy"}
+    code = ('HINT = "try again"\n'
+            'a = errors.InvalidInputError("x; fix its card")\n'
+            'b = InvalidInputError(f"x {HINT}")\n'
+            'raise merged.RefreshBusy("busy, then run `ecf eval build`")\n'
+            'c = InvalidInputError("the draft checker changed", advice="try again")\n')  # fmt: skip
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "m.py"
+        f.write_text(code)
+        found = [line for line, text in _cause_texts(f, kinds) if ADVICE.search(text)]
+    assert found == [2, 3, 4], found
+
+
+# Where text enters a draft run's record: `end_detail=` of `_update_record`, the detail of
+# `_end_record` (4th) and `_finish` (5th)
+# each call that writes a draft run's record detail: its keyword, and its place when passed by
+# position (_finish_run's detail goes to the run and its record; delta check 11)
+_RECORD_SINKS = {"_update_record": ("end_detail", None), "_end_record": ("detail", 3),
+                 "_finish": ("detail", 4), "_finish_run": ("detail", 4)}  # fmt: skip
+_CAUSE_HELPERS = {"_cause_of", "_recovery_why"}
+# an error's advice with its cause: for whoever is told now, never a record (`reason` gives an
+# ecf error's whole message; review round 30, delta check 9)
+_NOT_FOR_RECORDS = {"_told", "reason"}
+
+
+def _sink_args(n: ast.Call) -> list[ast.expr]:
+    name = n.func.id if isinstance(n.func, ast.Name) else ""
+    if name not in _RECORD_SINKS:
+        return []
+    kw, pos = _RECORD_SINKS[name]
+    # `**mapping` could carry the detail by any key, and `*args` at or before its place could
+    # carry it there: each is checked whole (delta checks 9 and 11)
+    got = [k.value for k in n.keywords if k.arg == kw or k.arg is None] if kw else []
+    if pos is None:
+        return got
+    star = next((i for i, a in enumerate(n.args) if isinstance(a, ast.Starred)), None)
+    if star is not None and star <= pos:
+        # an unpacking at or before the detail's place can move any later argument there:
+        # each is checked, a Starred by its inner value (delta check 12)
+        return got + [a.value if isinstance(a, ast.Starred) else a for a in n.args[star:]]
+    return got + ([n.args[pos]] if len(n.args) > pos else [])
+
+
+def _assigned(fn: ast.AST, name: str) -> list[ast.expr]:
+    """What a function assigns to a local name: plain, tuple-to-tuple and walrus assignments."""
+    values: list[ast.expr] = []
+    for a in ast.walk(fn):
+        if isinstance(a, ast.NamedExpr) and a.target.id == name:
+            values.append(a.value)
+        if not isinstance(a, ast.Assign):
+            continue
+        for t in a.targets:
+            if isinstance(t, ast.Name) and t.id == name:
+                values.append(a.value)
+            elif isinstance(t, ast.Tuple) and isinstance(a.value, ast.Tuple):
+                values += [v for e, v in zip(t.elts, a.value.elts, strict=False)
+                           if isinstance(e, ast.Name) and e.id == name]  # fmt: skip
+    return values
+
+
+def _is_caught(x: ast.expr, caught: set[str]) -> bool:
+    return isinstance(x, ast.Name) and x.id in caught
+
+
+def _raw_error_text(expr: ast.expr, fn: ast.AST, caught: set[str], seen: set[str]) -> str | None:
+    """Where an expression written to a record could carry an error's own text (its advice
+    with it), following the local names it uses to their assignments in the function; None when
+    it comes only from fixed text, a cause helper, or a name the function doesn't assign (a
+    parameter: its callers are sinks of their own or pass fixed text)."""
+    for x in ast.walk(expr):
+        if isinstance(x, ast.Attribute) and x.attr in {"detail", "advice", "args"}:
+            return f"its .{x.attr}"
+        if (
+            isinstance(x, ast.Call)
+            and isinstance(x.func, ast.Name)
+            and x.func.id in {"str", "repr"}
+            and any(_is_caught(a, caught) for a in x.args)
+        ):
+            return f"{x.func.id}() of the error"  # fmt: skip
+        if isinstance(x, ast.FormattedValue) and _is_caught(x.value, caught):
+            return "the error itself"
+        if (
+            isinstance(x, ast.Call)
+            and isinstance(x.func, ast.Name)
+            and x.func.id in _NOT_FOR_RECORDS
+        ):
+            return f"{x.func.id}()"
+        if isinstance(x, ast.Name) and x.id not in seen and not _is_caught(x, caught):
+            seen.add(x.id)
+            for v in _assigned(fn, x.id):
+                if (why := _raw_error_text(v, fn, caught, seen)) is not None:
+                    return f"{x.id} = {why}"
+    return None
+
+
+def _helper_args_ok(expr: ast.expr) -> ast.expr:
+    """The expression with cause-helper calls taken out, so their own error argument is fine."""
+
+    class Strip(ast.NodeTransformer):
+        def visit_Call(self, node: ast.Call) -> ast.AST:
+            if isinstance(node.func, ast.Name) and node.func.id in _CAUSE_HELPERS:
+                return ast.Constant("")
+            return self.generic_visit(node)
+
+    return Strip().visit(ast.parse(ast.unparse(expr), mode="eval")).body
+
+
+def record_details_with_error_text(tree: ast.Module) -> list[str]:
+    """Each write to a draft run's record whose text could carry an error's advice."""
+    bad: list[str] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        caught = {h.name for h in ast.walk(fn) if isinstance(h, ast.ExceptHandler) and h.name}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Call):
+                for arg in _sink_args(n):
+                    why = _raw_error_text(_helper_args_ok(arg), fn, caught, set())
+                    if why is not None:
+                        bad.append(f"{fn.name}:{n.lineno}: {why}")
+    return bad
+
+
+def test_a_reason_tells_what_to_do_and_a_record_keeps_the_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whoever is told now gets an ecf error's whole message, what to do included (`reason`):
+    the gate's check and a writer's note after its refresh; a record kept after the attempt
+    ends gets the cause alone (`_cause_of`; review round 30, delta checks 8-9)."""
+    from ecf.eval import merged  # noqa: PLC0415
+    from ecf_server import claude_eval, gate  # noqa: PLC0415
+
+    err = InvalidInputError("the set is being read", advice="try again")
+    assert setio.reason(err) == "the set is being read; try again"
+    assert setio.reason(InvalidInputError("a\x1bb")) == "a\\u001bb"  # escaped, as before
+    cause_of = claude_eval._cause_of  # pyright: ignore[reportPrivateUsage]
+    assert cause_of(err) == "the set is being read"
+    assert cause_of(InvalidInputError("a\x1bb", advice="x")) == "a\\u001bb"
+    # the gate's detail keeps the command to look and what to run
+    refused = merged.unreadable(tmp_path / "labels.jsonl", PermissionError(13, "denied"))
+    state = gate._unreadable_state(tmp_path, refused)  # pyright: ignore[reportPrivateUsage]
+    assert "ls -ldO" in str(state) and "ecf eval build" in str(state), state
+    # a writer's note when the merged view couldn't be refreshed keeps what to do
+    busy = merged.RefreshBusy(merged.BUSY, advice=merged.BUSY_ADVICE)
+
+    def refused_refresh(*_a: object, **_k: object) -> str:
+        raise busy
+
+    def with_private(_r: Path) -> SimpleNamespace:
+        return SimpleNamespace(private=tmp_path)
+
+    monkeypatch.setattr(merged, "paths", with_private)
+    monkeypatch.setattr(merged, "refresh_merged", refused_refresh)
+    note = merged.refresh_after_write(tmp_path)
+    assert note is not None and merged.BUSY_ADVICE in note, note
+
+
+def test_every_record_detail_comes_from_a_cause() -> None:
+    """At the one place text enters a draft run's record, it comes from fixed text or a cause
+    helper (`_cause_of`, `_recovery_why`), never an error's own text, `reason()`, `.detail` or
+    `str()`, which carry its advice; checked where the record is written, whatever made the
+    error (review round 30, delta check 8). Limit: a parameter is trusted (its callers are
+    checked where they are sinks), and so is text a called function returns."""
+    bad = record_details_with_error_text(_parsed(SRC.parent / "ecf_server" / "claude_eval.py"))
+    assert not bad, bad
+
+
+def test_the_record_check_finds_raw_error_text() -> None:
+    """The check above finds each way: `.detail`, `str()`, the error in an f-string, and each
+    through a local name; a cause helper's own argument is fine."""
+    code = (
+        "def f():\n"
+        "    try:\n        pass\n"
+        "    except Exception as exc:\n"
+        "        _update_record(d, r, end_detail=exc.detail)\n"
+        "        _end_record(c, run, 's', str(exc), complete=False)\n"
+        "        why = f'failed ({exc})'\n"
+        "        _finish(c, k, run, 's', why)\n"
+        "        kept = _cause_of(exc)\n"
+        "        _finish(c, k, run, 's', kept)\n"
+        "        _update_record(d, r, end_detail=f'x ({_cause_of(exc)})')\n"
+        "        _finish(c, k, run, 's', _told(exc))\n"
+        "        _update_record(d, r, end_detail=f'x ({reason(exc)})')\n"
+        "        _update_record(d, r, **{'end_detail': exc.detail})\n"
+        "        _end_record(c, run, 's', detail=exc.detail, complete=False)\n"
+        "        _finish_run(c, k, run, 's', exc.detail)\n"
+        "        _finish_run(c, k, run, 's', detail=str(exc))\n"
+        "        _finish(c, k, *(run, 's', exc.detail))\n"
+        "        _finish_run(c, k, run, 's', _cause_of(exc))\n"
+        "        _finish_run(c, k, *(run, 's'), exc.detail)\n"
+        "        _finish_run(*xs, exc.detail)\n"
+        "        _end_record(c, *a, str(exc), complete=False)\n"
+        "        _finish_run(c, k, run, 's', *[exc.detail])\n"
+        "        _finish_run(c, k, *(run, 's'), 'fixed')\n"
+    )
+    found = record_details_with_error_text(ast.parse(code))
+    assert [x.split(":")[1] for x in found] == ["5", "6", "8", "12", "13", "14", "15", "16", "17",
+                                                "18", "20", "21", "22", "23"], found  # fmt: skip
+
+
+def test_a_failed_recovery_says_why_in_its_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run whose recovery fails records what caused it (a refused journal names its file, a
+    disk error its reason, anything else only its kind) and that the attempt is over, never the
+    stopped request's advice to restart: nothing resumes it (review round 30, delta check 1)."""
+    from ecf.errors import ServiceUnavailableError  # noqa: PLC0415
+    from ecf_server import claude_eval  # noqa: PLC0415
+
+    def stopped(cause: Exception) -> ServiceUnavailableError:
+        try:
+            raise ServiceUnavailableError("the draft run stopped (...); a service restart resumes"
+                                          " it from what was written") from cause  # fmt: skip
+        except ServiceUnavailableError as exc:
+            return exc
+
+    why = claude_eval._recovery_why  # pyright: ignore[reportPrivateUsage]
+    refused = InvalidInputError("/x/r.journal.jsonl: a symbolic link, hard link or special file")
+    assert why(stopped(refused)) == (
+        "/x/r.journal.jsonl: a symbolic link, hard link or special file; this attempt is over"
+    )
+    full = OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+    assert why(stopped(full)) == f"{os.strerror(errno.ENOSPC)}; this attempt is over"
+    assert why(ValueError("email text")) == "ValueError; this attempt is over"
+    # an ecf error gives its cause and never its advice: the attempt is over (deltas 5-6)
+    from ecf.errors import ConflictError  # noqa: PLC0415
+    from ecf.eval.merged import RefreshBusy  # noqa: PLC0415
+
+    busy = RefreshBusy("a refresh is running", advice="try again")
+    assert busy.detail == "a refresh is running; try again"  # the request still says both
+    assert why(busy) == "a refresh is running; this attempt is over"
+    checker = ConflictError("the draft checker changed since the pilot (AP5)")
+    assert why(checker) == "the draft checker changed since the pilot (AP5); this attempt is over"
+    assert why(stopped(busy)) == "a refresh is running; this attempt is over"
+    seen: dict[str, Any] = {}
+
+    def recover_one(*_a: object) -> str:
+        raise stopped(refused)
+
+    monkeypatch.setattr(claude_eval, "_recover_one", recover_one)
+
+    def update(*_a: object, **k: Any) -> None:
+        seen.update(k)
+
+    monkeypatch.setattr(claude_eval, "_update_record", update)
+    rec: Any = SimpleNamespace(run_id="r" * 16, end=None)
+    clock: Any = SimpleNamespace(now=lambda: None)
+    claude_eval._recover_all(None, clock, tmp_path, [rec], None)  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+    assert seen["attempt_over"] is True and "resume" not in seen["end_detail"]
+    assert "r.journal.jsonl" in seen["end_detail"]
 
 
 def test_a_refused_heartbeat_save_is_logged_not_raised(
@@ -2868,15 +3278,89 @@ def test_a_durable_write_in_a_linked_folder_succeeds(tmp_path: Path) -> None:
     assert sorted(p.name for p in real.iterdir()) == ["a.json", "c.labels.jsonl", "new.txt"]
 
 
+def test_a_record_is_flushed_past_the_drives_cache(monkeypatch: pytest.MonkeyPatch,
+                                                  tmp_path: Path) -> None:  # fmt: skip
+    """On macOS `fsync` leaves a write in the drive's cache; a record is flushed with
+    `F_FULLFSYNC` where offered, `fsync` where it isn't or the disk refuses it (review round
+    30)."""
+    calls: list[str] = []
+    real: Any = fcntl.fcntl
+
+    def full(fd: int, op: int, *a: Any) -> Any:
+        if op == getattr(fcntl, "F_FULLFSYNC", None):
+            calls.append("full")
+            raise OSError(errno.ENOTSUP, "no")  # a disk that refuses it
+        return real(fd, op, *a)
+
+    def fsync(fd: int) -> None:
+        calls.append("fsync")
+
+    monkeypatch.setattr(setio.fcntl, "fcntl", full)
+    monkeypatch.setattr(setio.os, "fsync", fsync)
+    setio.write_durable(tmp_path / "rec.json", "{}")
+    want = ["full", "fsync"] if hasattr(fcntl, "F_FULLFSYNC") else ["fsync"]
+    assert calls == want * 2  # the file, then its folder
+    assert (tmp_path / "rec.json").read_text() == "{}"
+
+
+def test_a_full_flush_that_works_or_fails_on_the_disk_is_never_followed_by_fsync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A full flush that works is the flush; one the disk fails (EIO) is raised, never followed
+    by an `fsync` that could report a flush that never was (review round 30, delta check 1)."""
+    if not hasattr(fcntl, "F_FULLFSYNC"):
+        pytest.skip("no F_FULLFSYNC on this system")
+    real: Any = fcntl.fcntl
+    fail: list[int] = []
+
+    def full(fd: int, op: int, *a: Any) -> Any:
+        if op == fcntl.F_FULLFSYNC and fail:
+            raise OSError(fail[0], os.strerror(fail[0]))
+        return real(fd, op, *a)
+
+    def fsync(_fd: int) -> None:
+        raise AssertionError("fsync after a full flush")
+
+    monkeypatch.setattr(setio.fcntl, "fcntl", full)
+    monkeypatch.setattr(setio.os, "fsync", fsync)
+    setio.write_durable(tmp_path / "rec.json", "{}")
+    fail.append(errno.EIO)
+    with pytest.raises(OSError, match=os.strerror(errno.EIO)):
+        setio.write_durable(tmp_path / "rec.json", "[]")
+    assert (tmp_path / "rec.json").read_text() == "{}"
+
+
+@pytest.mark.parametrize("err", [errno.ENOSYS, errno.ENOTTY])
+def test_a_volume_without_the_full_flush_falls_back_to_fsync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, err: int
+) -> None:
+    """A volume that doesn't implement the full flush (macFUSE answers ENOSYS) is flushed with
+    `fsync`, never failing every record write (review round 30, delta check 2)."""
+    if not hasattr(fcntl, "F_FULLFSYNC"):
+        pytest.skip("no F_FULLFSYNC on this system")
+    real: Any = fcntl.fcntl
+    synced: list[int] = []
+
+    def full(fd: int, op: int, *a: Any) -> Any:
+        if op == fcntl.F_FULLFSYNC:
+            raise OSError(err, os.strerror(err))
+        return real(fd, op, *a)
+
+    monkeypatch.setattr(setio.fcntl, "fcntl", full)
+    monkeypatch.setattr(setio.os, "fsync", synced.append)
+    setio.write_durable(tmp_path / "rec.json", "{}")
+    assert len(synced) == 2 and (tmp_path / "rec.json").read_text() == "{}"
+
+
 @pytest.mark.parametrize("err", [errno.EINVAL, errno.ENOTSUP, errno.EACCES, errno.EIO])
 @pytest.mark.parametrize("where", ["open", "fsync"])
 def test_a_folder_that_cant_be_flushed_fails_no_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int, where: str
 ) -> None:
-    """A folder the disk can't open or flush (a network share, one others own) leaves a new
-    file written and reported so, so a retry doesn't read "already exists"; a disk error is
-    still raised (review round 29, fifteenth delta check)."""
-    real_open, real_fsync = os.open, os.fsync
+    """A folder the disk can't open or flush (a network share, one others own, a disk error)
+    leaves a new file written and reported so, so a retry doesn't read "already exists"
+    (review rounds 29-30)."""
+    real_open, real_fsync = os.open, setio.flush_to_disk
 
     def opened(path: Any, flags: int, *a: Any, **k: Any) -> int:
         if where == "open" and flags & os.O_DIRECTORY:
@@ -2889,15 +3373,9 @@ def test_a_folder_that_cant_be_flushed_fails_no_write(
         real_fsync(fd)
 
     monkeypatch.setattr(setio.os, "open", opened)
-    monkeypatch.setattr(setio.os, "fsync", synced)
-    writes = [lambda: setio.create_file(tmp_path / "new.txt", "x"),
-              lambda: setio.write_durable(tmp_path / "rec.json", "{}")]  # fmt: skip
-    for write in writes:
-        if err == errno.EIO:
-            with pytest.raises(OSError, match=os.strerror(errno.EIO)):
-                write()
-        else:
-            write()
+    monkeypatch.setattr(setio, "flush_to_disk", synced)
+    setio.create_file(tmp_path / "new.txt", "x")
+    setio.write_durable(tmp_path / "rec.json", "{}")
     assert (tmp_path / "new.txt").read_text() == "x" and (tmp_path / "rec.json").exists()
 
 
