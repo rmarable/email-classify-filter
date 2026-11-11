@@ -138,7 +138,7 @@ Prompt-injection cards live in a private repository, cloned into `eval/private/`
 public sets under `tests/eval/` hold none (`.claude/rules/eval-synthetic.md`). Without the private
 clone, eval runs use the public set only, whose injection slice is the one pinned
 `starter-injection` card, and can't count for the release gate; tests marked `private` are
-skipped (CI runs this way, and on Linux it also skips the few macOS-only file-system tests).
+skipped (CI runs this way; on Linux it also leaves out every test marked `macos`).
 
 ## Releases and tags
 

@@ -319,11 +319,11 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     old = anchor_history(top) if old is None else old  # the hook reads it once per push
     listed = known(top) & old  # `exempt`, with the history read once
     found = tree(tip, top, odd) if tip else []
-    # main's tip is checked whole, X1 on, nothing skipped, in the push and daily runs (not the
-    # hook, which builds no tip and skips blobs main's history has): a marked card restored onto
-    # main (a revert of the move) is refused by the push's CI run (review round 3, M2; plan,
-    # "Skipping"). That scan is stricter than the range's, so the range skips the blobs it covers
-    # (round 4, performance B3).
+    # main's tip is checked whole, X1 on, nothing skipped, in a push's CI run (not the hook, which
+    # builds no tip and skips blobs main's history has; the daily run checks it through
+    # `run_tree`): a marked card restored onto main (a revert of the move) is refused by the
+    # push's CI run (review round 3, M2; plan, "Skipping"). That scan is stricter than the
+    # range's, so the range skips the blobs it covers (round 4, performance B3).
     whole = bool(tip) and tip_build and is_main(ref)
     in_tip: set[tuple[str, str]] = set(found) if whole else set()
     # `published`: blobs main's history already has (the hook only): main's own runs checked them

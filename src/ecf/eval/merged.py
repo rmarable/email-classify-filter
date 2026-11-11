@@ -100,6 +100,15 @@ def _blame(p: Path) -> Path:
     return p
 
 
+def _loop(exc: RuntimeError) -> InvalidInputError:
+    """Python 3.12's `Path.resolve()` raises RuntimeError on a symbolic link loop (3.13 doesn't
+    raise there); every reader and the gate handle InvalidInputError, so it leaves as one. Any
+    other RuntimeError is a bug and is raised as it is (Step 7 review)."""
+    if not str(exc).startswith("Symlink loop"):
+        raise exc
+    return InvalidInputError(f"a symbolic link loop in a set's path: {exc}")
+
+
 def named[F: Callable[..., Any]](fn: F) -> F:
     """The one rule at each entry point: a permission error anywhere inside (a path check, a
     walk, a read) leaves as `Unreadable` naming the file, never a raw OSError (review round 16;
@@ -111,6 +120,8 @@ def named[F: Callable[..., Any]](fn: F) -> F:
             return fn(*a, **k)
         except PermissionError as exc:
             raise unreadable(exc.filename, exc) from exc
+        except RuntimeError as exc:
+            raise _loop(exc) from exc
 
     return cast("F", wrapper)
 
@@ -122,6 +133,8 @@ def named_errors() -> Generator[None]:
         yield
     except PermissionError as exc:
         raise unreadable(exc.filename, exc) from exc
+    except RuntimeError as exc:
+        raise _loop(exc) from exc
 
 
 class RefreshBusy(InvalidInputError):
@@ -1268,10 +1281,7 @@ def resolve(root: Path) -> Path:
     the merged view when there is one and it is fresh; refused otherwise. A path at or under
     `eval/private/`, or inside a merged view, is refused: readers pass the logical public path."""
     p = logical(root)
-    try:
-        real = p.resolve()
-    except RuntimeError as exc:  # a link loop (Python 3.12): a refusal, which callers handle
-        raise InvalidInputError(f"{root}: a symbolic link loop in its path") from exc
+    real = p.resolve()
     if _under_private(real) or _under_private(p):
         raise InvalidInputError(f"{root} is a private or merged set's path",
                                 advice="give the public set's path (tests/eval/<set>)")  # fmt: skip

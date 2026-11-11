@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1025,10 +1026,32 @@ def test_a_planted_tree_deeper_than_the_recursion_limit_is_removed(tmp_path: Pat
     assert not deep.exists()
 
 
-def test_a_link_loop_in_the_path_is_a_refusal_not_a_runtime_error(tmp_path: Path) -> None:
-    """The gate and readers handle InvalidInputError and OSError; a loop is never a RuntimeError
-    that would escape the service tick (Step 7 review)."""
-    (tmp_path / "a").symlink_to(tmp_path / "b")
-    (tmp_path / "b").symlink_to(tmp_path / "a")
-    with pytest.raises((InvalidInputError, OSError)):
-        mg.resolve(tmp_path / "a" / "tests" / "eval" / "synthetic")
+def test_a_link_loop_is_a_refusal_and_any_other_runtime_error_is_raised() -> None:
+    """Python 3.12 raises RuntimeError on a symbolic link loop; every entry point turns it into
+    the refusal readers and the gate handle. Raised here directly, so 3.13 tests it too."""
+
+    @mg.named
+    def loops() -> None:
+        raise RuntimeError("Symlink loop from '/x/a'")
+
+    with pytest.raises(InvalidInputError, match="symbolic link loop"):
+        loops()
+    with pytest.raises(InvalidInputError, match="symbolic link loop"), mg.named_errors():
+        raise RuntimeError("Symlink loop from '/x/a'")
+    with pytest.raises(RuntimeError, match="a bug"), mg.named_errors():
+        raise RuntimeError("a bug")
+
+
+def test_a_looped_email_in_a_public_only_set_never_raises_out_of_the_gate(tmp_path: Path) -> None:
+    """A labels row whose email is a link to itself: the gate reports it, the tick carries on
+    (on 3.12 the read raised RuntimeError past the gate's guard; Step 7 review)."""
+    from ecf_server import gate  # noqa: PLC0415 - the service side, for this one check
+
+    s = tmp_path / "tests" / "eval" / "synthetic"
+    (s / "eml").mkdir(parents=True)
+    (s / "cases").mkdir()
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (s / "labels.jsonl").write_text(json.dumps({"id": "x", "file": "eml/x.eml"}) + "\n")
+    (s / "eml" / "x.eml").symlink_to("x.eml")
+    got = gate.set_state(s, fresh=True)  # never raises
+    assert got.error or got.problems, got

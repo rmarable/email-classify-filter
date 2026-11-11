@@ -8,7 +8,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 - The prompt-injection test emails (107 cards) moved out of the public repository into a private one, cloned into `eval/private/`; eval runs read both through a merged view, and a run without the private set can't count for the release gate (OD-626, OD-627, OD-643).
 - `ecf eval build` refuses a prompt-injection test card in a public test set; such cards live in the private set (generated sets excepted; OD-705).
 - `ecf eval build` builds a set's public and private halves and the merged view, and ends by naming both folders to commit; `ecf eval new-case --template injection` writes the card to the private set, and refuses in a checkout without one.
-- `ecf eval build` refuses a card whose `id` differs from its file name.
+- `ecf eval build` refuses a card whose `id` differs from its file name, and an email file left with no card.
 - An eval set reached through a symbolic link is refused, as well as links inside a set (OD-705).
 - Each install recomputes its go-live gate once after upgrading, since the gate now checks the private set's version and counts (OD-643).
 - Contributors run `git config core.hooksPath .githooks` once per clone, so a push that adds a prompt-injection card under `tests/eval/` is refused (OD-635).

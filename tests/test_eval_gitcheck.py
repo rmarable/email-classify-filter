@@ -46,7 +46,7 @@ def test_an_edit_or_a_new_card_is_dirty(top: Path, where: str) -> None:
 
 def test_an_ignored_card_is_dirty_but_temporary_files_are_not(top: Path) -> None:
     cases = _priv(top) / "heldout3" / "cases"
-    (cases / ".x.md.tmp").write_text("half")
+    (cases / ".x.md.3f9a1c2b7e4d.tmp").write_text("half")  # `.<name>.<random>.tmp`, C12
     (cases / ".DS_Store").write_text("finder")
     assert gitcheck.clean_and_pushed(top, "heldout3").ok
     (_priv(top) / ".gitignore").write_text((_priv(top) / ".gitignore").read_text() + "hid.md\n")
