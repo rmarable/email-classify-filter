@@ -1,6 +1,6 @@
 # Move the adversarial eval subset to `eval/private/` (OD-618)
 
-**Status: draft 29, 2026-11-06. Step 3 in build.** Draft 1 went through Phase R (four Fable reviewers:
+**Status: draft 30, 2026-11-06. Steps 3-5 built (Step 5, the move, on 2026-11-10); Step 6 in build.** Draft 1 went through Phase R (four Fable reviewers:
 safety, measurement, cost and design, performance); every recommendation was accepted and decisions
 V1-V5 made (operator, 2026-11-05). Draft 2 (80a5aaf) went through an Opus delta check (four
 reviewers); every fix was accepted (operator, 2026-11-05) and is folded in here; OD-643 restates the
@@ -69,6 +69,11 @@ fixed, and its text fixes are folded in with OD-696 (operator, 2026-11-06). A de
 (8cb51a5) found it ready to build once one Step 3 test bound was corrected, done here with OD-697.
 Step 3's fourth code review (round 4, Opus) found `git status` blind to an edit hidden by an index
 flag; draft 29 proves the set's content against HEAD instead, with OD-704 (operator, 2026-11-06).
+Round 5 found a committed symbolic link passed that check while the readers followed it to content
+no commit holds, round 6 a link at or above the set folder, and round 7 that fix's own letter-case
+match on case-sensitive volumes and a link at the merged folder; draft 30 refuses anything in a set
+that isn't a plain file and works out a set's location in one place, through no link and by its
+stored names, with OD-705 (operator, 2026-11-06).
 Findings: `state-archive/eval-private/review-findings.md`. Code
 references are as of `1d6558c` (main; `src/` unchanged at `bc98a9b`). Comes before M1 Step 1 (`docs/roadmap/m1-aws-mode.md`).
 
@@ -218,7 +223,13 @@ on and keeps future releases clean. Rewriting history is not proposed.
     commits included, deleted files skipped, each blob with its own path; then the tip tree (`ls-tree
     -r`: the path checks, such as an `eml/` or
     `.build/` file with no card, and, except in the hook (X5), a build of the blobs the range didn't
-    cover).
+    cover). Only plain files may sit under `tests/eval/`: a symbolic link or submodule entry there,
+    or at `tests` or `tests/eval` itself, is refused by the range, the tip and the merge gate's tree
+    scan, and the private repository's hook refuses one anywhere in its pushed range (OD-705). The
+    set files' text check runs once per distinct string, and the hook skips it for a set file blob
+    main's history already has (OD-705; round 5 measured 8.4-8.8 s on every push without this):
+    every such blob to `2c421ac` was checked once, 55 blobs, 0 hits (Step 3 round 6), and main's own
+    CI run checks every later one.
   - **The known public blobs.** One committed list, `tests/eval/known-public-injection-blobs.txt`,
     holds the blob IDs, nothing else, of every card and `.eml` blob trigger 10 flags in main's history:
     45 of 1,514 (929 card and 585 `.eml` blobs; 32 cards and 13 `.eml`; every one builds with today's
@@ -289,10 +300,10 @@ on and keeps future releases clean. Rewriting history is not proposed.
     a tip or in a commit not on main, up to a day after it is public; a card added and removed on main
     by a push that skipped both the hook and CI is not found; GitHub may delay a scheduled
     run and disables schedules after 60 days without repository activity (unverified, as GitHub
-    documents it); the scan covers cards and `.eml` files under `tests/eval/` only, not label, review
-    or `checks.yaml` rows, fixtures or docs (no card text is ever quoted there, `eval-synthetic.md`);
+    documents it); the scan covers cards and `.eml` files under `tests/eval/`, and set files' values
+    with the text check only (OD-704), not fixtures or docs (no card text is ever quoted there, `eval-synthetic.md`);
     the hook builds only the pushed range's blobs (0.25-0.7 s for a push with no cards, rounds
-    24-25); the daily run about 13-14 s here at load 4.5 (round 26), unmeasured on a runner.
+    24-25; with the set-file check 0.14 s in the hook and 0.6-0.8 s in CI, Step 3 round 5); the daily run about 13-14 s here at load 4.5 (round 26), unmeasured on a runner.
   - **Card-only merges get the scan too.** A merge that changes only `.md` files counts as docs only
     and skips the macOS gate (`docs/agents/testing-and-merge.md:29-30`), and `ci.yml:11` skips
     `**/*.md`; so any merge that touches `tests/eval/` runs `--tree HEAD --no-skip` on the local merge
@@ -366,7 +377,10 @@ on and keeps future releases clean. Rewriting history is not proposed.
   limit, and refreshes under the exclusive lock only if the set is still stale (Design, "The merged
   set").
 
-SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695), OD-697 (draft 28: the Step 3 lock test's refresh bound; amends OD-696), OD-704 (draft 29: clean proven by content against HEAD, the fingerprint over every set file, recent files re-hashed; amends OD-648 and OD-643). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
+SPEC rows: OD-626 (which cards; decisions 1, 4, V5), OD-627 (existing cards, the private repository; decisions 2, 3), OD-628 (V1), OD-629 (V2), OD-630 (V3, V4), OD-643 (the gate guard restated), OD-647 (W1, atomic writes and copies), OD-648 (W2, the shared resolver), OD-654 (draft 5: the `starter-injection` pin by its bytes; before-and-after measured on main's code), OD-633 (draft 9: X1-X3; amends OD-626 and OD-643), OD-634 (draft 10: X4, X5; amends OD-633), OD-635 (draft 11: X5 and Step 5 rewritten; amends OD-634), OD-636 (draft 12: X5 one script, X6 dev services; amends OD-635), OD-637 (draft 13: the card-scan workflow, recovery retries; amends OD-636 and OD-643), OD-638 (draft 14: X7, X8; amends OD-637), OD-639 (draft 15: X7 per record, the known-blob list; amends OD-638), OD-676 (draft 16: the list in Step 3 and pinned, main's tip unskipped, recovery limits first; amends OD-639), OD-677 (draft 17: X9, tags with the list, `--ref`, the merge-gate `--no-skip` scan; amends OD-676), OD-678 (draft 18: X5 scan and X9 refresh restated; amends OD-677 and OD-647), OD-679 (draft 19: main runs, X1 on post-move blobs, the wider freeze, X9 retry and close; amends OD-678), OD-684 (draft 20: X10, the scan-file diff, the daily run over all of main, the freeze on rows, X9's retry on a stale set; amends OD-679), OD-685 (draft 21: per-commit approval, exact scan files, the gate's recompute, the fixed freeze base, X9 bounded by time; amends OD-684), OD-686 (draft 22: approval checked before the push and recoverable, the gate on a committed merge, one scan pass, the daily recompute, X9's polled refresh; amends OD-685), OD-687 (draft 23: the gate branch and recorded tree, the unbuildable-blob list, Codex approval by a later commit, X9's floor for later sets; amends OD-686), OD-688 (draft 24: X11, the persistent gate worktree, approval by the hook and the daily run, the Codex rule, gated tree and unbuildable list withdrawn; amends OD-687), OD-689 (draft 25: the gate lock, parents checked before the push, the hook's range-only build, branch cards main can't parse as warnings, X9's capped waits; amends OD-688), OD-695 (draft 26: X12, the card scan's guards cut back to their core; X13, start-up lock waits; amends OD-689 and OD-677), OD-696 (draft 27: X13's refresh owns its lock wait, 5 s of waiting per set, other refs scanned only for blobs not in main's history, the private clone at Step 7; amends OD-695), OD-697 (draft 28: the Step 3 lock test's refresh bound; amends OD-696), OD-704 (draft 29: clean proven by content against HEAD, the fingerprint over every set file, recent files re-hashed; amends OD-648 and OD-643), OD-705 (draft 30: nothing in a set followed, links and special files
+refused everywhere, a set's location never found through a link, ctime in every stat, the private
+HEAD read once, merged `checks.yaml` checked against its halves, racy stats recorded after a read's
+lock is released, the set-file text check once per string; amends OD-704). Their parent OD-618 is on branch `m1-aws-mode` until M1's planning merges.
 
 ## Inventory (Step 1, 2026-11-05; full list `state-archive/eval-private/inventory.md`)
 
@@ -397,18 +411,89 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   `_refuse_judged` per set), then writes and logs each part in its owning set. A write failure after
   the first part leaves the import half-applied; a re-import is idempotent, as `record` already is. `settle`, `agree` and `expect` need a generated set's `manifest.json` (`gen.verify`,
   `settle.py:138`, `agree.py:128`, `expect.py:222`), which none of these sets has, so they keep refusing
-  them and get no both-sets mode. One guard, `writable_root()`, runs inside every writer (`build_all`, `labels.write`,
-  `fixed_labels`, `review.*`, `append_log`, `new-case` at `cli.py:931`, `generate`): it refuses a root
-  whose resolved path or any ancestor is the merged folder or holds `merge.json`. A test searches
-  `src/ecf/eval`, `src/ecf/cli.py`, `cli_evalgen.py` and `cli_card_review.py` for file writes, with a
-  named allow-list: writes outside any set (`settle.export`, `mix.write_default`, `tools.py`,
-  `codex_tool.py`, `corpus_labels.py`, `cli_evalgen._write_private`) and writes into a generated set's
-  root only, guarded at entry by `generate`'s own check or `gen.verify` (`grade.py:165`,
-  `generate.py:123`, `:802` and `:803`); plus `refresh_merged` (the one merged-folder writer) and the
-  lock file's open. The scan matches `open(` with a `w`, `a` or `x` mode, `write_text`, `write_bytes`,
-  `os.replace`, `os.rename`, `shutil.copy*`, `os.link` and the `ctypes` `clonefile` call (`mkdir`
-  doesn't count), so a new writer can't skip the guard. `append_log` appends in place, which is safe: the merged `reviews.jsonl` is rebuilt,
-  never linked.
+  them and get no both-sets mode. One guard runs inside every writer before it writes, and its refusal names what caused it.
+  It refuses a path whose resolved path (each link followed before a `..` after it, as the system
+  goes) or any ancestor is a folder named `.merged` in any letter case
+  (APFS ignores case; on Linux, unsupported until M5 (ADR 0020), a real `.Merged` folder is refused
+  too) or holds a merged view's own `merge.json` (one with `merged_version`; a link or a file that
+  doesn't read as JSON counts too). Inside a set nothing is written through a link (OD-705): every writer into a set names
+  the set, `writable_set(root, path)` (a set is never guessed from what a folder holds). The set's
+  folders (`cases/`, `eml/`, `.build/`, `work/`, `grades/`) and files (the set files, a generated set's
+  `manifest.json`) must be plain folders and files, and so must every name from the set's folder down
+  to the path written, which must lie below it with no `..`; only the set's own folder may be a link
+  (an alias of the whole set), and a `..` in it after a link is refused, as the set location refuses
+  it. The leftover sweep follows no link, not even that alias; a folder it can't open (a link, not a
+  folder, unreadable) gets a line, and only a missing one is silent. The writers that name their set: `build_all`, `labels.write`,
+  `fixed_labels`, `append_log`, the card writers `review.set_labels` and `write_expected` (a card is
+  `<set>/cases/<id>.md`), `new-case` at `cli.py:942`, `generate` (its start, cards, work logs,
+  manifest and the call folder `work/call` before each model call, each call's schema written new
+  in a folder of its own there), `grade` and the leftover-file
+  sweep; a test names each, requires its `writable_set` call to name the set's own folder, and
+  finds every caller of `writable_set` anywhere in the source on that list or a named list of
+  pre-flight checks, and
+  tests link `work/`, `work/call/` and `grades/` and check that generate and grade refuse before any
+  call or write. A helper that writes to a path its
+  caller passes calls `writable_root(path)`, the view check alone: a model call (in a set, its
+  caller first checks the call folder with `writable_set`) and the canary, `settle.export`, `mix.write_default`, `corpus_labels.save`, `codex_tool.write_catalog`,
+  an `--export` page, checked before the service is asked, and the service's `ecf eval run --copy-to`
+  result, a refused copy logged like any failed one, and a rescore, written beside the result file the
+  user names (checked before any case is scored; a result in the install's own results folder is
+  trusted as the run's record is, so a data folder the operator puts inside a view, or links into
+  one, takes its rescores there too: a stated limit). A result file is written as a set file is, a new
+  file renamed over its name, so a link, hard link or pipe already there is replaced, never written
+  through; a write cut off between the two leaves its hidden 0600 temporary file in that folder,
+  which every listing ignores: in the install's results folder the next run's save and the
+  draft-run registry's save remove it once it is over an hour old; in a `--copy-to` folder nothing
+  does (a stated limit: the user's own result). Every eval file is written through `setio`: a new
+  file renamed over its name (the draft-run registry, judges' answers and corpus labels flushed to
+  the disk itself, past the drive's cache (`F_FULLFSYNC` on macOS; a disk error raised), then
+  their folder; result files and the draft-run journal are not (stated limits), a linked folder followed for the flush, and a
+  folder that can't be opened or flushed, whatever the reason, left unflushed rather than the
+  written file reported failed; the settle and export pages 0600, in a 0700 folder when
+  ecf makes it, a folder already there left as it is), a new file that never replaces one (the
+  default mix, a merged corpus's labels, flushed likewise: hard-linked to its name, or checked then renamed on a disk
+  without hard links, a stated limit; a crash between the link and dropping the temporary name
+  leaves that second name, swept after an hour in a set or results folder and kept until removed
+  by hand elsewhere, a stated limit), or added to in place through one opener that refuses a link,
+  hard link or pipe (the append-only logs and the draft-run journal; a journal refused that way
+  says what to remove before the next attempt, and a recovery that fails records its cause and
+  that the attempt is over, never a resume; a refused journal stops the
+  run as a failed write does). Each model call's schema, and the answer its command line writes
+  itself, go in a fresh 0700 folder of the call's own in the call folder, removed once read, so
+  judges running side by side never touch each other's calls; a call holds a lock on its folder
+  while it runs, so a later call or a build removes only a crashed call's folder (held by none,
+  and over an hour old), never one whose call slept with the computer, and the build's check
+  names one it leaves (on a disk that can't lock, a call runs unheld, and the sweep, unable to
+  lock either, leaves its folder with a line saying so; a sweep from another computer that mounts
+  the same share with locks could remove it past an hour, a computer asleep mid-call or clocks far
+  apart, a stated limit). A test reviews
+  the eval modules' ordinary code for file writes: it lists every call made directly in an eval
+  module that can write a file, by what it names through the module's imports (an opener whose
+  mode or flags aren't written out as read-only or can't be read: `open`, `io.open`, `os.open`,
+  archive, compressed, `dbm` and `shelve` files; Path, os, shutil and temporary-file writes; a
+  program run; a database connection; a log file handler; a file download; a system library's
+  function (the merged view's `clonefile`, listed)), the same taken without calling it (assigned,
+  passed, or reached by `getattr`), and the usual ways of reaching a module by another name (a
+  computed name, a star import, `sys.modules`, `__builtins__`, `globals()`, a module of ours or
+  the standard library's used as a value, the C modules behind `os` and `io`), and fails on any
+  call not on its list. It is a check on ordinary code, not a proof: code written to hide a write
+  from it can (a stated limit; review round 29, eighteenth delta check), and it sees direct calls
+  only, so a write made inside a helper of a module outside the eval modules isn't listed, nor a
+  method reached by a computed name on an object (stated limits). One such writer
+  is outside `setio`: a corpus merge's sealed corpus is written by the export bundle's own writer
+  (a new name, never through a link: created exclusively, then hard-linked to its name); a crash
+  mid-write leaves its `.partial` file, which nothing removes (a stated limit; the next merge
+  writes another name). The install's own result file goes in its data folder and gets no view check, so a
+  stray `merge.json` above it never blocks a run's record. A test searches
+  `src/ecf/eval`, `src/ecf/cli.py`, `cli_evalgen.py` and `cli_card_review.py` for file writes and
+  requires each to follow a `writable_root` or `writable_set` call in its own function. Its named allow-list holds only
+  the write helpers themselves and the merged view's own writers
+  (`refresh_merged` and its helpers, the lock file's open); it never lists a whole module. It counts
+  `open`/`fdopen`/`ZipFile` with a write mode or one not written out (`Path.open` on any receiver), `os.open` with any flag that
+  isn't read-only, Path, os and descriptor writes (`mkdir` and `chmod` included), shutil copies and
+  archives, and the `ctypes` `clonefile` call, so a new writer can't skip the guard. `append_log` and a generated set's work files append in place through that opener, which is safe: the merged `reviews.jsonl` is rebuilt, never linked. Removing an extra from
+  the merged view walks it by folder handle, one open per level, so a tree deeper than the open-file
+  limit (256 by default on macOS) is refused by name: a stated limit (such a tree is planted by hand).
 - **Atomic writes (W1, OD-647):** every set writer writes through one helper (temporary file, then
   `os.replace`). Today `builder.py:160`, `review.py:175` and `:325` and `generate.py:592` write in
   place (checked 2026-11-05); they change to the helper, and the builder skips a file only when the
@@ -416,7 +501,23 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   row alone, so a damaged or missing file is rewritten and `ecf eval build` still repairs a set), which
   also saves about 31 MB of writes per build.
 - **Finding the private set:** `<repo top>/eval/private/<set>` for `<repo top>/tests/eval/<set>`, nothing
-  else (repo top = the logical path's `parents[2]`, no `git` call); a worktree or clone without it (Codex, `.claude/worktrees`, `../ecf-m1`) has no private set and
+  else (repo top = the logical path's `parents[2]`, no `git` call; the logical path is the path as
+  given, absolute, with a `..` folded only when the name it cancels isn't a link and refused after
+  one (round 28); a set's location is never found through a link, OD-705: one function works out every path a reader, writer, lock or clean check
+  opens; a symbolic link at the set folder, at `tests/eval` or `tests`, at `eval`, `eval/private`
+  or `eval/private/<set>` (a private half given directly too), or at `.merged`, `.merged/<set>` or
+  its lock file makes it no checkout set, refused by a for-gate run, every reader and every writer
+  before anything is read or written; a refresh also walks the existing merged view (its folders and
+  files, and `merge.json`, which is read without following a link or blocking on a pipe) for a
+  link before it writes anything (rounds 8-9); the private half counts only when stored exactly as
+  `eval/private/<set>`, by the readers, the gate's clean check and its fingerprint alike, and any
+  path laid out as a private half in any letter case is refused by the readers; a link above the checkout top, such as macOS `/tmp` or an
+  alias of the whole checkout, is the same checkout; a checkout set's stored names are exactly
+  `tests/eval/<set>`, so on a case-sensitive volume `tests/Eval/<set>` is another folder and no
+  checkout set. Accepted limit: the location is checked once per call and the folders on the way
+  are opened by name after it, so a process running as the operator that swaps a folder for a link
+  in between is not caught; such a process can edit the set's files directly anyway); a worktree or
+  clone without it (Codex, `.claude/worktrees`, `../ecf-m1`) has no private set and
   says so ("public set only").
 - **The merged set (W1, OD-647):** `refresh_merged(set)` writes `eval/private/.merged/<set>/` (gitignored
   by the private repository), at service start when a lost run's set is stale (X9), and once at the end
@@ -496,7 +597,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
      skip `_restored`: each is closed as today's handler closes one (`_update_record` with
      `end=r.end or "lost"`, `ended_at`, `complete=False` and `attempt_over=True`, wrapped as at
      `:2026-2032`) with the end detail "the eval set <root> couldn't be read at service start
-     (<reason or exception type>): run `ecf eval build --root <root>`; this attempt can't be resumed".
+     (<reason or exception type>); this attempt is over" (the cause alone: an ended record keeps no
+     advice, review round 30, delta checks 6-7).
      This is the one change to today's handlers; an open run's scored cases are lost in this case
      (stated limit).
 
@@ -523,8 +625,10 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   nothing read them; a run records the private commit from the gate's live check, `clean_and_pushed`,
   which alone decides cleanliness), and runs no `git` subprocess, so nothing can hang before the
   bind. `merge.json` carries a format number; a reader that doesn't know it treats the
-  set as stale. A refresh is crash-safe: each temporary file is unlinked if it exists before it is
-  created, a merged copy is made read-only only after its rename, and folders are made writable
+  set as stale. A refresh is crash-safe: each write makes a temporary file of its own (a fresh
+  name, created only where nothing is; Step 3 review round 23), so it never removes or renames
+  another's, and a failed write removes its own; a crashed refresh's leftover is swept by the next
+  refresh (anything else in the view is), a merged copy is made read-only only after its rename, and folders are made writable
   before writing, so a refresh killed part way doesn't block the next one. All locks are released in a
   `finally`. Timing: a full refresh of `synthetic` 0.5-1.0 s, `drafts` about 0.17 s (warm, round 17),
   well within the start-up limits (`src/ecf/upgrade_run.py:54`, `cli_init.py:37`).
@@ -544,31 +648,71 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   so a private card's expected replies can't sit in a public file unnoticed; CI also runs this
   ownership check on the public sets alone, through the same function as the merge (the card scan
   parses each set file as the merge does and scans every value with trigger 10's text check;
-  OD-704). `cases/` and `eml/` are plain copies (small; a full copy
+  OD-704). Nothing in a set is followed (OD-705): the build, the freshness check and every reader
+  open set files without following a link and refuse a symbolic link or special file (the private
+  set folder, `cases/`, `eml/`, `.build/`, a card, an email, a set file), and the merged
+  `checks.yaml` must parse equal to the two halves' keys together, so an indented private key
+  can't nest under the last public one. `cases/` and `eml/` are plain copies (small; a full copy
   measured 105 ms), made read-only; `.build/` files are links to the sources (large): an APFS clone
   where available (`clonefile` from `libSystem` through `ctypes`, since Python has none; cloned to a
   temporary name, then renamed, since `clonefile` refuses an existing destination; a non-zero return
   falls back), else a hard link, else a copy. The manifest records each merged file's own inode (a
-  clone gets a new one) and reuses the previous sha256 when size, modification time and inode are
-  unchanged. A hard-linked `.build/` file (the fallback) is writable by design: an in-place write through the merged folder would change the private
-  source, which the sha256 check then refuses (fails closed); a writer's temporary-file-and-rename
+  clone gets a new one); it is a cache that only spares a refresh some copying: freshness never
+  reads it, and a refresh keeps a copy only after hashing it (Step 3 rounds 9-11). A hard-linked `.build/` file (the fallback) is writable by design: an in-place write through the merged folder changes the private
+  source too, so the view stays a faithful copy of its sources, and the changed email is refused at
+  load by the sha256 in its label row (fails closed; Step 3 round 11); a writer's temporary-file-and-rename
   breaks the link instead. `labels.jsonl` and `fixed_labels.jsonl` merged by ID; `checks.yaml` merged by
   key; `reviews.jsonl` concatenated. The copy is incremental (only changed files rewritten, orphans
   removed last).
 - **`merge.json` is a cache, not a trust root:** it records both sources' set versions, a manifest
-  (path, size, modification time, inode, sha256) of every source file and every merged file, the
+  (path, size, modification time, inode, ctime, sha256) of every source file and every merged file, the
   merged version and each source's ID list. The resolver and the
   gate recompute the merge of the two sources' label and fixed-label files in memory (the merged
   `checks.yaml` and `reviews.jsonl` have no `src` reader, so only `refresh_merged` and the tests build
   them)
   (a few hundred lines) and require the merged files and the merged version to equal it, so a
-  consistent hand edit of the merged files and `merge.json` is still refused.
+  consistent hand edit of the merged files and `merge.json` is still refused. Nothing recorded in
+  `merge.json` decides freshness (operator decisions 2026-11-06, Step 3 rounds 9-11): every merged
+  copy (card, email, `.build/` file) is compared by content, hashed now, with its source, hashed
+  now, the copies must be exactly the sources' files, and `merge.json` is read only for its format
+  and merged version; so an edit of a merged copy, with any `merge.json` entries rewritten to
+  match, is refused and replaced. The view holds its copied folders' plain files, the four set
+  files and `merge.json`, nothing else: any other entry (a dot-file, a subfolder, a planted
+  `manifest.json`) makes it stale and the refresh removes it, whatever its mode or depth, before
+  it places any copy (or refuses naming it). Anything of a set that can't be read or written
+  (either half, the view, its files, the lock) follows one rule (round 16): every entry point
+  refuses it by name and the freshness check reads it as stale, never a raw error; the gate never
+  raises (its check fails and the service tick carries on, its cache key included); the refresh
+  repairs the view's own folders, files and lock; a model test (`tests/test_eval_unreadable_model.py`,
+  rounds 16-17) takes both layouts (a split set; a public-only set), makes each folder and file of
+  the layout (from `tests` and `eval` down to a single card and the lock) unreadable in turn at
+  modes 000, 0o444 and 0o300, runs the service tick and the gate first (never raising), then every
+  reader, writer and the builder (each works or refuses by name); whether
+  judges' labels count (`models_ok`) is read from the set's own public half (Step 3 round 12). A
+  set is generated (never gate evidence, P1; shown blind, P7) when either half holds a generated
+  card, asked from either half's path, and a private half's build refuses a generated card
+  outright (rounds 13-14). Names are compared as the volume compares them (letter case and Unicode
+  form): a name in both halves is refused, and a copy renamed in either only takes its new name; a
+  name another source still has is never removed. An email that can't be read is a problem and its case is left out (round 13). Cost for `synthetic`
+  with its two `.build/` files of 29.5 MB (round 12, under load): a freshness check about 85-110 ms
+  (hashing both sides about 66 ms), a run start or set read about 150 ms (each email hashed once
+  per read), `ruletest.load_cases` about 120 ms, a gate miss about 200 ms, the gate's cached path
+  about 11 ms with no hashing; a refresh about 100 ms when fresh, about 170 ms after a one-card
+  edit, about 310 ms rebuilding from nothing, each file hashed at most once per refresh. A refresh still proves each existing copy by size and sha256 before
+  skipping it. A file other than a card or set file present in both halves, letter case ignored,
+  is refused by name; a `merge.json` that isn't a well-formed manifest reads as stale; the lock file is
+  opened without following a link or blocking on a pipe. Judge-drafts and calibration read the
+  cards' views from the same version their read checked, or refuse. Accepted limit (the same actor
+  as the swap above, a process running as the operator): a change to a card's text alone, not its
+  labels, between a judge-drafts read and its views isn't seen (card text was never bound to the
+  set version).
 - **The resolver (W2, OD-648), three cases:** no private set: the public set; private set present and
   the merged set fresh: the merged set; private set present and the merged set missing or stale:
   refused with "run `ecf eval build`". It refuses any path at or under `<repo top>/eval/private/`,
   comparing each ancestor's `(st_dev, st_ino)` with that folder's (APFS is case-insensitive, so a
-  string comparison can be bypassed by letter case), and also any path with a `merge.json` in an
-  ancestor; only `<repo top>/tests/eval/<name>`, or a path with no `tests/eval` parent, is read as a set.
+  string comparison can be bypassed by letter case), and also any path with a merged view's own
+  `merge.json` in an ancestor (the writer guard's rule: one with `merged_version`, or a link or a file
+  that doesn't read as JSON); only `<repo top>/tests/eval/<name>`, or a path with no `tests/eval` parent, is read as a set.
   Inside the gate a refusal becomes a failed `synthetic` check carrying the message, never an
   exception, so the rest of the service tick (`advance_delays` included) still runs. It lives in `ecf.eval`, shared by the CLI and the service
   (import-linter forbids only `ecf` → `ecf_server`; `ecf_server` already imports `ecf.eval`); the CLI
@@ -647,7 +791,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   the private HEAD is on a branch whose upstream (`@{u}`) is a remote-tracking ref (its full name
   starts with `refs/remotes/`, read with one `git rev-parse --symbolic-full-name @{u}`, about 12 ms
   through the `/usr/bin/git` shim)
-  and contains it (`git merge-base --is-ancestor HEAD @{u}`, no network; remote URLs count as trusted
+  and contains it (`git merge-base --is-ancestor <HEAD> @{u}`, no network; the private HEAD is read
+  once from its ref files, so the commit compared, checked and recorded is one commit, OD-705; remote URLs count as trusted
   repository config); one function, `ecf.eval.clean_and_pushed(top, set)`, does this check for the
   service and for M1's upload; a detached HEAD, no upstream, or an upstream
   that is a local branch is not clean; `extensions.refStorage` is read from the config file and a
@@ -660,7 +805,8 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   assume-unchanged or skip-worktree flag in the index blinds, Step 3 review round 4): one
   `ls-tree -r -z <HEAD> -- <set path>` per repository (HEAD read from its ref files; `-C <top>` and
   `tests/eval/<set>` for the public repository, `-C <top>/eval/private` and `<set>` for the private
-  one), and a walk of the set folder (no `git`, no ignore rules, symbolic links listed not followed)
+  one), and a walk of the set folder (no `git`, no ignore rules, nothing followed: a symbolic link,
+  a submodule or anything else that isn't a plain file, in HEAD's tree or on disk, is dirty, OD-705)
   that hashes each file as git does (sha1 or sha256 by the repository's format); a file missing,
   added (untracked and ignored alike) or with another blob id is dirty, and a file that can't be read
   counts as changed. Left out of the walk: `.build/` (built, ignored by design), `*.tmp` and
@@ -681,14 +827,17 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   ref and `packed-refs` (both), every file under
   `refs/remotes/` (a push renames `refs/remotes/<remote>/<branch>` and leaves `refs/remotes` itself
   unchanged, measured 2026-11-05) and the index; and a stat walk of every file the clean check
-  hashes, in both source sets (the same walk, OD-704: every file's name, size, `mtime_ns` and inode,
+  hashes, in both source sets (the same walk, OD-704: every file's name, size, `mtime_ns`, inode and
+  `ctime_ns` (OD-705),
   so an edit to `checks.yaml`, `reviews.jsonl` or any other set file counts too; about 6 ms for
   `synthetic`'s 797 files, Step 3 round 4; `.build/` is left out, its sha256 is checked on load),
   which catches an in-place edit that changes no folder or index time; a missing file is a value, not
   an error; the walk runs once per pass. A stat can't vouch for a file written within the last 2 s (a
-  same-size rewrite in one timestamp tick keeps it): the merge manifest records such a file so that
-  it is hashed again next time, and a cached gate state keeps those files' sha256 and counts only
-  while they hold (OD-704). In a worktree, where `.git` is a file, the paths come from its `gitdir:` line
+  same-size rewrite in one timestamp tick keeps it): a cached gate state keeps those files' sha256
+  and counts only while they hold (OD-704); "within the last 2 s" reads the later of mtime and ctime,
+  and a cached gate state drops a file once a hit finds it unchanged past the window: a later write
+  changes its mtime and ctime, so the key (OD-705). The merge manifest's stats only spare a refresh
+  some hashing of the sources; freshness never reads them (round 11). In a worktree, where `.git` is a file, the paths come from its `gitdir:` line
   and `commondir`, read without `git`. Accepted limit: a plain `git status` (an editor, a shell prompt)
   rewrites the public index, costing one recompute per tick for addresses that haven't passed. The
   set-level part of the check (merge, load, `git`) is cached by that whole fingerprint plus `merge.json`
@@ -709,7 +858,10 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   it doesn't mark),
   except the exact ID
   `starter-injection` whose bytes hash to the pinned sha256 of its current file
-  (`afebb16654e9867261b6dc457941ec5a8e2c2bb0093d63d5a8f35f7201d19a28`, 2026-11-05; OD-654). The card
+  (`afebb16654e9867261b6dc457941ec5a8e2c2bb0093d63d5a8f35f7201d19a28`, 2026-11-05; OD-654). A
+  generated card (`author: generated`; P1: never gate evidence, refused by a private half) is exempt
+  from the build refusal only, since `ecf eval generate` writes `hidden_text`; X5 and the sdist test
+  still refuse it (Step 5 review, OD-705). The card
   differs from the shipped `injection` template (`case_templates.py:39-57`): it has `author: claude`,
   `rule: fraud_guard` and `must_escalate: true`, added in 8a4f0f2 (OD-252) while the template wasn't, so
   a pin to the template would refuse today's card. One constant (ID and sha256) shared by the builder,
@@ -765,9 +917,16 @@ SPEC §16.2's M8 release gate ran on `a6642d21bfd5eaaf`, 396 cards), `drafts` `a
   untracked, as in the public repository), and a README saying it holds the private parts of
   ecf's eval sets.
 - The hygiene scan covers both sets; the pre-push hook runs it in both repositories. The atomic
-  helper's temporary file is `.<name>.tmp`, and the public `.gitignore` gains `tests/eval/**/*.tmp` and
-  `tests/eval/**/.DS_Store` after its line 78 (`!tests/eval/*/cases/**`, which would otherwise
-  re-include them), so neither a crashed write nor Finder makes a clone dirty.
+  helper's temporary file is `.<name>.<random>.tmp` (a fresh name per write, never another writer's;
+  a crashed write's leftover is ignored, by git and every reader). Every build of a half that writes
+  (`ecf eval build`, and the commands that rebuild: generate, agree, settle, expect, card review and
+  card-field label imports) then removes, best effort, the leftovers older than an hour from the
+  half's folder and its `cases/`, `eml/`, `.build/`, `work/`, `work/call/` and `grades/` folders (a
+  model call's schema file and a grades file are written there): it follows no link, never fails
+  the build, and names in a `note:` line each one it couldn't remove and each folder it couldn't
+  open or list (a link, not a folder, unreadable; a missing one is silent). The public `.gitignore` gains
+  `tests/eval/**/*.tmp` and `tests/eval/**/.DS_Store` after its line 78 (`!tests/eval/*/cases/**`,
+  which would otherwise re-include them), so neither a crashed write nor Finder makes a clone dirty.
 
 ### Releases and CI
 
@@ -836,7 +995,7 @@ Each write, commit and push needs the operator's OK.
    whose upstream contains HEAD passes, and a detached HEAD, a branch with no upstream, an upstream that
    is a local branch, and a reftable repository each fail; a hanging `git` costs one timeout per pass
    and then backs off; `stage set live` runs the check fresh; a resumed run re-checks the merged
-   version; a crashed write's `.<name>.tmp` leaves the clone clean; an ignored card under `cases/`
+   version; a crashed write's `.<name>.<random>.tmp` leaves the clone clean; an ignored card under `cases/`
    counts as dirty; a mixed-case path into `eval/private` is refused; a stale merged set during a tick
    gives a failed check and `advance_delays` still runs; a Claude run releases its lock at every exit; a merged path given as `--root` or stored as the root is refused;
    a refresh during a run refuses pointing to `ecf eval status`, and after the run ends `ecf eval build` leaves the
@@ -1098,7 +1257,8 @@ Each write, commit and push needs the operator's OK.
 `synthetic` with the PDF render (`scanned-invoice-17mb` 5.9 s, `padded-text-part` 3.6 s, the other 396
 cards 2.9 s), 0.9 s `drafts`, 0.2 s `heldout3` (round 11); hygiene scan 275 ms; building the
 394 small cards (then) 164 ms, `scanned-invoice-17mb` 2.8 s; `evalrun.load` 34 ms (about 63 ms in round 8, which also hashes `.build/`,
-`evalrun.py:310`; re-measured at Step 3); sha256 of every file in the
+`evalrun.py:310`; Step 3 round 11, with the merged view's freshness by content: `read_set` 84-101 ms
+before both sides were hashed, about 120-140 ms after, under load); sha256 of every file in the
 set about 27 ms warm, stat about 1 ms (round 3). Round 5 (warm, medians): `synthetic` has 795 files,
 2 of them `.build` (28.8 MB); stat of every file 0.7 ms; sha256 of the small files 9.5 ms and of the
 two `.build` files 10.3 ms; a full copy of `cases/` and `eml/` 105 ms; `clonefile` 0.06-0.08 ms per
