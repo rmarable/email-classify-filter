@@ -105,6 +105,27 @@ def test_label_status_counts_both_halves(pub: Path) -> None:
     assert "0 of 2 cases confirmed" in r.output and "0 of 1 cases confirmed" in r.output
 
 
+@pytest.mark.parametrize("args", [["--status"], [], ["inj-test"], ["--review", "all"],
+                                  ["--import-fixed", "<page>"]],
+                         ids=["status", "label", "one-id", "review", "import-fixed"])  # fmt: skip
+def test_label_refuses_the_private_half_as_its_root(
+    pub: Path, tmp_path: Path, args: list[str]
+) -> None:  # fmt: skip
+    """Every mode refuses `--root eval/private/<set>` before writing, naming the public set: from
+    there the merged view would go unrefreshed (2026-11-11)."""
+    _build(pub)
+    priv = mg.paths(pub).private
+    assert priv is not None
+    before = (priv / "labels.jsonl").read_bytes()
+    page = _page(tmp_path, {"inj-test": {"label": True, "how": "single"}})
+    argv = [str(page) if a == "<page>" else a for a in args]
+    r = runner.invoke(app, ["eval", "label", *argv, "--root", str(priv)], input="y\nq\n")
+    assert r.exit_code != 0, r.output
+    assert "private half" in str(r.exception) and str(mg.public_of(priv)) in str(r.exception)
+    assert (priv / "labels.jsonl").read_bytes() == before
+    assert fixed_labels.read(priv) == []
+
+
 def _page(tmp_path: Path, answers: dict[str, object]) -> Path:
     f = tmp_path / "page.json"
     f.write_text(json.dumps({"item": "phishing", "on": "2026-11-06", "answers": answers}))

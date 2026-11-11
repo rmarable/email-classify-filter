@@ -34,4 +34,8 @@ with `uv run ecf eval build --root tests/eval/drafts`.
 - A private card's text is never quoted in tests, docs or fixtures: tests build their own marked
   cards (`tests/eval_checkout.py`, `split_set`). Result files and the gate's detail name private
   IDs only (closed vocabulary, OD-259).
-- A label counts only after the operator confirms it (`ecf eval label`).
+- A label counts only after the operator confirms it (`ecf eval label`). It asks questions, so the
+  operator runs it in their own terminal (a `!` command in Claude Code can't answer them). For a
+  private card keep the default `--root` (the public set): it finds the card in either half and
+  refreshes the merged view. With `--root eval/private/<set>` the label is confirmed but the merged
+  view isn't refreshed; run `ecf eval build` after.

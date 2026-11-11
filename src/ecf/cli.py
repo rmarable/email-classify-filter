@@ -1228,6 +1228,14 @@ def eval_label(  # noqa: PLR0912, PLR0913, PLR0917 - typer options; three modes
     # a permission error anywhere below leaves naming the file, not as a traceback (review
     # round 18, B3; the one rule of `merged.named`)
     with merged.named_errors():
+        # labelling from the private half itself would skip the merged view's refresh (a stale
+        # view hid a confirmed label, 2026-11-11): every mode starts from the public set
+        if merged.is_private_root(root):
+            raise InvalidInputError(
+                f"{root} is a set's private half: label from its public set"
+                f" (--root {merged.public_of(root)}, or leave --root out for the synthetic set);"
+                " it finds a card in either half and refreshes the merged view"
+            )
         if import_fixed is not None:
             try:
                 _import_fixed(root, import_fixed)
