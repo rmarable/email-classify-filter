@@ -1023,3 +1023,12 @@ def test_a_planted_tree_deeper_than_the_recursion_limit_is_removed(tmp_path: Pat
     finally:
         sys.setrecursionlimit(old)
     assert not deep.exists()
+
+
+def test_a_link_loop_in_the_path_is_a_refusal_not_a_runtime_error(tmp_path: Path) -> None:
+    """The gate and readers handle InvalidInputError and OSError; a loop is never a RuntimeError
+    that would escape the service tick (Step 7 review)."""
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+    with pytest.raises((InvalidInputError, OSError)):
+        mg.resolve(tmp_path / "a" / "tests" / "eval" / "synthetic")

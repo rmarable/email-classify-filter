@@ -26,7 +26,8 @@ git config core.hooksPath .githooks   # the pre-push card scan (once per clone)
 ```
 
 The pre-push hook refuses a push that adds a prompt-injection test card under `tests/eval/`
-(`planning-docs/EVAL-PRIVATE.md`, X5). The operator's private clone of the injection cards
+(`planning-docs/EVAL-PRIVATE.md`, X5). It runs from the checkout's `.venv`, so run `uv sync`
+first in a new clone or worktree; without it every push fails. The operator's private clone of the injection cards
 (`eval/private/`) sets `core.hooksPath` to this `.githooks` folder by absolute path.
 
 ## Commands
@@ -135,8 +136,9 @@ Details, rules and the card format: `planning-docs/GENERATE-FAKE-TESTING-EMAILS.
 
 Prompt-injection cards live in a private repository, cloned into `eval/private/` (gitignored); the
 public sets under `tests/eval/` hold none (`.claude/rules/eval-synthetic.md`). Without the private
-clone, eval runs use the public set only, have no injection slice and can't count for the release
-gate, and tests marked `private` are skipped (CI runs this way).
+clone, eval runs use the public set only, whose injection slice is the one pinned
+`starter-injection` card, and can't count for the release gate; tests marked `private` are
+skipped (CI runs this way, and on Linux it also skips the few macOS-only file-system tests).
 
 ## Releases and tags
 

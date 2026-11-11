@@ -31,9 +31,9 @@ from tests.test_eval_window import LONG
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     """Two starter cards and a long card whose signal and injection sit past 1,500."""
-    return checkout_set(tmp_path, ("starter-bec", "starter-control", "long-signal"),
-                        (INJ_TEST,), ("starter-bec", "starter-control", "long-signal"),
-                        texts={"long-signal": LONG})  # fmt: skip
+    confirm = ("starter-bec", "starter-control", "long-signal")  # long-signal is marked: private
+    return checkout_set(tmp_path, ("starter-bec", "starter-control"), (INJ_TEST, "long-signal"),
+                        confirm, texts={"long-signal": LONG})  # fmt: skip
 
 
 @pytest.fixture(autouse=True)
@@ -181,8 +181,8 @@ def test_a_for_gate_run_on_another_root_is_refused_while_the_old_set_exists(
 ) -> None:
     other = checkout_set(
         tmp_path / "other",
-        ("starter-bec", "starter-control", "long-signal"),
-        (INJ_TEST,),
+        ("starter-bec", "starter-control"),
+        (INJ_TEST, "long-signal"),  # long-signal is marked: private
         ("starter-bec", "starter-control", "long-signal"),
         texts={"long-signal": LONG},
     )  # another checkout's copy of the set

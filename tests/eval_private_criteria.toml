@@ -187,7 +187,7 @@ tests = ["tests/test_eval_recovery_x13.py::test_a_stale_set_is_refreshed_results
 
 [[criterion]]
 id = "C12"
-plan = "a crashed write's `.<name>.tmp` leaves the clone clean"
+plan = "a crashed write's `.<name>.<random>.tmp` leaves the clone clean"
 tests = ["tests/test_eval_gitcheck.py::test_an_ignored_card_is_dirty_but_temporary_files_are_not"]
 
 [[criterion]]

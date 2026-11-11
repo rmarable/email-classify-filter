@@ -319,9 +319,11 @@ def run_range(ref: str, revs: list[str], tip: str | None, *, tip_build: bool,
     old = anchor_history(top) if old is None else old  # the hook reads it once per push
     listed = known(top) & old  # `exempt`, with the history read once
     found = tree(tip, top, odd) if tip else []
-    # main's tip is checked whole, X1 on, nothing skipped: a marked card restored onto main (a
-    # revert of the move) is refused at its push (review round 3, M2). That scan is stricter
-    # than the range's, so the range skips the blobs it covers (round 4, performance B3).
+    # main's tip is checked whole, X1 on, nothing skipped, in the push and daily runs (not the
+    # hook, which builds no tip and skips blobs main's history has): a marked card restored onto
+    # main (a revert of the move) is refused by the push's CI run (review round 3, M2; plan,
+    # "Skipping"). That scan is stricter than the range's, so the range skips the blobs it covers
+    # (round 4, performance B3).
     whole = bool(tip) and tip_build and is_main(ref)
     in_tip: set[tuple[str, str]] = set(found) if whole else set()
     # `published`: blobs main's history already has (the hook only): main's own runs checked them
@@ -540,10 +542,9 @@ def run_hook(remote: str, url: str, lines: list[str], cwd: Path) -> Verdict:
             for b, p in dict.fromkeys(items):
                 refused += check_private(b, p, data[b])
             continue
-        main_ref = "refs/heads/main" if rref == "refs/heads/main" else rref
         if history is None:  # unreachable: set whenever there are ranges
             continue
-        v = run_range(main_ref, revs, lsha, tip_build=False, top=cwd, published=history[0],
+        v = run_range(rref, revs, lsha, tip_build=False, top=cwd, published=history[0],
                       old=history[1])  # fmt: skip
         refused += v.refused
         warned += v.warned

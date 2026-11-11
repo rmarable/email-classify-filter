@@ -1268,7 +1268,10 @@ def resolve(root: Path) -> Path:
     the merged view when there is one and it is fresh; refused otherwise. A path at or under
     `eval/private/`, or inside a merged view, is refused: readers pass the logical public path."""
     p = logical(root)
-    real = p.resolve()
+    try:
+        real = p.resolve()
+    except RuntimeError as exc:  # a link loop (Python 3.12): a refusal, which callers handle
+        raise InvalidInputError(f"{root}: a symbolic link loop in its path") from exc
     if _under_private(real) or _under_private(p):
         raise InvalidInputError(f"{root} is a private or merged set's path",
                                 advice="give the public set's path (tests/eval/<set>)")  # fmt: skip
