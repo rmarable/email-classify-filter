@@ -1011,7 +1011,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                     " --corpus` and `ecf eval rescore --corpus` still read a"
                                     " corpus")  # fmt: skip
         root = Path(_str(body, "root")).expanduser()
-        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+        if not root.is_absolute() or not root.is_dir():  # its files: read_set, after resolving
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         if state.db_path is None:
             raise ServiceUnavailableError("the service has no database yet")
@@ -1072,7 +1072,7 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
         """`ecf eval run --claude` (OD-288): registers the run; `/ecf-eval` drives it."""
         body = _body(request)
         root = Path(_str(body, "root")).expanduser()
-        if not root.is_absolute() or not (root / "labels.jsonl").is_file():
+        if not root.is_absolute() or not root.is_dir():  # its files: read_set, after resolving
             raise InvalidInputError("root: the synthetic set's folder (an absolute path)")
         batch = body.get("batch", 1)
         if isinstance(batch, bool) or not isinstance(batch, int):
@@ -2030,6 +2030,14 @@ def _corpus_routes(state: ServiceState, allow: Allow) -> list[Route]:
     ]
 
 
+def _rescore_beside(state: ServiceState, path: Path) -> Path | None:
+    """The install's data folder, after checking the folder a rescore of `path` goes in (beside
+    it), before any scoring (`evalrun.rescore_folder`, review round 29)."""
+    data = state.db_path.parent if state.db_path is not None else None
+    evalrun.rescore_folder(path, data)
+    return data
+
+
 def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
     """SPEC §16.7: a decrypted corpus held for labelling and eval runs (R46, R104, R154); CLI
     only. The passphrase arrives in the open request and isn't kept."""
@@ -2072,22 +2080,25 @@ def _corpus_session_routes(state: ServiceState, allow: Allow) -> list[Route]:
             path = Path(_str(body, "result")).expanduser()
             if path.suffix != ".json" or not path.is_file():
                 raise InvalidInputError(f"no result file at {path}")
+            data = _rescore_beside(state, path)
             root = Path(_str(body, "synthetic_root")).expanduser()
             if body.get("through_policy") is True:  # pre-classifier plan step 7
-                return JSONResponse(evalrun.rescore_through_policy(root, path, state.clock))
-            return JSONResponse(evalrun.rescore_synthetic(root, path, state.clock))
+                return JSONResponse(evalrun.rescore_through_policy(root, path, state.clock,
+                                                                   data_dir=data))  # fmt: skip
+            return JSONResponse(evalrun.rescore_synthetic(root, path, state.clock, data_dir=data))
         s = corpus_session.get(_str(body, "corpus_session"), state.clock.monotonic)
         if s.busy:
             raise InvalidInputError("an eval run is using this corpus; wait for it to end")
         path = Path(_str(body, "result")).expanduser()
         if path.suffix != ".json" or not path.is_file():
             raise InvalidInputError(f"no result file at {path}")
+        data = _rescore_beside(state, path)
         conn = state.connect()
         try:
             schema = config.current_schema(conn)
         finally:
             conn.close()
-        return JSONResponse(evalrun.rescore(s, path, state.clock, schema))
+        return JSONResponse(evalrun.rescore(s, path, state.clock, schema, data_dir=data))
 
     @allow(Caller.CLI)
     def routes(request: Request) -> JSONResponse:

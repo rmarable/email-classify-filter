@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
+import stat
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from email import policy
@@ -17,9 +19,13 @@ from email.utils import format_datetime, parseaddr
 from pathlib import Path
 from typing import cast
 
+from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
+from ecf.eval import markers, merged
 from ecf.eval.cards import Card, load_cards
+from ecf.eval.genset import AUTHOR
 from ecf.eval.hygiene import Finding, cut, dedupe, scan_text
+from ecf.eval.setio import atomic_write, sweep_old_temps, writable_set
 
 COMMIT_LIMIT = 1024 * 1024
 LONG_FIELDS = ("signature", "quoted_thread", "footer")  # a long card's text besides its body
@@ -140,11 +146,76 @@ class BuildReport:
     placed: list[tuple[str, str, int, bool]] = field(
         default_factory=list[tuple[str, str, int, bool]]
     )
+    # old temporary files the build couldn't remove, one line each (review round 25, S2)
+    left: list[str] = field(default_factory=list[str])
 
 
+def _same(path: Path, data: bytes, digest: str) -> bool:
+    """Whether `path` already holds exactly `data` (its size, then its sha256): never judged by
+    the old label row alone, so `ecf eval build` still repairs a damaged set. Only a plain file
+    counts: a link or special file there, even to the same bytes, is replaced (review round 29)."""
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size != len(data):
+            return False
+        return hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    except FileNotFoundError:
+        return False
+
+
+@merged.named
+def marker_refusals(root: Path, *, private: bool) -> list[str]:
+    """X1 (EVAL-PRIVATE.md, "Builder refusal"): in a public set, every card its front matter
+    marks as an injection card except the pinned `starter-injection` and generated cards; in a
+    private set, every card it doesn't mark. `build_all` refuses on either. A generated card
+    (`ecf eval generate` writes `hidden_text`) is never gate evidence and a private half refuses
+    it (P1), so it stays where it was made; X5's scan still checks it if it is ever committed."""
+    out: list[str] = []
+    for p in sorted((root / "cases").glob("*.md")):
+        data = p.read_bytes()
+        front = markers.front_matter(data.decode("utf-8"), source=p.name)
+        why = markers.reasons(front)
+        if private and not why:
+            out.append(f"{p.stem}: private card without an injection marker")
+        elif (not private and why and front.get("author") != AUTHOR
+              and not markers.is_pinned_starter(p.stem, data)):  # fmt: skip
+            out.append(f"{p.stem}: marked card in a public set ({', '.join(why)})")
+    return out
+
+
+def _check_ids(root: Path, cards: list[Card]) -> None:
+    """One key: each card's ID is its file stem, and every `eml/` or `.build/` file has a card."""
+    stems = sorted(p.stem for p in (root / "cases").glob("*.md"))
+    ids = [c.id for c in cards]
+    if ids != stems:
+        bad = sorted(set(ids) ^ set(stems))
+        raise InvalidInputError(f"card IDs must equal their file names: {', '.join(bad[:10])}")
+    orphans = sorted(f"{d}/{p.name}" for d in ("eml", ".build")
+                     for p in (root / d).glob("*.eml") if p.stem not in set(ids))  # fmt: skip
+    if orphans:
+        raise InvalidInputError(f"no card for {', '.join(orphans[:10])} (remove the file or restore"
+                                " its card)")  # fmt: skip
+
+
+@merged.named
 def build_all(root: Path) -> BuildReport:
     """Build every card under `root/cases`. Stops before writing anything if hygiene fails."""
+    writable_set(root)
+    if merged.is_private_root(root) and (unmarked := marker_refusals(root, private=True)):
+        # every build of a private half, whoever calls it (EVAL-PRIVATE.md, "Builder refusal")
+        raise InvalidInputError("a private card must carry an injection marker (X1): "
+                                + "; ".join(unmarked[:10]))  # fmt: skip
+    if not merged.is_private_root(root) and (marked := marker_refusals(root, private=False)):
+        # a public set holds no injection card, from the move commit on (EVAL-PRIVATE.md, Step 5)
+        raise InvalidInputError("an injection card belongs in the private set (X1): "
+                                + "; ".join(marked[:10]))  # fmt: skip
     cards = load_cards(root / "cases")
+    if merged.is_private_root(root) and (made := [c.id for c in cards if c.author == AUTHOR]):
+        # a generated card is never part of a private half (P1; review round 13, B1)
+        raise InvalidInputError(
+            f"a generated card can't be in a private set: {', '.join(made[:10])}"
+        )
+    _check_ids(root, cards)
     findings = [f for c in cards for f in scan_card(c, f"{c.id}.md")]
     if findings:
         return BuildReport([], [], findings)
@@ -157,13 +228,15 @@ def build_all(root: Path) -> BuildReport:
         data = build_bytes(card)
         target = (big_dir if len(data) > COMMIT_LIMIT else eml_dir) / f"{card.id}.eml"
         target.parent.mkdir(exist_ok=True)
-        target.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        if not _same(target, data, digest):  # a missing or damaged file is rewritten
+            atomic_write(target, data)
         (large if target.parent == big_dir else built).append(card.id)
         labels.append(
             {
                 "id": card.id,
                 "file": str(target.relative_to(root)),
-                "sha256": hashlib.sha256(data).hexdigest(),
+                "sha256": digest,
                 "bytes": len(data),
                 "author": card.author,
                 **({"generator": card.generator} if card.generator else {}),
@@ -175,10 +248,13 @@ def build_all(root: Path) -> BuildReport:
                 "expected": card.expected.model_dump(mode="json"),
             }
         )
+    labels.sort(key=lambda r: str(r["id"]))  # one key: rows in ID order (EVAL-PRIVATE.md)
     # your confirmations stay while the case is unchanged (ecf eval label; OD-241)
     label_file.write(
         root,
         label_file.carry_over(label_file.read(root), labels, models_ok=label_file.models_ok(root)),
     )
     placed = [(c.id, *p) for c in cards for p in c.phrase_offsets()]
-    return BuildReport(built, large, [], placed)
+    # crashed writes' old temporary files, once the build has written (review round 25, S2)
+    _, left = sweep_old_temps(root)
+    return BuildReport(built, large, [], placed, left)

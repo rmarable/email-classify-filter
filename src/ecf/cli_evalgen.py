@@ -92,6 +92,15 @@ def _estimate(root: Path, adapter: object, yes: bool) -> None:
         raise typer.Exit(1)
 
 
+def note_old_temps(root: Path) -> None:
+    """The crashed writes' old temporary files a rebuild left in `root`, one `note:` line each
+    (review round 26; `ecf eval build` prints its own)."""
+    from ecf.eval.setio import old_temps_left  # noqa: PLC0415
+
+    for line in old_temps_left(root):
+        typer.echo(f"note: {line}", err=True)
+
+
 def _settle_terminal(root: Path, today: Any) -> None:
     """The disputes one by one: the email, each disputed field, then the judges' answers."""
     from ecf.eval import settle as st  # noqa: PLC0415
@@ -130,19 +139,20 @@ def _settle_terminal(root: Path, today: Any) -> None:
             done[it["case"]] = answer
     n_done = st.apply(root, done, today) if done else 0
     typer.echo(f"settled {n_done} emails; {len(items) - n_done} still open")
+    note_old_temps(root)
     if n_done:
         typer.echo(f"Next: ecf eval expect --root {root}")
 
 
 def _write_private(path: Path, text: str) -> None:
-    """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6)."""
-    import os  # noqa: PLC0415
+    """A page's data, which holds email views and draft text: written 0600 in a 0700 folder (L6),
+    as every eval file is, a new file renamed over the name, so a link, hard link or pipe there
+    is replaced, never written through (review round 29, eleventh delta check)."""
+    from ecf.eval.setio import private_folder, replace_file, writable_root, write_new  # noqa: PLC0415
 
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-    path.chmod(0o600)  # an existing file keeps its old mode through O_CREAT
+    writable_root(path)  # an --export folder, never in a merged view (review round 27)
+    private_folder(path.parent)  # 0700 when new; an existing one left as it is (round 29)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
 
 
 def _notice(role: str, provider: str, yes: bool) -> None:
@@ -209,6 +219,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import mix as mixmod  # noqa: PLC0415
         from ecf.eval import providers  # noqa: PLC0415
+        from ecf.eval.setio import writable_set  # noqa: PLC0415
 
         if write_mix is not None:
             mixmod.write_default(write_mix)
@@ -217,6 +228,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         if root is None:
             raise InvalidInputError("--root: the folder for the new set")
         root = root.expanduser().resolve()  # a CLI tool's answer file is named from it
+        writable_set(root)  # before the canary or any call is bought (review round 27)
         mode = "dev" if dev else "prod"
         if show_findings:
             _may_show(dev)
@@ -253,6 +265,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                       show=typer.echo if show_findings else None)  # fmt: skip
         s = run.run(resume=resume or shared is not None)
         typer.echo(closing_line(s))
+        note_old_temps(root)
         if s.detail:
             typer.echo(s.detail)
         if s.state == "seeded":
@@ -281,7 +294,9 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import generate as gen  # noqa: PLC0415
         from ecf.eval import grade as grading  # noqa: PLC0415
         from ecf.eval import mistral_api, models, providers  # noqa: PLC0415
+        from ecf.eval.setio import writable_set  # noqa: PLC0415
 
+        writable_set(root)  # before the estimate, the canary or any call (review round 27)
         doc = gen.read_manifest(root)
         mode = str(doc.get("mode"))
         adapter = providers.resolve(grader, "grader", mode, paths())
@@ -309,6 +324,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         from ecf.eval import agree as ag  # noqa: PLC0415
 
         o = ag.run(root.expanduser().resolve(), datetime.now(UTC).date())
+        note_old_temps(root.expanduser().resolve())
         typer.echo(f"agreed: {o.agreed} emails confirmed by the judges; for you: {o.disputed}"
                    f" ({o.whole} whole, a judge refused or skipped them); already confirmed:"
                    f" {o.skipped - o.yours_edited - o.waiting}; still waiting for you:"
@@ -359,6 +375,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
                 raise InvalidInputError("--from needs --tokens, the page's token map")
             done, left = st.apply_page(where, answers.expanduser(), tokens.expanduser(), today)
             typer.echo(f"settled {done} emails; {left} not fully answered yet")
+            note_old_temps(where)
             if done:
                 typer.echo(f"Next: ecf eval expect --root {root}")
             return
@@ -384,6 +401,7 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         counts = ex.apply(where, list(r["cases"]), datetime.now(UTC).date(), plan=p,
                           digest=r.get("rules_digest"))  # fmt: skip
         typer.echo(", ".join(f"{k} {v}" for k, v in counts.items()))
+        note_old_temps(where)
         if p.edited:
             typer.echo(f"{len(p.edited)} judged emails were edited by hand since their"
                        f" confirmation: run `ecf eval agree --root {root}` first")  # fmt: skip
@@ -546,10 +564,12 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         """The blind rating page's data (no ids, no key); its token map stays with ecf."""
         import json  # noqa: PLC0415
 
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+        out = writable_root(export.expanduser())  # before the service records a page (round 28)
         with LocalClient(paths()) as c:
             r = c.request("POST", f"/v1/eval/drafts/{run}/rating-page",
                           {} if part is None else {"part": part})  # fmt: skip
-        out = export.expanduser()
         name = "draft-rating-page.json" if part is None else f"draft-rating-page-{part}.json"
         _write_private(out / name, json.dumps(r))
         typer.echo(f"wrote {out / name} ({len(r['items'])} drafts), page"
@@ -622,12 +642,15 @@ def make_commands(eval_app: typer.Typer, paths: Callable[[], Paths]) -> None:  #
         each run's record with its scores."""
         import json  # noqa: PLC0415
 
+        from ecf.eval.setio import writable_root  # noqa: PLC0415
+
+        # before the service is asked, which records a page (review round 28)
+        out = None if export is None else writable_root(export.expanduser())
         with LocalClient(paths()) as c:
-            if export is not None:
+            if out is not None:
                 if not runs:
                     raise InvalidInputError("name the judged runs to settle")
                 r = c.request("POST", "/v1/eval/drafts/settle-page", {"runs": runs})
-                out = export.expanduser()
                 _write_private(out / "draft-settle-page.json", json.dumps(r))
                 typer.echo(f"{len(r['items'])} drafts to settle: wrote"
                            f" {out / 'draft-settle-page.json'}, page {r['page']}")  # fmt: skip

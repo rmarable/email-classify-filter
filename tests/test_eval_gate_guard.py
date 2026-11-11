@@ -5,15 +5,12 @@ refuses its folder."""
 from __future__ import annotations
 
 import json
-import shutil
 import sqlite3
-from datetime import date
 from pathlib import Path
 
 import pytest
 
-from ecf.eval import genset, labels
-from ecf.eval.builder import build_all
+from ecf.eval import genset
 from ecf_server import claude_eval, evalrun, gate, slack_admin
 from ecf_server.clock import FakeClock
 from tests.test_claude_eval import BEC, REQUEST, drain
@@ -28,13 +25,10 @@ CASES = ("starter-bec", "starter-control", "starter-injection")
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    r = tmp_path / "generated"
-    (r / "cases").mkdir(parents=True)
-    for name in CASES:
-        shutil.copy(SYNTHETIC / "cases" / f"{name}.md", r / "cases" / f"{name}.md")
-    assert not build_all(r).findings
-    labels.confirm(r, "starter-bec", date(2026, 10, 1))
-    return r
+    from tests.eval_checkout import checkout_set  # noqa: PLC0415
+
+    return checkout_set(tmp_path, ("starter-bec", "starter-control"), ("starter-injection",),
+                        ("starter-bec",))  # fmt: skip
 
 
 def _mark(root: Path) -> Path:
@@ -99,6 +93,7 @@ def test_an_ecf_eval_run_on_a_generated_set_is_never_for_the_gate(
     assert not _remembered(conn)
 
 
+@pytest.mark.usefixtures("fake_gate_counts")
 def test_the_gate_refuses_a_generated_sets_folder(
     conn: sqlite3.Connection, clock: FakeClock, root: Path
 ) -> None:

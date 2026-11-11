@@ -14,15 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError, NotFoundError
-from ecf.eval import draftjudge, drafts
+from ecf.eval import draftjudge, drafts, merged
 from ecf.eval.drafts import DraftCase, DraftsFile
+from ecf.eval.setio import write_durable
 from ecf_server import draftruns, evalrun
 
 JUDGEMENTS_SUFFIX = ".judgements.json"
@@ -110,6 +109,9 @@ def items(data_dir: Path, run: str, *, prompts: bool = True) -> dict[str, Any]: 
     else:
         root = root_of(data_dir, record.run_id)
         cases = {c.id: c for c in _set(root, record.set_version)}
+        view_root = _view(
+            root, record.set_version
+        )  # the set read: moved cards live there (rounds 7, 9)
         for dc in record.cases:
             c = cases.get(dc.id)
             if dc.text is None or c is None:
@@ -119,7 +121,7 @@ def items(data_dir: Path, run: str, *, prompts: bool = True) -> dict[str, Any]: 
                 continue
             if not c.confirmed:  # edited since its build, or never confirmed (J5C-2)
                 raise InvalidInputError(f"{c.id}: its card doesn't match its confirmed, built file")
-            view = grading.case_view(root, c.id)
+            view = grading.case_view(view_root, c.id)
             if view is None:
                 continue
             rows.append((dc, c.id, view, spec.question,
@@ -161,23 +163,11 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, doc: dict[str, Any]) -> None:
-    """Replace a file whole: a unique 0600 temporary file, fsynced, renamed, the folder fsynced."""
+    """Replace a file whole, 0600, as every eval record is (`setio.write_durable`: a temporary
+    file of its own, fsynced, renamed, the folder fsynced; review round 29, thirteenth delta
+    check)."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(doc, indent=1, sort_keys=True))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-    dfd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+    write_durable(path, json.dumps(doc, indent=1, sort_keys=True))
 
 
 def judgements(data_dir: Path, run: str) -> dict[str, Any]:
@@ -369,7 +359,7 @@ def null_floor(data_dir: Path, root: Path, now: str) -> dict[str, Any]:
                         checker_digest=draftcheck.digest(), cases=out)  # fmt: skip
     with LOCK:
         write_json(folder(data_dir) / f"{run_id}{NULL_SUFFIX}",
-               {"root": str(root.resolve()), "set_version": version})  # fmt: skip
+               {"root": evalrun.logical(root), "set_version": version})  # fmt: skip
         drafteval.write(folder(data_dir), record)
     return {"run_id": run_id, "cases": len(out), "drafts": sum(c.text is not None for c in out)}
 
@@ -545,3 +535,15 @@ def record_scores(data_dir: Path, run: str) -> dict[str, Any]:
         "to_settle": sum(bool(c["to_settle"]) for c in s["cases"]),
         "calibration_digest": record.calibration_digest,
     }
+
+
+def _view(root: Path, version: str) -> Path:
+    """The folder the set's read used (moved cards live in the merged view; review round 7, B3),
+    refused when its version is no longer the one read: a build between the read and the cards'
+    views would mix new card text with the old labels (round 9)."""
+    from ecf.eval import labels as label_file  # noqa: PLC0415
+
+    view = merged.view_of(root)
+    if label_file.set_version(view) != version:
+        raise InvalidInputError("the set changed while it was read: run the command again")
+    return view

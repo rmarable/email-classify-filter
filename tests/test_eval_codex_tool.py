@@ -4,9 +4,14 @@ file) and checks it was given the direct-mode catalogue. No network, no real Cod
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
+import os
 import stat
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +19,7 @@ import pytest
 
 from ecf.errors import InvalidInputError
 from ecf.eval import codex_tool, tools
+from ecf.eval.setio import CALL_FILES, STALE_TEMP_S
 from ecf.paths import paths_for
 
 FAKE_CODEX = r"""#!{python}
@@ -52,6 +58,11 @@ if sc.get("tool_event") or modes != ["direct"]:
     emit({{"type": "item.completed", "item": {{"id": "i0", "type": "mcp_tool_call"}}}})
 answer = {{"word": "ok", "decoy": "none"}} if "decoy.txt" in prompt else sc.get("answer", {{}})
 out = args[args.index("-o") + 1]
+if prompt.startswith("slow"):  # a call still running until the test lets it end
+    import time
+    deadline = time.monotonic() + 60
+    while not os.path.exists(os.environ["FAKECODEX_RELEASE"]) and time.monotonic() < deadline:
+        time.sleep(0.02)
 open(out, "w").write(json.dumps(answer))
 emit({{"type": "item.completed", "item": {{"id": "i1", "type": "agent_message",
                                           "text": json.dumps(answer)}}}})
@@ -74,7 +85,8 @@ def _adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     paths = paths_for("ecf-test-codex")
     tool = codex_tool.tool_for(paths, model)
     env = dict(tool.env) | {"FAKECODEX_SCENARIO": str(tmp_path / "scenario.json"),
-                            "FAKECODEX_LOG": str(tmp_path / "codex.log")}  # fmt: skip
+                            "FAKECODEX_LOG": str(tmp_path / "codex.log"),
+                            "FAKECODEX_RELEASE": str(tmp_path / "release")}  # fmt: skip
     from dataclasses import replace  # noqa: PLC0415
 
     environ = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)} | (extra_env or {})
@@ -183,4 +195,141 @@ def test_the_answer_file_is_deleted_once_read(
     a.preflight(tmp_path / "w0")
     reply = a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call")
     assert reply.status == status
-    assert not (tmp_path / "call" / "out.json").exists()  # the generator's raw text
+    assert not list((tmp_path / "call").iterdir())  # the raw text, schema and folder gone
+
+
+def test_the_answer_goes_to_a_fresh_folder_of_the_calls_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex writes its answer itself, so each call's schema and answer go in a new folder that
+    nothing was in before: a link at a fixed name is never followed; a crashed call's folder,
+    once older than any call runs, is removed, a link among them left alone (review round 29,
+    fifteenth and sixteenth delta checks)."""
+    a = _adapter(tmp_path, monkeypatch, {"answer": {"word": "ok", "decoy": "none"}})
+    a.preflight(tmp_path / "w0")
+    call = tmp_path / "call"
+    crashed = call / ".call-crashed"
+    crashed.mkdir(parents=True)
+    (crashed / "out.json").write_text("raw text")
+    old = time.time() - 2 * STALE_TEMP_S
+    os.utime(crashed, (old, old))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep").write_text("keep")
+    (call / ".call-link").symlink_to(elsewhere)
+    os.utime(call / ".call-link", (old, old), follow_symlinks=False)
+    for name in ("out.json", "schema.json"):
+        (call / name).symlink_to(elsewhere / f"made-{name}")
+    for _ in range(2):
+        assert a.ask("hello", tools.CANARY_SCHEMA, call).status == "ok"
+    runs = _log(tmp_path)[-2:]
+    outs = [Path(r["argv"][r["argv"].index("-o") + 1]) for r in runs]
+    schemas = [Path(r["argv"][r["argv"].index("--output-schema") + 1]) for r in runs]
+    assert outs[0].parent != outs[1].parent
+    assert all(o.name == "out.json" and o.parent.parent == call and o.parent == s.parent
+               and o.parent.name.startswith(CALL_FILES)
+               for o, s in zip(outs, schemas, strict=True))  # fmt: skip
+    assert not crashed.exists() and (elsewhere / "keep").read_text() == "keep"
+    assert (call / ".call-link").is_symlink()
+    assert sorted(p.name for p in elsewhere.iterdir()) == ["keep"]
+
+
+def _wait_for_a_call(call: Path) -> None:
+    """Until a running call holds its folder (made, then locked: a busy machine may take a
+    while; review round 29, nineteenth delta check)."""
+    deadline = time.monotonic() + 30
+    while not _held(call):
+        assert time.monotonic() < deadline, "the first call never started"
+        time.sleep(0.02)
+
+
+def _held(call: Path) -> bool:
+    folders: list[Path] = list(call.glob(f"{CALL_FILES}*")) if call.is_dir() else []
+    for d in folders:
+        try:
+            fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)  # a lock taken here is let go with it
+    return False
+
+
+def test_judges_side_by_side_in_one_call_folder_never_touch_each_others_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Judges may run side by side on one set (J19), each call in the set's `work/call`: one
+    call's start never removes another's files (review round 29, sixteenth delta check)."""
+    a = _adapter(tmp_path, monkeypatch, {"answer": {"word": "ok", "decoy": "none"}})
+    a.preflight(tmp_path / "w0")
+    call = tmp_path / "call"
+    slow: list[str] = []
+    t = threading.Thread(
+        target=lambda: slow.append(a.ask("slow", tools.CANARY_SCHEMA, call).status)
+    )
+    t.start()
+    try:
+        _wait_for_a_call(call)
+        assert a.ask("hello", tools.CANARY_SCHEMA, call).status == "ok"
+    finally:
+        (tmp_path / "release").touch()  # the first call ends only now, even on a failure
+        t.join(timeout=60)
+    assert slow == ["ok"] and not list(call.iterdir())
+
+
+def test_a_call_that_slept_past_an_hour_keeps_its_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call holds its folder while it runs, so one that looks over an hour old (a Mac asleep
+    mid-call: the call's timeout doesn't count sleep) is never taken for a crashed one by a
+    judge's call beside it (review round 29, seventeenth delta check)."""
+    a = _adapter(tmp_path, monkeypatch, {"answer": {"word": "ok", "decoy": "none"}})
+    a.preflight(tmp_path / "w0")
+    call = tmp_path / "call"
+    slow: list[str] = []
+    t = threading.Thread(
+        target=lambda: slow.append(a.ask("slow", tools.CANARY_SCHEMA, call).status)
+    )
+    t.start()
+    try:
+        _wait_for_a_call(call)
+        (live,) = call.iterdir()
+        old = time.time() - 2 * STALE_TEMP_S
+        os.utime(live, (old, old))
+        assert a.ask("hello", tools.CANARY_SCHEMA, call).status == "ok"
+    finally:
+        (tmp_path / "release").touch()  # the first call ends only now, even on a failure
+        t.join(timeout=60)
+    assert slow == ["ok"] and not list(call.iterdir())
+
+
+@pytest.mark.parametrize("err", [errno.ENOTSUP, errno.ENOLCK])
+def test_a_call_runs_on_a_disk_without_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    """A call folder on a disk that can't lock (NFS without locking) runs unheld rather than
+    failing every call; the sweep can't lock there either, so it never removes it (review
+    round 30). Any other lock error still fails the call."""
+    from ecf.eval import setio  # noqa: PLC0415
+
+    a = _adapter(tmp_path, monkeypatch, {"answer": {"word": "ok", "decoy": "none"}})
+    a.preflight(tmp_path / "w0")
+
+    def no_locks(_fd: int, _op: int) -> None:
+        raise OSError(err, os.strerror(err))
+
+    monkeypatch.setattr(setio.fcntl, "flock", no_locks)
+    assert a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call").status == "ok"
+    assert not list((tmp_path / "call").iterdir())
+
+    def broken(_fd: int, _op: int) -> None:
+        raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+
+    monkeypatch.setattr(setio.fcntl, "flock", broken)
+    with pytest.raises(OSError, match=os.strerror(errno.EBADF)):
+        a.ask("hello", tools.CANARY_SCHEMA, tmp_path / "call")
+    assert not list((tmp_path / "call").iterdir())

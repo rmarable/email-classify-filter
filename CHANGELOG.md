@@ -5,6 +5,13 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- The prompt-injection test emails (107 cards) moved out of the public repository into a private one, cloned into `eval/private/`; eval runs read both through a merged view, and a run without the private set can't count for the release gate (OD-626, OD-627, OD-643).
+- `ecf eval build` refuses a prompt-injection test card in a public test set; such cards live in the private set (generated sets excepted; OD-705).
+- `ecf eval build` builds a set's public and private halves and the merged view, and ends by naming both folders to commit; `ecf eval new-case --template injection` writes the card to the private set, and refuses in a checkout without one.
+- `ecf eval build` refuses a card whose `id` differs from its file name, and an email file left with no card.
+- An eval set reached through a symbolic link is refused, as well as links inside a set (OD-705).
+- Each install recomputes its go-live gate once after upgrading, since the gate now checks the private set's version and counts (OD-643).
+- Contributors run `git config core.hooksPath .githooks` once per clone, so a push that adds a prompt-injection card under `tests/eval/` is refused (OD-635).
 - Decided: an eval test set may hold only plain files and folders: a symbolic link or other special file in it is refused rather than followed, so the gate can't count a run on content no commit holds (OD-705).
 - Decided: M1 (AWS mode) won't move an install between your Mac and AWS; you choose local or AWS when you set up. Moving an install, and backup-key rotation in AWS mode, are later items (OD-783).
 - Decided: the eval gate treats a test set as committed only when every file matches the commit, so an edit hidden from `git status` can't count, and the prompt-injection card scan reads label and check files exactly as the merge does (OD-704).

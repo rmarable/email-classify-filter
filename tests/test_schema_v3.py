@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from ecf.eval import fixed_labels
+from ecf.eval import fixed_labels, merged
 from ecf.eval.results import CaseResult
 from ecf.ids import AddressId, StableId
 from ecf.schema import (
@@ -245,8 +245,10 @@ def test_the_eval_set_gets_derived_labels_without_changing_its_files() -> None:
     cases, version = evalrun.load(root, fraud_only=False)
     assert (root / "labels.jsonl").read_bytes() == before
     assert version == evalrun.set_version(root)
-    rows = {json.loads(line)["id"]: json.loads(line) for line in before.decode().splitlines()}
-    hand, _ = fixed_labels.current(root)  # hand-set fixed items (fixed_labels.jsonl)
+    src = merged.resolve(root)  # with its private half when present (EVAL-PRIVATE.md)
+    rows = {json.loads(line)["id"]: json.loads(line)
+            for line in (src / "labels.jsonl").read_text().splitlines()}  # fmt: skip
+    hand, _ = fixed_labels.current(src)  # hand-set fixed items (fixed_labels.jsonl)
     for c in cases:
         raw: dict[str, Any] = rows[c.id]["expected"].get("labels") or {}
         got: dict[str, Any] = c.expected.get("labels") or {}

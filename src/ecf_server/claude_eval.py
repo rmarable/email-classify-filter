@@ -50,6 +50,7 @@ decisions 2026-10-02, OD-287 to OD-292).
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import hmac
@@ -65,6 +66,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from ecf.errors import (
     ConflictError,
     EcfError,
@@ -73,7 +76,7 @@ from ecf.errors import (
     NotFoundError,
     ServiceUnavailableError,
 )
-from ecf.eval import drafts, genset
+from ecf.eval import drafts, genset, gitcheck, merged
 from ecf.eval.drafts import DraftCase
 from ecf.eval.results import (
     CaseResult,
@@ -84,9 +87,11 @@ from ecf.eval.results import (
     load_result,
     spawn_figures,
 )
+from ecf.eval.setio import WRITE_ERRORS, reason
 from ecf.ids import new_random_id
 from ecf.plugin_digest import actor_prompt_digest, plugin_digest
 from ecf.schema import CompiledSchema, read_bytes
+from ecf.text import escaped
 from ecf_server import (
     actor,
     alerts,
@@ -131,8 +136,8 @@ C_SOURCE_KEYS = ("schema_digest", "prompt_digest", "read_bytes", "input_format",
 # (8,000 is the widest the plan compares; a wider one waits for a plan that needs it)
 WINDOW_MIN, WINDOW_MAX = 500, 8000
 ACTOR_ROLES = ("actor", "actor_high")
-NO_RUN = ("no Claude eval is waiting: register one with `ecf eval run --claude`, then open"
-          " `ecf claude`")  # fmt: skip
+NO_RUN = "no Claude eval is waiting"
+NO_RUN_ADVICE = "register one with `ecf eval run --claude`, then open `ecf claude`"
 
 
 @dataclass(frozen=True)
@@ -275,6 +280,9 @@ class Run:
     source_run: str | None = None
     source: dict[str, Any] = field(default_factory=dict[str, Any])  # D: its SOURCE_KEYS
     source_key: str | None = None  # the source run's `eval_runs.digest`
+    private_commit: str | None = None  # a for-gate run's private HEAD at its start (EVAL-PRIVATE)
+    set_lock: merged.SetLock | None = None  # the set's shared lock, held until the run ends
+    problems: tuple[tuple[str, str], ...] = ()  # the set's rows that couldn't run (read_set)
     state: str = "preparing"  # preparing | ready | done | stopped | expired | failed
     detail: str = ""
     sessions: list[str] = field(default_factory=list[str])
@@ -324,6 +332,14 @@ class Run:
         """A draft-set run: registered in the record, with a journal (M8 plan §4)."""
         return self.journal is not None
 
+    def release_set(self) -> None:
+        """Release the set's shared lock, once: a second release (a stop while preparing, then
+        the prepare-failed branch) does nothing."""
+        with self.lock:
+            held, self.set_lock = self.set_lock, None
+        if held is not None:
+            held.release()
+
 
 @dataclass
 class _Slot:
@@ -343,9 +359,11 @@ def current() -> Run | None:
 
 
 def reset() -> None:
-    """Forget the run (tests; a service start has none)."""
+    """Forget the run (tests; a service start has none), and drop its set lock as a restart does."""
     with _SLOT.lock:
-        _SLOT.run = None
+        run, _SLOT.run = _SLOT.run, None
+    if run is not None:
+        run.release_set()
 
 
 def _hash(token: str) -> str:
@@ -469,7 +487,7 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
     raise InvalidInputError("preset D uses Jev's classifications from a complete `ecf eval run"
                             " --classifier-backend jev` on the pinned Jev version, the default"
                             " schema and this version of the set, covering this run's cases, and"
-                            " there is none: run it first")  # fmt: skip
+                            " there is none", advice="run it first")  # fmt: skip
 
 
 SOURCE_MIN = 8  # characters of a `--source-run` ID prefix, as `ecf eval status` shows them
@@ -487,8 +505,9 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
     and its inputs (C_SOURCE_KEYS). Refused, naming the first check it fails."""
     ref = opts.source_run or ""
     if len(ref) < SOURCE_MIN:
-        raise InvalidInputError(f"--source-run: give the run ID, or at least its first"
-                                f" {SOURCE_MIN} characters")  # fmt: skip
+        raise InvalidInputError("--source-run: too short",
+                                advice=f"give the run ID, or at least its first {SOURCE_MIN}"
+                                       " characters")  # fmt: skip
     rows = conn.execute("SELECT run_id, pair, set_version, metrics, path FROM eval_runs WHERE"
                         " substr(run_id, 1, ?) = ?", (len(ref), ref)).fetchall()  # fmt: skip
     if len(rows) != 1:
@@ -524,13 +543,37 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
     return str(row["run_id"]), got, {k: m[k] for k in C_SOURCE_KEYS if k in m}
 
 
-def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
+def start(connect: Callable[[], sqlite3.Connection],
           clock: Clock, data_dir: Path, opts: Options, *,
           spawn: Callable[[Callable[[], None]], None] | None = None,
           resume: draftruns.Registration | None = None,
           ) -> dict[str, Any]:  # fmt: skip
     """Register a run. `resume`: a draft run lost to a restart, carried on in its slot
-    (`recover`)."""
+    (`recover`). The set's shared lock is taken first and kept on the run until it ends; a failure
+    before the spawn ends a registered run as failed, clears the slot only if it is still this
+    run's, and releases the lock (EVAL-PRIVATE.md, "The merged set")."""
+    held = merged.SetLock.take(opts.root)
+    box: list[Run] = []
+    try:
+        return _start(connect, clock, data_dir, opts, spawn, resume, held, box)
+    except BaseException:
+        if box:
+            run = box[0]
+            with run.lock:
+                if run.open:  # a stop may have finished it already
+                    _finish(connect, clock, run, "failed", "starting the run failed")
+            with _SLOT.lock:  # taken after run.lock is released (start takes _SLOT then run)
+                if _SLOT.run is run:
+                    _SLOT.run = None
+        held.release()
+        raise
+
+
+def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 - the refusals
+           clock: Clock, data_dir: Path, opts: Options,
+           spawn: Callable[[Callable[[], None]], None] | None,
+           resume: draftruns.Registration | None, held: merged.SetLock,
+           box: list[Run]) -> dict[str, Any]:  # fmt: skip
     if opts.preset not in USED_ROLES:
         raise InvalidInputError("a Claude eval runs preset C or D (preset B was removed in"
                                 " v3.0.0, ADR 0031)")  # fmt: skip
@@ -558,7 +601,8 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
     # (eval plan P1; window tuning: a for-gate run counts whatever its size; M8 plan AF5)
     if genset.is_generated(opts.root) or window or opts.cases or opts.forced_draft:
         opts = replace(opts, for_gate=False)
-    cases, version = evalrun.load(opts.root, fraud_only=opts.fraud_only)
+    read = evalrun.read_set(opts.root)
+    cases, version = read.selected(fraud_only=opts.fraud_only), read.version
     specs = _draft_specs(cases)
     draft = any(specs.values())
     if draft:  # the draft set is run --not-for-gate (M8 plan §4 "Set")
@@ -585,15 +629,21 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             raise InvalidInputError(f"no case matches --cases {', '.join(unmatched)}{among}")
         cases = [c for c in cases if any(fnmatch.fnmatchcase(c.id, g) for g in opts.cases)]
     if not cases:
-        raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
+        raise InvalidInputError("no cases to run", advice="build the set with `ecf eval build`")
     conn = connect()
     source_run: str | None = None
     got: dict[str, dict[str, Any]] = {}
     source: dict[str, Any] = {}
     derived: dict[str, jev_mapping.Derived] = {}
+    clean: gitcheck.Clean | None = None
     try:
         if opts.for_gate:
+            if read.problems:  # every card must run as read (EVAL-PRIVATE.md, "Fail closed")
+                raise InvalidInputError(f"a run for the gate needs every card of the set, and"
+                                        f" these can't run: {read.problem_text()}",
+                                        advice="run `ecf eval build`")  # fmt: skip
             _check_root(conn, opts.root)
+            clean = _check_clean(opts.root)
         schema = config.current_schema(conn)
         if opts.preset == "D":
             source_run, got, source, derived = _jev_run(conn, version, schema,
@@ -614,8 +664,8 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             with old.lock:  # an expired run is ended and saved first, never dropped (AM3)
                 _check_expiry(connect, clock, old)
             if old.open:
-                raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered; see"
-                                    " `ecf eval status`, or `ecf eval stop`")  # fmt: skip
+                raise ConflictError(f"Claude eval {old.run_id[:8]} is already registered",
+                                    advice="see `ecf eval status`, or `ecf eval stop`")  # fmt: skip
             superseded = old.run_id if old.draft else None
         run_id = new_random_id()
         rec: draftruns.Registration | None = None
@@ -630,6 +680,7 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
         run = Run(run_id, opts, models, pinned, key, version, clock.now(), works,
                   starter, policy.labels(schema, starter), data_dir, schema, source_run,
                   source, source_key)  # fmt: skip
+        run.problems = read.problems
         if rec is not None:
             run.journal, run.clock = draftruns.journal_path(data_dir, run_id), clock
             run.slot, run.attempt, run.expires_at = rec.slot, rec.attempt, rec.expires_at
@@ -639,6 +690,9 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             run.repeat_ids = frozenset(evalrun.determinism_sample(cases))
             _j(run, {"e": "registered", "slot": rec.slot, "attempt": rec.attempt,
                      "kind": rec.kind, "resumed_from": rec.resumed_from})  # fmt: skip
+        run.private_commit = clean.private_commit if clean is not None else None
+        run.set_lock = held
+        box.append(run)
         _SLOT.run = run
     if opts.for_gate:  # only here (P16); never an experiment's or a generated set's (eval P1)
         evalrun.remember_root(connect, clock, opts.root)
@@ -652,8 +706,14 @@ def start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 -
             log.error("claude_eval.prepare_failed", error_type=type(exc).__name__)
             with run.lock:
                 run.state = "failed"
-                run.detail = f"preparing the cases failed ({type(exc).__name__})"
-                _end_record(clock, run, "failed", run.detail, complete=False)
+                # the request's status gives the cause and what to do; the record, kept after
+                # the attempt ends, the cause alone (review round 30, delta check 8)
+                if isinstance(exc, evalrun.CaseChanged):
+                    run.detail, kept = _told(exc), _cause_of(exc)
+                else:
+                    run.detail = kept = f"preparing the cases failed ({type(exc).__name__})"
+                _end_record(clock, run, "failed", kept, complete=False)
+            run.release_set()
 
     (spawn or _thread)(work)
     return snapshot(run)
@@ -670,8 +730,60 @@ def _draft_specs(cases: list[evalrun.Case]) -> dict[str, drafts.DraftSpec | None
         try:
             out[c.id] = drafts.parse(c.expected)
         except ValueError as exc:  # pydantic's ValidationError is one
-            raise InvalidInputError(f"{c.id}: its draft block is invalid ({exc})") from exc
+            raise InvalidInputError(f"{c.id}: its draft block is invalid"
+                                    f" ({_invalid_block(exc)})") from exc  # fmt: skip
     return out
+
+
+def _invalid_block(exc: ValueError) -> str:
+    """What is wrong with a draft block, short: each field and its problem in fixed wording,
+    never the card's own text (pydantic's message quotes the input; review round 30, delta checks
+    8 and 11)."""
+    if isinstance(exc, ValidationError):
+        text = "; ".join(_block_part(e) for e in exc.errors(include_input=False,
+                                                            include_url=False))  # fmt: skip
+    else:  # not pydantic's: a BlockProblem's own text, else not told
+        text = str(exc) if isinstance(exc, drafts.BlockProblem) else drafts.UNTOLD
+    return text if len(text) <= BLOCK_WHY_MAX else text[: BLOCK_WHY_MAX - 1] + "…"
+
+
+BLOCK_WHY_MAX = 300
+
+
+# What a draft block's problems are told as: fixed wording per pydantic error type, a validator's
+# text only when it is a drafts.BlockProblem (fixed text with numbers), anything else UNTOLD; an
+# allow-list, so no new source of text reaches a request or a record (review round 30, delta
+# check 11, after each round had filtered one more source)
+_BLOCK_WORDS = {
+    "missing": "missing",
+    "bool_type": "should be true or false",
+    "bool_parsing": "should be true or false",
+    "literal_error": "not one of the allowed values",
+    "string_type": "should be text",
+    "string_pattern_mismatch": "not in the allowed form",
+    "tuple_type": "should be a list",  # forbid, read as a tuple (delta check 14)
+    "list_type": "should be a list",
+    "model_type": "should be an object",
+    "extra_forbidden": "an unknown field",
+}  # fmt: skip
+_BLOCK_FIELDS = frozenset(drafts.DraftSpec.model_fields) | frozenset(drafts.Identity.model_fields)
+
+
+def _block_part(e: Any) -> str:
+    """One problem: where (the block's own fields and list places only, so an unknown key is
+    named by the field holding it, never by its own name, which is the card's text) and what."""
+    loc: list[str] = []
+    for x in e["loc"]:
+        if not (type(x) is int or x in _BLOCK_FIELDS):
+            break
+        loc.append(str(x))
+    ctx: dict[str, object] = e.get("ctx") or {}
+    error = ctx.get("error")
+    if e["type"] == "value_error" and isinstance(error, drafts.BlockProblem):
+        what = str(error)
+    else:
+        what = _BLOCK_WORDS.get(e["type"], drafts.UNTOLD)
+    return f"{'.'.join(loc)}: {what}" if loc else what
 
 
 def _baseline(conn: sqlite3.Connection, opts: Options, models: dict[str, str]) -> bool:
@@ -686,7 +798,7 @@ def _baseline(conn: sqlite3.Connection, opts: Options, models: dict[str, str]) -
 def _opts_doc(opts: Options) -> dict[str, Any]:
     """A draft run's options as the record keeps them, to resume it after a restart."""
     doc = asdict(opts)
-    doc |= {"root": str(opts.root.resolve()), "cases": list(opts.cases),
+    doc |= {"root": evalrun.logical(opts.root), "cases": list(opts.cases),
             "copy_to": None if opts.copy_to is None else str(opts.copy_to)}  # fmt: skip
     return doc
 
@@ -722,10 +834,11 @@ def _register_draft(data_dir: Path, clock: Clock, run_id: str,  # noqa: PLR0912,
         arm = draftruns.arm_key({r: models[r] for r in used_roles(opts)}, actor_digest, doc)
         now = clock.now()
         if resume is None and (stuck := next((r for r in reg.runs if r.open), None)):
-            # a run stopped on a write error keeps its record open for the restart (5B-14)
-            raise ConflictError(f"draft run {stuck.run_id[:8]} stopped without closing its"
-                                " record (a write error): restart the service to resume it"
-                                " first")  # fmt: skip
+            # a run stopped on a write error keeps its record open for the restart (5B-14), with
+            # its stop's cause and advice when they could be saved (review round 30, delta 3)
+            why = stuck.end_detail or WRITE_STOP
+            raise ConflictError(f"draft run {stuck.run_id[:8]} stopped and is still open, so no"
+                                f" new draft run starts: {why}", advice=SEE_STATUS)  # fmt: skip
         if resume is None:
             kind: draftruns.Kind = "forced" if opts.forced_draft else "natural"
             slot, attempt, _keyed = draftruns.assign(reg, arm=arm, baseline=baseline, kind=kind,
@@ -816,16 +929,46 @@ def _carried(p: draftruns.Registration, digests: dict[str, str], ids: set[str]) 
     return {k for k in ids if p.card_digests.get(k) == digests.get(k)}
 
 
+def _check_clean(root: Path) -> gitcheck.Clean | None:
+    """A run for the gate is only ever on a checkout's set with its private half, both halves
+    committed and the private one pushed, checked live at its start: any other set (public only,
+    outside a checkout) is refused (EVAL-PRIVATE.md, "The gate guard"; operator decision
+    2026-11-06, round 3: replaces the earlier checkout-only scope)."""
+    sp = merged.paths(root)
+    if sp.top is None or sp.private is None:
+        where = (
+            sp.refused
+            if sp.refused is not None
+            else f"this checkout has no eval/private/{sp.name}"
+            if sp.top is not None
+            else f"{root} isn't a checkout's tests/eval/<set>"
+        )
+        raise InvalidInputError(
+            f"a run for the gate needs a checkout's set with its private half: {where}",
+            advice="pass --not-for-gate for an experiment",
+        )
+    got = gitcheck.clean_and_pushed(sp.top, sp.name, fresh=True)  # a run's start: always live
+    if not got.ok:
+        raise InvalidInputError(f"a run for the gate needs the set committed and pushed:"
+                                f" {got.detail}")  # fmt: skip
+    return got
+
+
 def _check_root(conn: sqlite3.Connection, root: Path) -> None:
     """A for-gate run re-points the go-live gate at its set (`remember_root`), whatever the
     set's size: refused on another folder while the gate's set is still there (window tuning
     L1), so a pilot or partial set can't become the gate's evidence by a missed flag."""
     stored = slack_admin.setting(conn, evalrun.EVAL_ROOT)
-    if stored and Path(stored) != root.resolve() and (Path(stored) / "labels.jsonl").is_file():
+    if (
+        stored
+        and Path(evalrun.logical(Path(stored))) != Path(evalrun.logical(root))
+        and (Path(stored) / "labels.jsonl").is_file()
+    ):
         raise InvalidInputError(f"the go-live gate's set is at {stored}: a run for the gate on"
-                                f" {root} would point the gate there. Pass --not-for-gate for an"
-                                " experiment; if the set has moved, remove the old folder's"
-                                " labels.jsonl first")  # fmt: skip
+                                f" {root} would point the gate there",
+                                advice="pass --not-for-gate for an experiment; if the set"
+                                       " has moved, remove the old folder's labels.jsonl"
+                                       " first")  # fmt: skip
 
 
 def _source_key(conn: sqlite3.Connection, source_run: str | None) -> str | None:
@@ -847,7 +990,7 @@ def _prepare(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
         for w in run.works:
             if run.stop.is_set():
                 return
-            raw = w.case.path.read_bytes()
+            raw = evalrun.case_bytes(w.case)  # re-checked against its hash ("Torn reads")
             # as `ecf eval run`: the card's expected facts applied (Q1), so runs score alike
             facts, (cls_text, act_text), measured = evalrun.case_inputs_full(
                 w.case, scratch, triggers.redact_injection, limit=run.opts.classifier_window
@@ -1005,8 +1148,17 @@ def _maybe_finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: 
     _finish(connect, clock, run, "done")
 
 
-def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  # noqa: PLR0915 - the summary's parts
+def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,
             state: str, detail: str = "") -> None:  # fmt: skip
+    """`_finish_run`, then the set's shared lock released, whatever happened."""
+    try:
+        _finish_run(connect, clock, run, state, detail)
+    finally:
+        run.release_set()
+
+
+def _finish_run(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  # noqa: PLR0915 - the summary's parts
+                state: str, detail: str = "") -> None:  # fmt: skip
     """Save what was scored (a stopped or expired run too, marked incomplete) and end the run.
     A draft run is complete once every case is scored, so one stopped during the determinism
     repeats counts, with its repeats marked unfinished (M8 plan AK3)."""
@@ -1038,7 +1190,13 @@ def _finish(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Run,  
                                                 gate_eligible=run.pinned and not frozen,
                                                 for_gate=run.opts.for_gate,
                                                 schema=run.schema,
-                                                fraud_only=run.opts.fraud_only)  # fmt: skip
+                                                fraud_only=run.opts.fraud_only,
+                                                membership=merged.membership(
+                                                    run.opts.root),
+                                                problems=run.problems)  # fmt: skip
+    # a for-gate run on a set with a private half: what it read (EVAL-PRIVATE.md, gate guard)
+    summary |= {} if run.private_commit is None else {
+        "private_commit": run.private_commit, "merged_version": run.version}  # fmt: skip
     if frozen:  # what the classifier was asked, and with: the source run's
         summary.update(run.source)
         summary["classifier_source"] = {"run_id": run.source_run,
@@ -1207,7 +1365,7 @@ def eval_next(connect: Callable[[], sqlite3.Connection], clock: Clock, session_i
         raise InvalidInputError(f"limit must be between 1 and {claude_review.LIMIT_MAX}")
     run = current()
     if run is None:
-        raise NotFoundError(NO_RUN)
+        raise NotFoundError(NO_RUN, advice=NO_RUN_ADVICE)
     with run.lock:
         _check_expiry(connect, clock, run)
         now = clock.now()
@@ -1880,7 +2038,7 @@ def results() -> dict[str, Any]:
     """`eval_results`: progress and, once saved, metrics only: counts and rates, no case IDs."""
     run = current()
     if run is None:
-        raise NotFoundError(NO_RUN)
+        raise NotFoundError(NO_RUN, advice=NO_RUN_ADVICE)
     s = snapshot(run)
     m: dict[str, Any] = s["result"] or {}
     out: dict[str, Any] = {k: s[k] for k in ("state", "done", "total")} | {"run_id": run.run_id[:8]}
@@ -1904,23 +2062,46 @@ def _j(run: Run, event: dict[str, Any]) -> None:
     _j_many(run, [event])
 
 
+# A run stopped on a write error: what happened and what to do, never what a restart will do
+# (it depends on the disk, the attempt's limits and the set): the record says that afterwards
+# (review round 30, delta check 3)
+WRITE_STOP = ("its record couldn't be written: fix what stopped the write, then restart the"
+              " service")  # fmt: skip
+SEE_STATUS = "`ecf eval status` then shows whether the run resumed or its attempt ended"
+
+
 def _j_many(run: Run, events: list[dict[str, Any]]) -> None:
     """Append events in one write. A write that fails (a full disk, a refused write) stops the
     run closed: nothing more is handed out or journalled, the request fails, and the record stays
-    open, so a restart resumes it from what was written (diff review 5B-14)."""
+    open for the restart (diff review 5B-14), keeping the stop's cause and advice when it can be
+    saved, so a refused new registration repeats them (review round 30, delta check 3)."""
     if run.journal is None or not events:
         return
     now = run.clock.now() if run.clock is not None else datetime.now().astimezone()
+    path = run.journal
     try:
-        draftruns.append_many(run.journal, [{"at": to_ts(now)} | e for e in events])
-    except OSError as exc:
+        draftruns.append_many(path, [{"at": to_ts(now)} | e for e in events])
+    except WRITE_ERRORS as exc:  # a refused link or pipe too (review round 29, delta 14)
         run.journal = None
         run.stop.set()
-        run.state, run.detail = "failed", f"its record couldn't be written ({exc.strerror or exc})"
-        log.error("claude_eval.journal_failed", run_id=run.run_id[:8], errno=exc.errno)
-        raise ServiceUnavailableError(f"the draft run stopped: its record couldn't be written"
-                                      f" ({exc.strerror or exc}); a service restart resumes it"
-                                      " from what was written") from exc  # fmt: skip
+        run.state, run.detail = "failed", f"its record couldn't be written ({reason(exc)})"
+        log.error("claude_eval.journal_failed", run_id=run.run_id[:8],
+                  errno=getattr(exc, "errno", None))  # fmt: skip
+        # a journal refused by name stays refused until it is removed, and removing it takes
+        # the cases this run scored with it (review round 30, delta checks 1-3)
+        why = _cause_of(exc)  # kept on the open record: the cause, and this stop's own advice
+        cause = (f"its record couldn't be written ({why}): fix what stopped the write,"
+                 " then restart the service" if isinstance(exc, OSError)
+                 else f"its record couldn't be written ({why}): remove what is at"
+                      f" {escaped(str(path))} (its journal: the cases it scored go with it),"
+                      " then restart the service")  # fmt: skip
+        try:
+            _update_record(run.data_dir, run.run_id, end_detail=cause)
+        except (EcfError, OSError, ValueError) as again:  # the same disk: the generic advice
+            log.error("claude_eval.stop_cause_failed", run_id=run.run_id[:8],
+                      error_type=type(again).__name__)  # fmt: skip
+        raise ServiceUnavailableError(f"the draft run stopped: {cause}",
+                                      advice=SEE_STATUS) from exc  # fmt: skip
 
 
 def _update_record(data_dir: Path, run_id: str, **changes: Any) -> None:
@@ -1944,8 +2125,9 @@ def _beat(clock: Clock, run: Run) -> None:
         return
     try:
         _update_record(run.data_dir, run.run_id, heartbeat_at=now)
-    except OSError as exc:
-        log.error("claude_eval.heartbeat_failed", run_id=run.run_id[:8], errno=exc.errno)
+    except WRITE_ERRORS as exc:
+        log.error("claude_eval.heartbeat_failed", run_id=run.run_id[:8],
+                  errno=getattr(exc, "errno", None))  # fmt: skip
         return
     run.last_beat = now
 
@@ -2018,20 +2200,135 @@ def recover(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: P
     todo = [r for r in runs if r.open or (r.end == "lost" and r.resumed_by is None
                                           and not r.attempt_over and not r.complete)]  # fmt: skip
     lines: list[str] = []
+    by_set: dict[str, list[draftruns.Registration]] = {}
+    for r in todo:
+        by_set.setdefault(str((r.options or {}).get("root") or ""), []).append(r)
+    for root, recs in by_set.items():  # one set at a time (X13, EVAL-PRIVATE.md)
+        held, why = _set_for_recovery(Path(root)) if root else (None, None)
+        try:
+            if why is not None:  # the set can't be read: close, never restore from it
+                lines += [_close_unread(data_dir, clock, r, root, why) for r in recs]
+                continue
+            lines += _recover_all(connect, clock, data_dir, recs, spawn)
+        finally:
+            if held is not None:
+                held.release()
+    return lines
+
+
+SET_WAIT_S = 5.0  # waiting per set at start, over all its lock waits (X13); not shared out
+
+
+def _set_for_recovery(root: Path) -> tuple[merged.SetLock | None, str | None]:
+    """X13: the set's shared lock, held, once the set is fresh; or why it can't be read. A set
+    without a private half needs no lock. Waits are 20 ms polls, never a blocking flock in a
+    thread; the 5 s count only time spent waiting; a stale set is refreshed under the exclusive
+    lock by `refresh_merged`, which does nothing if another install refreshed meanwhile, while
+    recovery holds no lock of its own (a second exclusive take in one process fails)."""
+    try:
+        sp = merged.paths(root)
+        if sp.private is None:
+            return None, None
+        left = [SET_WAIT_S]
+
+        def waited(s: float) -> None:
+            left[0] = max(0.0, left[0] - s)
+
+        def shared() -> merged.SetLock | None:
+            t0 = time.monotonic()
+            try:
+                return merged.SetLock.take(root, wait=left[0])
+            except merged.RefreshBusy:
+                return None
+            except InvalidInputError:
+                return None  # no lock file yet: stale until a refresh creates it
+            finally:
+                waited(time.monotonic() - t0)
+
+        def fresh_under_lock() -> merged.SetLock | None:
+            """The shared lock, kept only when the set is fresh; released on every other way
+            out, a raise in the freshness check included (review round 2, L8)."""
+            held = shared()
+            if held is None:
+                return None
+            try:
+                if held.held and merged.is_fresh(sp):
+                    return held
+            except BaseException:
+                held.release()
+                raise
+            held.release()
+            return None
+
+        if (held := fresh_under_lock()) is not None:
+            return held, None
+        with contextlib.suppress(merged.RefreshBusy):
+            merged.refresh_merged(root, wait=left[0], on_wait=waited)
+        if (held := fresh_under_lock()) is not None:
+            return held, None
+        return None, "its lock stayed busy or it is still stale"
+    except Exception as exc:  # the set's own: steps 1-2 and the release only
+        return None, f"{type(exc).__name__}"
+
+
+def _close_unread(data_dir: Path, clock: Clock, r: draftruns.Registration, root: str,
+                  why: str) -> str:  # fmt: skip
+    """X13 step 4: closed as today's handler closes a record, with a fixed detail."""
+    # the cause alone: an ended record keeps no advice (review round 30, delta check 6)
+    detail = (f"the eval set {escaped(root)} couldn't be read at service start ({why}); this"
+              " attempt is over")  # fmt: skip
+    try:
+        _update_record(data_dir, r.run_id, end=r.end or "lost", ended_at=clock.now(),
+                       complete=False, attempt_over=True, end_detail=detail)  # fmt: skip
+    except Exception as again:
+        log.error("claude_eval.recover_mark_failed", run=r.run_id[:8],
+                  error_type=type(again).__name__)  # fmt: skip
+    return f"{r.run_id[:8]} not recovered (its set couldn't be read)"
+
+
+def _recover_all(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
+                 todo: list[draftruns.Registration],
+                 spawn: Callable[[Callable[[], None]], None] | None) -> list[str]:  # fmt: skip
+    """Today's recovery, per record (step 3): a raise closes only that record."""
+    lines: list[str] = []
     for r in todo:  # one run failing never stops the others
         try:
             lines.append(_recover_one(connect, clock, data_dir, r, spawn))
         except Exception as exc:
             log.error("claude_eval.recover_failed", run=r.run_id[:8], error_type=type(exc).__name__)
+            why = _recovery_why(exc)
             try:  # its slot takes a new attempt, on the operator's word, rather than jamming
                 _update_record(data_dir, r.run_id, end=r.end or "lost", ended_at=clock.now(),
                                complete=False, attempt_over=True,
-                               end_detail=f"recovery failed ({type(exc).__name__})")  # fmt: skip
+                               end_detail=f"recovery failed ({why})")  # fmt: skip
             except Exception as again:
                 log.error("claude_eval.recover_mark_failed", run=r.run_id[:8],
                           error_type=type(again).__name__)  # fmt: skip
             lines.append(f"{r.run_id[:8]} not recovered ({type(exc).__name__})")
     return lines
+
+
+def _recovery_why(exc: Exception) -> str:
+    """Why an attempt ended, for its record: its cause (`_cause_of`) and that it is over."""
+    return f"{_cause_of(exc)}; this attempt is over"
+
+
+def _told(exc: EcfError) -> str:
+    """An ecf error as whoever made the request is told it: its cause and what to do. Never for
+    a record (`_cause_of`); the record check refuses it there (review round 30, delta check 8)."""
+    return exc.detail
+
+
+def _cause_of(exc: Exception) -> str:
+    """An error's cause for a record, never advice (the attempt is over, so "try again" or
+    "restart" would be false; review round 30, delta checks 1 and 5-7). An ecf error gives its
+    `cause`, a system error its reason, anything else only its kind."""
+    cause = exc.__cause__ if isinstance(exc, ServiceUnavailableError) and exc.__cause__ else exc
+    if isinstance(cause, EcfError):
+        return escaped(cause.cause)
+    if isinstance(cause, OSError):
+        return reason(cause)
+    return type(cause).__name__
 
 
 def _recover_one(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
@@ -2054,7 +2351,7 @@ def _recover_one(connect: Callable[[], sqlite3.Connection], clock: Clock, data_d
     except (EcfError, OSError, ValueError) as exc:
         _update_record(data_dir, rec.run_id, end=state, ended_at=now, complete=False,
                        end_detail=f"{detail}; its cases couldn't be read back"
-                                  f" ({type(exc).__name__})", attempt_over=True)  # fmt: skip
+                                  f" ({_cause_of(exc)})", attempt_over=True)  # fmt: skip
         return f"{rec.run_id[:8]} {state}, not resumed ({type(exc).__name__})"
     with run.lock:
         _finish(connect, clock, run, state, detail)
@@ -2080,12 +2377,29 @@ def _resume_lost(connect: Callable[[], sqlite3.Connection], clock: Clock, data_d
         try:
             start(connect, clock, data_dir, _opts_from(rec.options), spawn=spawn,
                   resume=rec.model_copy(update={"restarts": counted}))  # fmt: skip
-        except EcfError as exc:
-            over = f"not resumed: {exc.detail}"
+        except Exception as exc:
+            # logged first: reading the record below may fail too (review round 30, delta 6)
+            log.info("claude_eval.resume_failed", run=rec.run_id[:8],
+                     error_type=type(exc).__name__)  # fmt: skip
+            # registered, then stopped by any error: the new run owns the attempt, its open
+            # record keeps its own stop's cause, and the lost one stays resumed by it (review
+            # round 30, delta checks 4-5); decided from the record, whatever the error
+            if (new := _resumed_by(data_dir, rec.run_id)) is not None:
+                return f"{rec.run_id[:8]} lost, resumed as {new[:8]}, which stopped"
+            if not isinstance(exc, EcfError):
+                raise
+            over = f"not resumed ({_recovery_why(exc)})"
         else:
             return f"{rec.run_id[:8]} lost, resumed as {current().run_id[:8]}"  # pyright: ignore[reportOptionalMemberAccess]
     _update_record(data_dir, rec.run_id, attempt_over=True, end_detail=f"{detail}; {over}")
     return f"{rec.run_id[:8]} lost; {over}"
+
+
+def _resumed_by(data_dir: Path, run_id: str) -> str | None:
+    """The run a lost run was resumed as, as its record now says."""
+    with _REG_LOCK:
+        r = draftruns.load(data_dir).get(run_id)
+    return None if r is None else r.resumed_by
 
 
 def _restored(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,
@@ -2249,6 +2563,7 @@ def draft_status(data_dir: Path) -> dict[str, Any] | None:
         "slots": [{"arm": arm, "slot": slot, "set_digest": digest or None,
                    "state": draftruns.slot_state(runs)[0],
                    "runs": [{"run_id": r.run_id, "attempt": r.attempt, "end": r.end,
-                             "complete": r.complete, "detail": r.end_detail} for r in runs]}
+                             "complete": r.complete, "detail": r.end_detail,
+                             "resumed_by": r.resumed_by} for r in runs]}
                   for (arm, slot, digest), runs in slots.items()],
     }  # fmt: skip

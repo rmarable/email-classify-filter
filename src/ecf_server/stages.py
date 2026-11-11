@@ -74,6 +74,11 @@ def _since(conn: sqlite3.Connection, address_id: str) -> str:
 
 
 def status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
+    with gate.one_pass():  # the set's key worked out once for every address
+        return _status(conn, now)
+
+
+def _status(conn: sqlite3.Connection, now: datetime) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
@@ -168,7 +173,7 @@ def _live_allowed(conn: sqlite3.Connection, aid: str, *, override: bool, reason:
                   held: str) -> gate.Gate:  # fmt: skip
     if held not in HELD_CHOICES:
         raise InvalidInputError(f"held is one of {', '.join(HELD_CHOICES)}")
-    g = gate.compute(conn, aid)
+    g = gate.compute(conn, aid, fresh=True)  # the live git check, never the cached one
     if not g.safety_met:
         failed = "; ".join(c.detail for c in g.checks if not c.ok and not c.waivable)
         raise PolicyDeniedError(f"the go-live safety gates aren't met, and no override can waive"
@@ -267,6 +272,11 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
     override, the effective schema's digest, C's `prompt` (with `agents/classifier.md` from
     v3.0.2, OD-524) or `agents/actor.md` (OD-523)."""
     gate.note_version(conn, to_ts(clock.now()))  # a new gate definition, on record (P30)
+    with gate.one_pass():  # the set's key worked out once for every address
+        _tick(conn, clock)
+
+
+def _tick(conn: sqlite3.Connection, clock: Clock) -> None:
     for a in addresses.list_addresses(conn):
         aid = a["address_id"]
         digest = claude_pins.address_key(conn, aid)
@@ -284,7 +294,8 @@ def tick(conn: sqlite3.Connection, clock: Clock) -> None:
         if SEEN.get(aid) == seen:
             continue
         g = gate.compute(conn, aid)
-        SEEN[aid] = seen  # after computing: an error is retried next tick
+        if not gate.transient_in_pass():  # a transient result is retried next tick, never kept
+            SEEN[aid] = seen
         if g.met:
             with write_tx(conn):
                 gate.record(conn, g, clock.now(), passed=True)

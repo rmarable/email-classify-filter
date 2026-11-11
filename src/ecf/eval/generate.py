@@ -33,7 +33,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 import re
 from collections import Counter
 from collections.abc import Callable
@@ -49,6 +48,7 @@ from ecf.eval import mix as mixmod
 from ecf.eval.builder import build_all, scan_card
 from ecf.eval.cards import PROFILE_TO, Card, parse_card
 from ecf.eval.hygiene import Finding
+from ecf.eval.setio import append_text, atomic_write, writable_set
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import FieldKind, load_schema
 from ecf.text import escaped
@@ -119,9 +119,10 @@ class Work:
         return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
 
     def append(self, name: str, rows: list[dict[str, Any]]) -> None:
+        writable_set(self.root)  # never into a merged view (review round 27)
         self.folder.mkdir(parents=True, exist_ok=True)
-        with self._path(name).open("a", encoding="utf-8") as f:
-            f.writelines(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in rows)
+        text = "".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in rows)
+        append_text(self._path(name), text)  # never through a link (review round 28)
 
 
 @dataclass(frozen=True)
@@ -448,7 +449,9 @@ class Run:
 
     def _ask(self, stage: str, group: str, prompt: str, schema: dict[str, Any],
              seeds: list[str]) -> Reply:  # fmt: skip
-        reply = self.adapter.ask(prompt, schema, self.root / "work" / "call")
+        # the call folder checked as part of the set: never a link out of it (review round 28)
+        call = writable_set(self.root, self.root / "work" / "call")
+        reply = self.adapter.ask(prompt, schema, call)
         self.calls += 1
         self.seconds += reply.seconds
         self.usage.update(reply.usage)
@@ -588,8 +591,9 @@ class Run:
         if (why := self.dups.seen(card.body)) is not None:
             return f"near-duplicate ({why})", None, None
         self.case_no[b.group] += 1
-        (self.root / "cases").mkdir(exist_ok=True)
-        (self.root / "cases" / f"{case_id}.md").write_text(text, encoding="utf-8")
+        root = writable_set(self.root)  # before its cases/ folder is made (review round 27)
+        (root / "cases").mkdir(exist_ok=True)
+        atomic_write(root / "cases" / f"{case_id}.md", text)
         self.work.append("proposals", [{"id": case_id, "seed": seed["id"],
                                         "labels": email["labels"]}])  # fmt: skip
         return "kept", None, case_id
@@ -766,6 +770,7 @@ def case_hashes(root: Path) -> dict[str, dict[str, str]]:
 
 
 def write_manifest(run: Run, state: str) -> None:
+    writable_set(run.root)  # never into a merged view (review round 27)
     mix_doc = run.mix.as_dict()
     groups: dict[str, dict[str, int]] = {}
     for b in run.buckets.values():
@@ -798,9 +803,8 @@ def write_manifest(run: Run, state: str) -> None:
         "calls": run.calls, "seconds": round(run.seconds, 1), "usage": dict(run.usage),
         "cases": case_hashes(run.root) if has_cases else {},
     }  # fmt: skip
-    tmp = run.root / f".{genset.MANIFEST}.tmp"
-    tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, run.root / genset.MANIFEST)
+    # a temporary file of this write's own, never a fixed name a link could sit at (round 28)
+    atomic_write(run.root / genset.MANIFEST, json.dumps(doc, indent=2, sort_keys=True) + "\n")
 
 
 def seeds_digest(root: Path) -> str:
@@ -869,7 +873,9 @@ def verify(root: Path) -> dict[str, Any]:
 
 
 def start(root: Path, *, resume: bool) -> None:
-    """A new run needs an empty folder; `--resume` needs a stopped one (P17)."""
+    """A new run needs an empty folder; `--resume` needs a stopped one (P17). Never a folder
+    inside a merged view, checked before anything is written or bought (review round 27)."""
+    writable_set(root)
     if resume:
         doc = read_manifest(root) if (root / genset.MANIFEST).exists() else None
         if doc is not None and doc.get("state") != "stopped":

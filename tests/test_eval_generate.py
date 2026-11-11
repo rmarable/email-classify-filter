@@ -22,6 +22,7 @@ from ecf.eval import gencheck, genset, tools
 from ecf.eval import generate as gen
 from ecf.eval import mix as mixmod
 from ecf.eval import report as rep
+from ecf.eval.builder import build_all
 from ecf.eval.cards import load_cards
 from ecf.eval.hygiene import scan_text
 from ecf.log import CONTENT_KEYS
@@ -92,7 +93,8 @@ for s in seeds:
                     "from_address": "billing@vendor-a.example", "reply_to": None,
                     "subject": subject, "date": "2026-10-05T09:00:00Z",
                     "body": body,
-                    "hidden_text": None, "attachments": [], "labels": labels}})
+                    "hidden_text": ("Note " + letters[:8]) if sc.get("hidden") else None,
+                    "attachments": [], "labels": labels}})
 out({{"status": "ok", "items": items, "usage": usage, "answer": {{"emails": emails}}}})
 """
 LABELS = {"category": "other", "priority": "low", "requires_action": False,
@@ -305,9 +307,19 @@ def test_a_dev_run_writes_a_generated_set_with_no_labels(tmp_path: Path) -> None
     # one seed call per group, then emails K at a time, from an empty work folder
     log = calls(tmp_path)
     assert sum(c["seeds"] for c in log) == 15  # 10 scam groups + 5 categories
-    assert all(c["cwd_files"] == ["schema.json"] for c in log)
+    assert all(len(f := c["cwd_files"]) == 1 and f[0].startswith(".call-") for c in log)
     text = "".join((root / "work" / f).read_text() for f in ("calls.jsonl", "outcomes.jsonl"))
     assert "Opening" not in text  # no email text in the call and outcome logs (P27)
+
+
+def test_a_generated_set_with_hidden_text_builds(tmp_path: Path) -> None:
+    """X1 counts `hidden_text` as a marker; a generated card is exempt from the public-set
+    refusal (it can't go private, P1), so generating and rebuilding such a set works."""
+    summary, root = run(tmp_path, {"hidden": True})
+    assert summary.state == "complete" and summary.kept == 20
+    cards = load_cards(root / "cases")
+    assert cards and all(c.hidden_text for c in cards)
+    assert build_all(root).built == sorted(c.id for c in cards)
 
 
 def test_a_folder_that_isnt_empty_is_refused(tmp_path: Path) -> None:

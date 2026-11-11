@@ -10,11 +10,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import shutil
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
-from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,8 +21,6 @@ import pytest
 
 from ecf.client import LocalClient
 from ecf.errors import InvalidInputError
-from ecf.eval import labels
-from ecf.eval.builder import build_all
 from ecf.eval.results import (
     RESULT_FORMAT,
     input_warnings,
@@ -50,6 +46,7 @@ from ecf_server import (
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
 from ecf_server.secretstore.memory import MemorySecretStore
+from tests.eval_checkout import checkout_set
 from tests.test_addresses import call, make_state
 from tests.test_claude_review import extend
 from tests.test_jev import KEY, PIN, body
@@ -69,15 +66,11 @@ TOKENS = {case: 1000 + 100 * i for i, case in enumerate(SUBJECTS)}  # a distinct
 
 
 def _set(r: Path, *, unconfirmed: tuple[str, ...] = ()) -> Path:
-    """The five cards, built; each confirmed but `unconfirmed`."""
-    (r / "cases").mkdir(parents=True)
-    for name in SUBJECTS:
-        shutil.copy(SYNTHETIC / "cases" / f"{name}.md", r / "cases" / f"{name}.md")
-    assert not build_all(r).findings
-    for name in SUBJECTS:
-        if name not in unconfirmed:
-            labels.confirm(r, name, date(2026, 10, 1))
-    return r
+    """The five cards in a checkout the gate can count (the injection card private), built;
+    each confirmed but `unconfirmed`."""
+    public = tuple(n for n in SUBJECTS if n != "starter-injection")
+    return checkout_set(r, public, ("starter-injection",),
+                        tuple(n for n in SUBJECTS if n not in unconfirmed))  # fmt: skip
 
 
 @pytest.fixture

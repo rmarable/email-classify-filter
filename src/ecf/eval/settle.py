@@ -31,6 +31,7 @@ from ecf.eval import labels as label_file
 from ecf.eval import review
 from ecf.eval.builder import build_all
 from ecf.eval.cards import parse_card
+from ecf.eval.setio import private_folder, reason, replace_file, writable_root, write_new
 from ecf.schema import FieldKind, load_schema
 
 SETTLED = "settled"
@@ -71,8 +72,9 @@ def questions(root: Path) -> list[dict[str, Any]]:
 
 def export(root: Path, out: Path) -> tuple[Path, Path]:
     """The page data (no case ids) and its token map, for a phone page."""
+    writable_root(out)  # a page folder, never in a merged view (review round 27)
     items = questions(root)
-    out.mkdir(parents=True, exist_ok=True)
+    private_folder(out)  # 0700 when new; an existing one is left as it is (round 29)
     page = {
         "items": [{k: v for k, v in it.items() if k != "case"} for it in items],
         "signs": SIGNS,
@@ -80,8 +82,10 @@ def export(root: Path, out: Path) -> tuple[Path, Path]:
     }
     tokens = {it["t"]: it["case"] for it in items}
     data, key = out / "settle-page.json", out / "settle-tokens.json"
-    data.write_text(json.dumps(page), encoding="utf-8")
-    key.write_text(json.dumps(tokens, indent=1), encoding="utf-8")
+    # email views and case ids: 0600, a new file renamed over each name, never written through
+    # a link, hard link or pipe there (review round 29, twelfth delta check)
+    replace_file(data, lambda tmp: write_new(tmp, json.dumps(page), mode=0o600))
+    replace_file(key, lambda tmp: write_new(tmp, json.dumps(tokens, indent=1), mode=0o600))
     return data, key
 
 
@@ -157,7 +161,7 @@ def apply_page(root: Path, answers_file: Path, tokens_file: Path,
         given: Any = json.loads(answers_file.read_text(encoding="utf-8"))
         tokens: Any = json.loads(tokens_file.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise InvalidInputError(f"can't read the page's answers ({exc})") from None
+        raise InvalidInputError(f"can't read the page's answers ({reason(exc)})") from None
     if not isinstance(given, dict) or not isinstance(tokens, dict):
         raise InvalidInputError("answers and tokens must be JSON objects")
     need = {d["id"]: set(d["fields"]) for d in ag.open_disputes(root)}

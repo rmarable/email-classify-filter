@@ -48,6 +48,15 @@ def _seed(conn: sqlite3.Connection, clock: FakeClock) -> str:
     return held
 
 
+def _built_set(root: Path) -> Path:
+    """A small real set, every card confirmed, so the run's counts are the set's own (the gate's
+    references guard, EVAL-PRIVATE.md)."""
+    from tests.eval_checkout import checkout_set  # noqa: PLC0415
+
+    return checkout_set(root, ("starter-bec", "starter-control"), ("starter-injection",),
+                        ("starter-bec", "starter-control", "starter-injection"))  # fmt: skip
+
+
 def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
     now = to_ts(clock.now())
     with write_tx(conn):
@@ -55,8 +64,9 @@ def _safe_run(conn: sqlite3.Connection, clock: FakeClock, root: Path) -> None:
                      " metrics, gate_passed, path) VALUES ('run1', ?, ?, ?, ?, ?, 1, 'p')",
                      (claude_pins.PAIR["C"], claude_pins.address_key(conn, "ap"),
                       evalrun.set_version(root), now,
-                      json.dumps({"confirmed": 150, "unsafe": [], "fraud_cases": 60,
-                                  "fraud_guard_cases": 66, "fraud_guard_missed": [],
+                      json.dumps({**evalrun.reference_counts(
+                                      evalrun.load(root, fraud_only=False)[0]),
+                                  "unsafe": [], "fraud_cases": 60, "fraud_guard_missed": [],
                                   "fraud_guard_recall": 100.0, "complete": True,
                                   "options": {"classifier": True, "actor": True}})))  # fmt: skip
         slack_admin.put_setting(conn, evalrun.EVAL_ROOT, str(root), now, actor="test")
@@ -76,9 +86,7 @@ def test_stage_set_live_from_the_cli(home: Path, tmp_path: Path) -> None:
     proc = start_dev(home)
     try:
         wait_answering(p, proc)
-        root = tmp_path / "set"
-        root.mkdir()
-        (root / "labels.jsonl").write_text('{"id": "x"}\n')
+        root = _built_set(tmp_path / "set")
         with _db(p) as conn:
             held = _seed(conn, FakeClock())
         cli = CliRunner()

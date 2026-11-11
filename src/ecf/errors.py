@@ -146,13 +146,18 @@ ERROR_TABLE: dict[ErrorCode, ErrorSpec] = {
 
 
 class EcfError(Exception):
-    """Base class. Subclasses fix `code`; `detail` is a short message, never email content."""
+    """Base class. Subclasses fix `code`; `detail` is a short message, never email content.
+    `cause` is what went wrong and `advice` what to do about it, kept apart so a record keeps
+    the cause alone (advice can be false later: "try again" after the attempt is over); `detail`
+    joins them for whoever made the request (review round 30, delta check 6)."""
 
     code: ClassVar[ErrorCode] = ErrorCode.INTERNAL
 
-    def __init__(self, detail: str = "", **extra: Any) -> None:
-        super().__init__(detail or self.spec.title)
-        self.detail = detail or self.spec.title
+    def __init__(self, detail: str = "", *, advice: str = "", **extra: Any) -> None:
+        self.cause = detail or self.spec.title
+        self.advice = advice
+        self.detail = f"{self.cause}; {advice}" if advice else self.cause
+        super().__init__(self.detail)
         self.extra = extra
 
     @property

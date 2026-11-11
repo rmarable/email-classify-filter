@@ -33,8 +33,9 @@ from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError
-from ecf.eval import fixed_labels
+from ecf.eval import fixed_labels, merged
 from ecf.eval.cards import DERIVED_FACTS, INTERNAL_FACTS, PROFILE_TO
+from ecf.eval.setio import real
 from ecf.schema import derive_labels, unlabel_removed
 from ecf_server import db, draftcheck, fetch, internal, precheck, rules, triggers
 from ecf_server.analysis import MessageAnalyzer
@@ -117,8 +118,13 @@ class Case:
 
 
 def load_cases(root: Path) -> tuple[list[Case], list[str]]:
-    """The cases listed in `labels.jsonl` under `root`, and the IDs whose file isn't built."""
-    root = root.resolve()
+    """The cases listed in `labels.jsonl` under `root` (the set the resolver gives for the logical
+    path), and the IDs whose file isn't built. Anything unreadable is refused by name."""
+    with merged.named_errors():  # the one rule (review round 17)
+        return _load_cases(real(merged.resolve(root)))
+
+
+def _load_cases(root: Path) -> tuple[list[Case], list[str]]:
     index = root / "labels.jsonl"
     if not index.is_file():
         raise InvalidInputError(f"no labels.jsonl in {root} (the synthetic set's folder)")
@@ -132,7 +138,7 @@ def load_cases(root: Path) -> tuple[list[Case], list[str]]:
             continue
         try:
             row = json.loads(line)
-            path = (root / row["file"]).resolve()
+            path = real(root / row["file"])
             expected = row["expected"]
             raw = dict(expected.get("labels") or {})
             own = hand.get(str(row["id"]))

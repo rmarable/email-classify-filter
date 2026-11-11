@@ -27,6 +27,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval.cards import Card, parse_card
+from ecf.eval.setio import append_text, atomic_write, writable_set
 from ecf.schema import (
     NOT_DERIVED_LABELS,
     REMOVED_BY_FIELD,
@@ -62,8 +63,8 @@ def read_log(root: Path) -> list[dict[str, Any]]:
 
 
 def append_log(root: Path, rows: list[dict[str, Any]]) -> None:
-    with (root / LOG).open("a", encoding="utf-8") as f:
-        f.writelines(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    text = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    append_text(writable_set(root) / LOG, text)  # never through a link (review round 28)
 
 
 def entry(row: dict[str, Any], field: str, *, before: Any, answer: Any, final: Any,
@@ -172,7 +173,7 @@ def set_labels(path: Path, new: dict[str, Any]) -> None:
     changed = _LABELS_LINE.sub(lambda m: f"{m.group(1)}{{{body}}}", text, count=1)
     if parse_card(changed, source=path.name).expected.labels != new:
         raise InvalidInputError(f"{path.name}: the labels didn't read back as written")
-    path.write_text(changed, encoding="utf-8")
+    atomic_write(writable_set(path.parents[1], path), changed)  # <set>/cases/<id>.md
 
 
 def merged(old: dict[str, Any], finals: dict[str, Any]) -> dict[str, Any]:
@@ -233,16 +234,11 @@ def kept_items(field: str, old: dict[str, Any], new: dict[str, Any]) -> dict[str
     }
 
 
-def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
-                rebuild: Callable[[Path], None]) -> dict[str, Any]:  # fmt: skip
-    """Write a card review page's answers for one card field (`{case id: {"label": value, "how":
-    "single" | "bulk"}}`) into each card's `labels:` line, with the fixed items a replaced
-    removed value implied (`kept_items`); rebuild the set once (`rebuild(root)`); log each
-    answer in `reviews.jsonl` (kind `page`, with how); and confirm again, as the operator's,
-    each card that was confirmed before (the answers are the operator's own; the rest of its
-    expected values were confirmed already). A card that wasn't confirmed stays pending: its
-    rule, safety and other labels need `ecf eval label <id>`. Every id must be a case and every
-    value one of the field's values in the shipped schema; nothing is written otherwise."""
+def validate_page(
+    root: Path, field: str, answers: dict[str, Any]
+) -> tuple[dict[str, dict[str, Any]], dict[str, Path]]:
+    """`record_page`'s checks, writing nothing (an import across a set's two halves checks both
+    parts before it writes either, EVAL-PRIVATE.md). Returns the rows and card files by ID."""
     spec = load_schema().fields.get(field)
     if field not in CARD_FIELDS or spec is None:
         raise InvalidInputError(f"{field!r} isn't a card field a page sets"
@@ -262,6 +258,20 @@ def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
     missing = sorted(set(answers) - set(paths))
     if missing:
         raise InvalidInputError(f"no card file for: {', '.join(missing[:5])}")
+    return rows, paths
+
+
+def record_page(root: Path, field: str, answers: dict[str, Any], on: date,
+                rebuild: Callable[[Path], None]) -> dict[str, Any]:  # fmt: skip
+    """Write a card review page's answers for one card field (`{case id: {"label": value, "how":
+    "single" | "bulk"}}`) into each card's `labels:` line, with the fixed items a replaced
+    removed value implied (`kept_items`); rebuild the set once (`rebuild(root)`); log each
+    answer in `reviews.jsonl` (kind `page`, with how); and confirm again, as the operator's,
+    each card that was confirmed before (the answers are the operator's own; the rest of its
+    expected values were confirmed already). A card that wasn't confirmed stays pending: its
+    rule, safety and other labels need `ecf eval label <id>`. Every id must be a case and every
+    value one of the field's values in the shipped schema; nothing is written otherwise."""
+    rows, paths = validate_page(root, field, answers)
     was_confirmed = {i for i in answers if label_file.is_confirmed(rows[i])}
     log: list[dict[str, Any]] = []
     changed: list[str] = []
@@ -322,7 +332,7 @@ def write_expected(path: Path, rule: str | None, safety: dict[str, bool]) -> boo
     if new == text:
         return False
     parse_card(new, source=path.name)  # still a valid card
-    path.write_text(new, encoding="utf-8")
+    atomic_write(writable_set(path.parents[1], path), new)  # <set>/cases/<id>.md
     return True
 
 

@@ -1,0 +1,7 @@
+#!/bin/sh
+# The card scan before a push (planning-docs/EVAL-PRIVATE.md, "Builder refusal", X5): git passes
+# the remote's name and URL, and each pushed ref on stdin. Every checkout runs
+# `git config core.hooksPath .githooks`; the private clone sets core.hooksPath to this folder by
+# absolute path. The public repository's top is found from this file, not the current folder.
+top="$(cd "$(dirname "$0")/.." && pwd -P)"
+exec uv run --project "$top" --no-sync python "$top/scripts/check_card_injection.py" --hook "$1" "$2"

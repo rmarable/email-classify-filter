@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
@@ -25,6 +24,7 @@ from typing import Any, cast
 from ecf.errors import InvalidInputError
 from ecf.eval import labels as label_file
 from ecf.eval import review
+from ecf.eval.setio import atomic_write, writable_set
 from ecf.schema import FIXED_ITEMS
 
 FILE = "fixed_labels.jsonl"
@@ -47,13 +47,10 @@ def read(root: Path) -> list[dict[str, Any]]:
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
     """Replace the file atomically (a temporary file, then `os.replace`): a crash leaves the
     old file or the new one, never half of it."""
-    path = root / FILE
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
+    atomic_write(
+        writable_set(root) / FILE,
         "".join(json.dumps(r, sort_keys=True) + "\n" for r in sorted(rows, key=lambda r: r["id"])),
-        encoding="utf-8",
     )
-    os.replace(tmp, path)
 
 
 def is_confirmed(row: Mapping[str, Any], sha256: str | None) -> bool:
@@ -65,15 +62,17 @@ def is_confirmed(row: Mapping[str, Any], sha256: str | None) -> bool:
 
 
 def current(root: Path, cases: list[dict[str, Any]] | None = None,
+            fixed: list[dict[str, Any]] | None = None,
             ) -> tuple[dict[str, dict[str, bool]], list[str]]:  # fmt: skip
     """Each case's confirmed fixed-item labels, and the ids whose row is stale (the card's
-    message changed since, or the row names no case in `labels.jsonl`). `cases` is
-    `labels.jsonl`'s rows when the caller has read them already (read here otherwise)."""
+    message changed since, or the row names no case in `labels.jsonl`). `cases` and `fixed` are
+    `labels.jsonl`'s and this file's rows when the caller has read them already (read here
+    otherwise)."""
     rows = label_file.read(root) if cases is None else cases
     shas = {r["id"]: r.get("sha256") for r in rows}
     good: dict[str, dict[str, bool]] = {}
     stale: list[str] = []
-    for r in read(root):
+    for r in read(root) if fixed is None else fixed:
         if is_confirmed(r, shas.get(r["id"])):
             good[r["id"]] = dict(r["labels"])
         else:
@@ -81,14 +80,9 @@ def current(root: Path, cases: list[dict[str, Any]] | None = None,
     return good, sorted(stale)
 
 
-def record(root: Path, item: str, answers: Mapping[str, Any], on: date) -> int:
-    """Write the operator's answers for one fixed item (`{case id: {"label": bool, "how":
-    "single" | "bulk"}}`), each confirmed against the case's current message, and log each in
-    `reviews.jsonl`. Every id must be a case in `labels.jsonl` and every answer a mapping;
-    nothing is written otherwise. `fixed_labels.jsonl` is replaced atomically first, then the log
-    is appended: if the append fails, the labels stand and their `reviews.jsonl` lines are
-    missing (re-import the same file to log them; the labels are unchanged then, so it counts 0).
-    Returns how many labels changed or were added."""
+def validate(root: Path, item: str, answers: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """`record`'s checks, writing nothing (an import across a set's two halves checks both parts
+    before it writes either, EVAL-PRIVATE.md). Returns the set's rows by ID."""
     if item not in FIXED_ITEMS:
         raise InvalidInputError(f"{item!r} isn't a fixed item ({', '.join(FIXED_ITEMS)})")
     cases = {r["id"]: r for r in label_file.read(root)}
@@ -101,7 +95,26 @@ def record(root: Path, item: str, answers: Mapping[str, Any], on: date) -> int:
         a = cast(Mapping[str, Any], given)
         if not isinstance(a.get("label"), bool) or a.get("how") not in HOW:
             raise InvalidInputError(f"{case_id}: needs label true/false and how single/bulk")
+    return cases
+
+
+def record(root: Path, item: str, answers: Mapping[str, Any], on: date) -> int:
+    """Write the operator's answers for one fixed item (`{case id: {"label": bool, "how":
+    "single" | "bulk"}}`), each confirmed against the case's current message, and log each in
+    `reviews.jsonl`. Every id must be a case in `labels.jsonl` and every answer a mapping;
+    nothing is written otherwise. `fixed_labels.jsonl` is replaced atomically first, then the log
+    is appended: if the append fails, the labels stand and their `reviews.jsonl` lines are
+    missing (re-import the same file to log them; the labels are unchanged then, so it counts 0).
+    Returns how many labels changed or were added."""
+    cases = validate(root, item, answers)
     rows = {r["id"]: r for r in read(root)}
+    return _record_checked(root, item, answers, on, cases, rows)
+
+
+def _record_checked(
+    root: Path, item: str, answers: Mapping[str, Any], on: date,
+    cases: dict[str, dict[str, Any]], rows: dict[str, dict[str, Any]],
+) -> int:  # fmt: skip
     log: list[dict[str, Any]] = []
     for case_id, a in answers.items():
         case = cases[case_id]

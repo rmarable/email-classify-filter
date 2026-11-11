@@ -1,0 +1,3 @@
+# Cards are compared and pinned by their bytes (EVAL-PRIVATE.md, "Builder refusal"): never
+# convert their line endings
+tests/eval/**/cases/*.md -text

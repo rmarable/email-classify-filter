@@ -17,6 +17,18 @@ from ecf.paths import Paths
 from ecf_server import db
 from ecf_server.clock import FakeClock
 
+REPO = Path(__file__).resolve().parents[1]
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """`@pytest.mark.private("synthetic")`: the test reads the real set's private half, so it
+    skips when this checkout has none (CI, a worktree without it). These are the only skips the
+    merge gate's run without the private set allows (EVAL-PRIVATE.md, "Releases and CI")."""
+    for m in item.iter_markers("private"):
+        (name,) = m.args
+        if not (REPO / "eval" / "private" / name).is_dir():
+            pytest.skip(f"no eval/private/{name} in this checkout (public set only)")
+
 
 @pytest.fixture(scope="session")
 def dovecot_server() -> Iterator[Any]:
@@ -191,3 +203,18 @@ def running(home: Path) -> Iterator[Paths]:
         yield p
     finally:
         stop(proc)
+
+
+@pytest.fixture
+def fake_gate_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """For gate tests that store made-up run figures (150 confirmed, 66 fraud-guard cases) over a
+    placeholder set: the references guard reads those same figures as the set's own. The guard
+    itself is tested on real split sets (tests/test_eval_private_gate.py)."""
+    from ecf_server import evalrun, gate  # noqa: PLC0415
+
+    def counts(cases: object) -> dict[str, int]:
+        del cases
+        return {"confirmed": 150, "fraud_guard_cases": 66}
+
+    monkeypatch.setattr(evalrun, "reference_counts", counts)
+    gate.reset_cache()

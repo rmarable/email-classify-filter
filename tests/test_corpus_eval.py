@@ -101,7 +101,11 @@ def test_rescore_uses_the_current_labels_and_keeps_the_original(
     cl.put(labels, cl.make((third["content_hash"], third["identity_digest"]), run.corpus_id, LABEL,
                            None, date(2026, 10, 8)))  # fmt: skip
     cl.save(cl.path_for(s.path), labels)
-    got = evalrun.rescore(s, first, clock)
+    (db_path.parent / "merge.json").write_text("")  # a stray file above the data folder
+    with pytest.raises(InvalidInputError, match="merged eval set"):  # not trusted unnamed
+        evalrun.rescore(s, first, clock)
+    got = evalrun.rescore(s, first, clock, data_dir=db_path.parent)  # the install's own: trusted
+    (db_path.parent / "merge.json").unlink()
     second = Path(got["path"])
     assert second != first and first.exists() and second.name.startswith(first.stem + "-rescore-")
     old, new = results.load_result(first), results.load_result(second)

@@ -9,7 +9,6 @@ import json
 import shutil
 import sqlite3
 from dataclasses import replace
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -20,28 +19,21 @@ from typer.testing import CliRunner
 
 from ecf import cli
 from ecf.errors import InvalidInputError, NotFoundError
-from ecf.eval import labels
-from ecf.eval.builder import build_all
 from ecf.eval.results import load_result
 from ecf_server import claude_eval, evalrun, message, ruletest, slack_admin, triggers
 from ecf_server.api import ServiceState, create_app
 from ecf_server.clock import FakeClock
 from tests import test_claude_eval as ce
+from tests.eval_checkout import INJ_TEST, checkout_set
 from tests.test_eval_window import LONG
 
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     """Two starter cards and a long card whose signal and injection sit past 1,500."""
-    r = tmp_path / "synthetic"
-    (r / "cases").mkdir(parents=True)
-    for name in ("starter-bec.md", "starter-control.md"):
-        shutil.copy(ce.SYNTHETIC / "cases" / name, r / "cases" / name)
-    (r / "cases" / "long-signal.md").write_text(LONG)
-    assert not build_all(r).findings
-    for cid in ("starter-bec", "starter-control", "long-signal"):
-        labels.confirm(r, cid, date(2026, 10, 1))
-    return r
+    confirm = ("starter-bec", "starter-control", "long-signal")  # long-signal is marked: private
+    return checkout_set(tmp_path, ("starter-bec", "starter-control"), (INJ_TEST, "long-signal"),
+                        confirm, texts={"long-signal": LONG})  # fmt: skip
 
 
 @pytest.fixture(autouse=True)
@@ -187,8 +179,13 @@ def test_a_rescore_keeps_the_window_and_the_cases(
 def test_a_for_gate_run_on_another_root_is_refused_while_the_old_set_exists(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
-    other = tmp_path / "other"
-    shutil.copytree(root, other)
+    other = checkout_set(
+        tmp_path / "other",
+        ("starter-bec", "starter-control"),
+        (INJ_TEST, "long-signal"),  # long-signal is marked: private
+        ("starter-bec", "starter-control", "long-signal"),
+        texts={"long-signal": LONG},
+    )  # another checkout's copy of the set
     ce.start(db_path, clock, root)
     assert _remembered(conn) == str(root.resolve())
     claude_eval.reset()
@@ -375,14 +372,15 @@ def test_an_experiment_is_never_a_source_run(conn: sqlite3.Connection, db_path: 
         ce.start(db_path, clock, root, source_run=rid)
 
 
-def test_the_root_guard_follows_symlinks_and_covers_preset_d(
+def test_the_root_guard_refuses_a_linked_set_and_covers_preset_d(
     conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path, tmp_path: Path
 ) -> None:
     ce.start(db_path, clock, root)
     claude_eval.reset()
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
-    ce.start(db_path, clock, alias)  # the same set by another name: allowed
+    with pytest.raises(InvalidInputError, match="symbolic link"):  # round 6: never through a link
+        ce.start(db_path, clock, alias)
     assert _remembered(conn) == str(root.resolve())
     claude_eval.reset()
     other = tmp_path / "other"

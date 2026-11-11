@@ -76,6 +76,10 @@ tests/eval/drafts/.build/
 *token*.yml
 !docs/adr/**
 !tests/eval/*/cases/**
+# after the re-include above, so a crashed atomic write or Finder never makes a clone dirty
+# (EVAL-PRIVATE.md, "Private repository")
+tests/eval/**/*.tmp
+tests/eval/**/.DS_Store
 
 # Real-mail corpus files and their labels (SPEC §16.7, OD-466): never in git
 *.ecfcorpus

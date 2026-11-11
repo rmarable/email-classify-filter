@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import re
 import sqlite3
@@ -67,7 +66,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from ecf.errors import ConflictError, InvalidInputError
-from ecf.eval import corpus_labels, fixed_labels, genset, metrics
+from ecf.eval import corpus_labels, fixed_labels, genset, merged, metrics
 from ecf.eval import labels as label_file
 from ecf.eval.cards import bool_target, level_target, phrase_fold, target_met
 from ecf.eval.metrics import wilson
@@ -82,6 +81,7 @@ from ecf.eval.results import (
     spawn_figures,
     window_figures,
 )
+from ecf.eval.setio import canonical, real, replace_file, sweep_folder, writable_root, write_new
 from ecf.ids import new_random_id
 from ecf.schema import (
     CURRENT_VERSION,
@@ -246,6 +246,7 @@ class Case:
     # a long card's signal and injected-instruction phrases (OD-555); None for other cards
     signal: str | None = None
     injection_phrase: str | None = None
+    sha256: str = ""  # the file's hash when the set was read: re-checked when the case runs
 
 
 CORPUS_LIMIT = 1500  # messages per corpus run until real-service test 1 measures s/message (R166)
@@ -286,46 +287,131 @@ def corpus_run(session: corpus_session.Session,
 
 
 def set_version(root: Path) -> str:
-    """The set's version (`ecf.eval.labels.set_version`, shared with the client)."""
-    return label_file.set_version(root)
+    """The version of the set `merged.resolve` gives for the logical root (EVAL-PRIVATE.md, "The
+    resolver"), for a caller that reads no case. Not cheap with a private half: the freshness
+    check hashes every source and merged copy (about 85-110 ms for `synthetic`, round 12)."""
+    with merged.named_errors():  # anything unreadable refused by name (review round 17)
+        return label_file.set_version(merged.resolve(root))
 
 
-def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
-    """The cases, with each confirmation re-checked against the files (OD-241), and the set's
-    version (a hash of labels.jsonl)."""
-    root = root.resolve()
+# Reading a set. `read_set` is the one reader every run and the gate go through
+# (EVAL-PRIVATE.md, "Fail closed" and "Torn reads"): under the set's shared lock it resolves
+# once, reads each label file once (the version is of those bytes), and checks every row's file.
+# A row it can't run is a problem, never silently dropped.
+
+MISSING, OUTSIDE, OVERSIZED, CHANGED, UNREADABLE = (
+    "missing",
+    "outside the set",
+    "over the size limit",
+    "changed",
+    "unreadable",
+)
+
+
+class CaseChanged(InvalidInputError):
+    """A case's file no longer matches the hash the set was read with."""
+
+
+class NoSet(InvalidInputError):
+    """No `labels.jsonl` where the set should be (moved, or never built)."""
+
+
+@dataclass(frozen=True)
+class SetRead:
+    root: Path  # the set read: the merged view, or the public set
+    version: str
+    cases: list[Case]  # every case that can run (a changed one is kept, unconfirmed)
+    problems: tuple[tuple[str, str], ...]  # (id, why), in ID order
+
+    def selected(self, *, fraud_only: bool) -> list[Case]:
+        return [c for c in self.cases if not fraud_only or is_fraud_case(c)]
+
+    def problem_text(self) -> str:
+        return "; ".join(f"{i} ({why})" for i, why in self.problems[:10]) + (
+            f"; and {len(self.problems) - 10} more" if len(self.problems) > 10 else ""
+        )
+
+
+def is_fraud_case(case: Case) -> bool:
+    """A case `--fraud-only` keeps: a fraud rule, or a safety expectation to escalate or resist."""
+    safety: dict[str, Any] = case.expected.get("safety") or {}
+    fraud_rule = case.expected.get("rule") in ("fraud_guard", "fraud_weak")
+    return fraud_rule or bool(safety.get("must_escalate") or safety.get("injection_target"))
+
+
+def read_set(root: Path) -> SetRead:
+    """The set for the logical `root`, read once and checked (see above). Refused while a
+    refresh holds the set's lock."""
+    held = merged.take_shared(root)
+    try:
+        with (
+            merged.one_read(),
+            merged.named_errors(),
+        ):  # each email hashed once: freshness check and row check share it
+            return _read_set(real(merged.resolve(root)), merged.paths(root).public)
+    finally:
+        merged.release(held)
+
+
+def _read_set(root: Path, logical: Path | None = None) -> SetRead:
     index = root / "labels.jsonl"
     if not index.is_file():
-        raise InvalidInputError(f"no labels.jsonl in {root}")
-    rows = label_file.read(root)
-    fixed, _stale = fixed_labels.current(root, rows)  # a stale row's labels are left out
+        raise NoSet(f"no labels.jsonl in {root}")
+    raw = index.read_bytes()
+    fixed_path = root / fixed_labels.FILE
+    fixed_raw = fixed_path.read_bytes() if fixed_path.is_file() else None
+    rows = [json.loads(x) for x in raw.decode("utf-8").splitlines() if x.strip()]
+    fixed_rows = ([json.loads(x) for x in fixed_raw.decode("utf-8").splitlines() if x.strip()]
+                  if fixed_raw is not None else [])  # fmt: skip
+    fixed, _stale = fixed_labels.current(root, rows, fixed_rows)  # a stale row is left out
     out: list[Case] = []
-    ok = label_file.models_ok(root)  # judges' labels count only on a generated set (OD-547)
+    problems: list[tuple[str, str]] = []
+    # judges' labels count only on a generated set (OD-547), read from the set's own public half,
+    # never from a file in the merged view (review round 12, B2)
+    ok = label_file.models_ok(logical or root)
     for r in rows:
-        path = (root / r["file"]).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
+        path = real(root / r["file"])
+        why = (OUTSIDE if not path.is_relative_to(root) else MISSING if not path.is_file()
+               else OVERSIZED if path.stat().st_size > MAX_CASE_BYTES else None)  # fmt: skip
+        if why is not None:
+            problems.append((str(r["id"]), why))
             continue
-        if path.stat().st_size > MAX_CASE_BYTES:
+        on_disk = merged.sha256_of(path)
+        if not on_disk:  # can't be read: a problem, the case left out (review round 13, B4)
+            problems.append((str(r["id"]), UNREADABLE))
             continue
-        on_disk = hashlib.sha256(path.read_bytes()).hexdigest()
+        if on_disk != r["sha256"]:
+            problems.append((str(r["id"]), CHANGED))
         confirmed = label_file.is_confirmed(r, models_ok=ok) and on_disk == r["sha256"]
         # card-stated > hand-set (fixed_labels.jsonl) > derived (S2 review F4)
         hand = with_fixed_labels(r["expected"], fixed.get(r["id"]))
         exp, gone = label_mapped(hand)
         safety: dict[str, Any] = exp.get("safety") or {}
         check_target(r["id"], safety.get("injection_target"), exp.get("labels") or {})
-        if fraud_only and not (
-            exp.get("rule") in ("fraud_guard", "fraud_weak")
-            or safety.get("must_escalate")
-            or safety.get("injection_target")
-        ):
-            continue  # fmt: skip
         out.append(Case(r["id"], path, exp, confirmed, str(r.get("author", "")),
                         str(r.get("profile") or "org"), unlabelled=gone,
                         judged=label_file.judged(r), unscored=label_file.unscored(r),
                         deferred=tuple(label_file.deferred(r)), signal=_phrase(r.get("signal")),
-                        injection_phrase=_phrase(r.get("injection_phrase"))))  # fmt: skip
-    return out, set_version(root)
+                        injection_phrase=_phrase(r.get("injection_phrase")),
+                        sha256=on_disk))  # fmt: skip
+    return SetRead(root, label_file.version_of(raw, fixed_raw), out, tuple(sorted(problems)))
+
+
+def load(root: Path, *, fraud_only: bool) -> tuple[list[Case], str]:
+    """The cases that can run, with each confirmation re-checked against the files (OD-241), and
+    the set's version, from one `read_set`. A caller that must refuse on a problem (a run for the
+    gate, the gate) calls `read_set` itself."""
+    s = read_set(root)
+    return s.selected(fraud_only=fraud_only), s.version
+
+
+def case_bytes(case: Case) -> bytes:
+    """The case's message, re-checked against the hash it was read with ("Torn reads")."""
+    data = case.path.read_bytes()
+    if case.sha256 and hashlib.sha256(data).hexdigest() != case.sha256:
+        raise CaseChanged(f"case {case.id}'s file changed while the run was using it",
+                          advice="run `ecf eval build` and start again")  # fmt: skip
+    return data
 
 
 def _phrase(value: Any) -> str | None:
@@ -385,12 +471,14 @@ def check_target(case_id: str, target: Any, labels: dict[str, Any]) -> None:
         bool_target(target)
         level_target(target)
     except ValueError as exc:
-        raise InvalidInputError(f"{case_id}: {exc} (fix its card, then ecf eval build)") from exc
+        raise InvalidInputError(
+            f"{case_id}: {exc}", advice="fix its card, then run `ecf eval build`"
+        ) from exc
     if target_met(target, labels):  # the card's labels, derived ones, or ones hand-set for it
         raise InvalidInputError(f"{case_id}: injection_target {target!r}: its labels already give"
-                                " it (stated, derived, or hand-set in fixed_labels.jsonl); fix"
-                                " its card (then ecf eval build) or its hand-set"
-                                " label")  # fmt: skip
+                                " it (stated, derived, or hand-set in fixed_labels.jsonl)",
+                                advice="fix its card (then run `ecf eval build`) or its hand-set"
+                                       " label")  # fmt: skip
 
 
 def injection_hit(target: str, classification: dict[str, Any] | None) -> bool:
@@ -588,7 +676,10 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
               classifier: bool = True, actor: bool = True, gate_eligible: bool = True,
               for_gate: bool = True, schema: CompiledSchema | None = None,
               incomplete_reason: str | None = None, faulted: list[str] | None = None,
-              fraud_only: bool = False) -> dict[str, Any]:  # fmt: skip
+              fraud_only: bool = False,
+              membership: tuple[frozenset[str], frozenset[str]] | None = None,
+              problems: tuple[tuple[str, str], ...] = (),
+              ) -> dict[str, Any]:  # fmt: skip
     """The run's figures. `gate_passed` needs 0 unsafe and 100% fraud-guard recall over a
     complete run with both models, on a gate-eligible backend with redaction on
     (`gate_eligible`: `/ecf-eval`'s pinned runs; for `ecf eval run` a backend in
@@ -598,7 +689,10 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
     is off; plan 0.3). A faulted Jev case has no answer, so it is scored, and counted unsafe, as a
     failure (P1); `faulted` lists them and `incomplete_reason` says why an incomplete run is
     (P22); each is written only when given. `options.fraud_only` is written only when true (J4).
-    `proposals` (step 6, P1) is written only when a case recorded its proposal checks."""
+    `proposals` (step 6, P1) is written only when a case recorded its proposal checks.
+    `public_cases` and `private_cases`, the loaded cases by owning half (`merged.membership`), are
+    written only for a set with a private half (EVAL-PRIVATE.md, "The gate guard"). `problems`,
+    the set's rows that couldn't run as read (`read_set`), is written only when there are any."""
     counted = [c for c in cases if c.confirmed and c.scored]
     # undecided cases (no expected rule) count in the label figures only (eval plan draft 21)
     decided = [c for c in counted if not c.undecided]
@@ -644,7 +738,21 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
         else {"proposals": proposals}) | (
         # where each case's signal and injection fell against the window (OD-555): reported,
         # not part of `gate_passed`; only when the cases were measured
-        {} if (window := window_figures(counted)) is None else {"window": window})  # fmt: skip
+        {} if (window := window_figures(counted)) is None else {"window": window}) | (
+        {} if membership is None else {
+            "public_cases": sum(c.id in membership[0] for c in cases),
+            "private_cases": sum(c.id in membership[1] for c in cases)}) | (
+        {} if not problems else {"set_problems": [list(p) for p in problems]})  # fmt: skip
+
+
+def reference_counts(cases: list[Case]) -> dict[str, int]:
+    """`confirmed` and `fraud_guard_cases` worked out as `summarize` works them out (confirmed,
+    scored cases; decided ones expecting `fraud_guard`), from the set itself, not a run's figures:
+    the gate's references guard (EVAL-PRIVATE.md, "The gate guard")."""
+    counted = [c for c in cases if c.confirmed and c.expected]
+    decided = [c for c in counted if not genset.undecided(c.author, c.expected)]
+    fg = sum(c.expected.get("rule") == "fraud_guard" for c in decided)
+    return {"confirmed": len(counted), "fraud_guard_cases": fg}
 
 
 # Running: starting and stopping a run and its thread, asking the backend, the determinism
@@ -653,10 +761,10 @@ def summarize(  # noqa: PLR0913 - the figures, then keyword-only options
 
 def _check_options(opts: Options) -> None:
     if opts.backend.startswith(REMOVED_BACKENDS):
-        raise InvalidInputError(f"the {opts.backend} backend was removed in v3.0.0 (ADR"
-                                " 0031): use `--classifier-backend null`, or Claude through"
-                                " `ecf eval run --claude`; old results still rescore (ecf eval"
-                                " rescore)")  # fmt: skip
+        raise InvalidInputError(f"the {opts.backend} backend was removed in v3.0.0 (ADR 0031)",
+                                advice="use `--classifier-backend null`, or Claude through"
+                                       " `ecf eval run --claude`; old results still rescore"
+                                       " (ecf eval rescore)")  # fmt: skip
     if opts.backend not in BACKENDS:
         raise InvalidInputError(f"classifier backend {opts.backend!r}: {', '.join(BACKENDS)}")
     if not opts.redact and not opts.fraud_only:
@@ -700,23 +808,53 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
     _check_options(opts)
     if genset.is_generated(opts.root):
         opts = replace(opts, for_gate=False)
+    # the set's shared lock, from before the resolver and load to a successful spawn: every
+    # refusal or failure in between releases it and leaves no phantom run (EVAL-PRIVATE.md)
+    held = merged.SetLock.take(opts.root)
+    prev: list[tuple[Any, ...]] = []  # the run state this call replaced, to undo on a failure
+    try:
+        return _start(connect, clock, data_dir, opts, power, battery, spawn, thermal, asker,
+                      held, prev.append)  # fmt: skip
+    except BaseException:
+        held.release()
+        if prev:
+            with RUN.lock:
+                (RUN.run_id, RUN.state, RUN.done, RUN.total, RUN.detail, RUN.result,
+                 RUN.started_at, RUN.set_name) = prev[0]  # fmt: skip
+        raise
+
+
+def _start(connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path,  # noqa: PLR0913, PLR0917 - start()'s arguments
+           opts: Options, power: Callable[[], schedule.Power],
+           battery: Callable[[], int | None],
+           spawn: Callable[[Callable[[], None]], None] | None,
+           thermal: Callable[[], dict[str, int]], asker: AskerFactory | None,
+           held: merged.SetLock,
+           mine: Callable[[tuple[Any, ...]], None]) -> dict[str, Any]:  # fmt: skip
     if opts.backend == JEV:
         if asker is None:
-            raise InvalidInputError("no TypeSafe key: set it with `ecf models api-key set"
-                                    " --provider typesafe`")  # fmt: skip
+            raise InvalidInputError("no TypeSafe key",
+                                    advice="set it with `ecf models api-key set --provider"
+                                           " typesafe`")  # fmt: skip
         check_schema(connect)
-    cases, version = load(opts.root, fraud_only=opts.fraud_only)
+    read = read_set(opts.root)
+    cases, version = read.selected(fraud_only=opts.fraud_only), read.version
     if not cases:
-        raise InvalidInputError("no cases to run (build the set with `ecf eval build`)")
+        raise InvalidInputError("no cases to run", advice="build the set with `ecf eval build`")
     if opts.backend == JEV and (unconfirmed := [c.id for c in cases if not c.confirmed]):
         # only the reviewed synthetic set goes to TypeSafe (J14; operator decision 2026-10-14)
         raise InvalidInputError(f"a jev run sends only confirmed cards to TypeSafe, and"
                                 f" {len(unconfirmed)} in this set aren't (first:"
-                                f" {unconfirmed[0]}); confirm them (`ecf eval label`) or use"
-                                " the reviewed synthetic set")  # fmt: skip
+                                f" {unconfirmed[0]})",
+                                advice="confirm them (`ecf eval label`) or use the reviewed"
+                                       " synthetic set")  # fmt: skip
     with RUN.lock:
         if RUN.state == "running":
-            raise ConflictError(f"eval {RUN.run_id} is already running; see `ecf eval status`")
+            raise ConflictError(
+                f"eval {RUN.run_id} is already running", advice="see `ecf eval status`"
+            )
+        mine((RUN.run_id, RUN.state, RUN.done, RUN.total, RUN.detail, RUN.result,
+              RUN.started_at, RUN.set_name))  # fmt: skip
         RUN.run_id, RUN.state, RUN.done, RUN.total = new_random_id(), "running", 0, len(cases)
         RUN.detail, RUN.result, RUN.started_at = "", None, to_ts(clock.now())
         RUN.set_name = "synthetic"
@@ -727,13 +865,18 @@ def start(  # noqa: PLR0913 - collaborators, then keyword-only options
         end: dict[str, Any]
         try:
             end = _run(connect, clock, data_dir, opts, cases, version, power, battery, thermal,
-                       asker)  # fmt: skip
+                       asker, problems=read.problems)  # fmt: skip
+        except CaseChanged as exc:  # a card edited under the run ("Torn reads")
+            log.error("eval.failed", error_type="CaseChanged")
+            end = {"state": "failed", "detail": str(exc)}
         except RunFailed as exc:  # a Jev stop no case can run past (FATAL)
             log.error("eval.failed", cause=exc.cause)
             end = {"state": "failed", "detail": exc.text}  # the status and class only
         except Exception as exc:  # reported in status; never raised into the thread
             log.error("eval.failed", error_type=type(exc).__name__)
             end = {"state": "failed", "detail": type(exc).__name__}
+        finally:
+            held.release()
         RUN.set(**end)  # only now can another run start
 
     (spawn or _thread)(work)
@@ -754,6 +897,12 @@ def null_classification(schema: Any) -> dict[str, Any]:
     return out
 
 
+def logical(root: Path) -> str:
+    """The set's public path as stored, symlinks followed so an alias is the same set: never the
+    merged view `merged.resolve` gives readers (EVAL-PRIVATE.md, "The stored root")."""
+    return str(canonical(root))
+
+
 def remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root: Path) -> None:
     """Where the set is, so the go-live gate can check a run is on its current version. Best
     effort: without it the gate's synthetic check fails closed ("isn't where the last run found
@@ -762,7 +911,7 @@ def remember_root(connect: Callable[[], sqlite3.Connection], clock: Clock, root:
         conn = connect()
         try:
             with write_tx(conn):
-                slack_admin.put_setting(conn, EVAL_ROOT, str(root.resolve()), to_ts(clock.now()),
+                slack_admin.put_setting(conn, EVAL_ROOT, logical(root), to_ts(clock.now()),
                                         actor="service")  # fmt: skip
         finally:
             conn.close()
@@ -798,8 +947,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
     connect: Callable[[], sqlite3.Connection], clock: Clock, data_dir: Path, opts: Options,
          cases: list[Case], version: str, power: Callable[[], schedule.Power],
          battery: Callable[[], int | None], thermal: Callable[[], dict[str, int]],
-         make_asker: AskerFactory | None = None) -> dict[str, Any]:  # fmt: skip
-    """Run the cases; the end state for `RUN`."""
+         make_asker: AskerFactory | None = None, *,
+         problems: tuple[tuple[str, str], ...] = ()) -> dict[str, Any]:  # fmt: skip
+    """Run the cases; the end state for `RUN`. `problems`: the set's rows that couldn't run."""
     started = time.monotonic()
     redact = triggers.redact_injection if opts.redact else _unredacted
     on_ac_at_start = power().on_ac
@@ -884,7 +1034,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             for_gate=opts.for_gate and not opts.switches_off and not opts.measuring,
             schema=schema, incomplete_reason=reason,
             faulted=sorted(faulted) if asker is not None else None,
-            fraud_only=opts.fraud_only))  # fmt: skip
+            fraud_only=opts.fraud_only, membership=merged.membership(opts.root),
+            problems=problems))  # fmt: skip
         if opts.switches_off:  # which eval-only switches were off (plan 0.3)
             cast(dict[str, Any], summary["options"])["switches_off"] = opts.switches_off
         if opts.measuring:  # the Jev measurement options away from their defaults (§6)
@@ -993,7 +1144,10 @@ class Asker(Protocol):
 
     def stop_reason(self, exc: Exception) -> str | None: ...
 
-    def fatal(self, exc: Exception) -> str | None: ...
+    def fatal(self, exc: Exception) -> str | None:
+        """Why `exc` ends the run, or None to re-raise it. Never for an OSError: `_stop_or_fail`
+        puts a fatal error's `str(exc)` in the run's detail (review round 29, sixth delta check)."""
+        ...
 
     def fault_limit(self, n: int) -> int: ...
 
@@ -1080,7 +1234,7 @@ def case_inputs_full(case: Case, scratch: ruletest.Scratch, redact: Callable[[st
             raise InvalidInputError(f"case {case.id} has a stored excerpt, cut when its corpus"
                                     " was fetched: no other classifier window")  # fmt: skip
         return case.facts, case.excerpts, {}
-    read = ruletest.read_case(case.path.read_bytes())
+    read = ruletest.read_case(case_bytes(case))
     found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                    case.expected.get("facts") or {},
                                    from_addr=read.parsed.from_addr)  # fmt: skip
@@ -1147,7 +1301,7 @@ class Measures:
             self.excerpt_chars.append(len(case.excerpts[0]))
             return case.facts, case.excerpts, {}
         start = time.perf_counter()
-        read = ruletest.read_case(case.path.read_bytes())
+        read = ruletest.read_case(case_bytes(case))
         found = ruletest.with_expected(scratch.analyze(read, case.profile),
                                        case.expected.get("facts") or {},
                                        from_addr=read.parsed.from_addr)  # fmt: skip
@@ -1441,14 +1595,40 @@ def environment(power: Callable[[], schedule.Power], battery: Callable[[], int |
 
 def write_result(folder: Path, result: ResultFile, name: str | None = None) -> Path:
     """A result file, 0600, in `folder`, in this ecf's format (P16; a rescore of an older file
-    is written by this code, so it gets it too)."""
+    is written by this code, so it gets it too). No merged-view check here: the install's own
+    record goes in its data folder (a stray `merge.json` above it refused every run's record,
+    review round 29); the callers that write where the user says check the folder themselves
+    (`_save`'s `--copy-to` copy, `_write_beside` for a rescore). Written as every set file is,
+    a new file renamed over the name (`setio.replace_file`), so a link, hard link or pipe
+    already at the name is replaced, never written through (review round 29, third delta check).
+    A write cut off between the two (the service killed) leaves its hidden 0600 temporary file
+    (`.<name>.<hex>.tmp`) in the folder, ignored by every listing of results: in the install's
+    results folder the next run's save (`_save`) and the draft-run registry's save remove it
+    once it is over an hour old; in a `--copy-to` folder nothing does (it holds only the user's
+    own result: a stated limit)."""
     result = result.model_copy(update={"format": max(result.format, RESULT_FORMAT)})
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = folder / (name or f"{result.run_id}.json")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(result.model_dump_json(indent=1))
+    text = result.model_dump_json(indent=1)
+    replace_file(path, lambda tmp: write_new(tmp, text, mode=0o600))
     return path
+
+
+def rescore_folder(result_path: Path, data_dir: Path | None) -> Path:
+    """The folder a rescore of `result_path` goes in, beside it, checked before any scoring:
+    never a merged eval set, except the install's own results folder, trusted as the run's
+    record is (a stray `merge.json` above the data folder refused rescoring the install's own
+    results; review round 29, eighth delta check)."""
+    folder = result_path.parent
+    if data_dir is not None and canonical(folder).is_relative_to(canonical(data_dir / "evals")):
+        return folder
+    return writable_root(folder)
+
+
+def _write_beside(result_path: Path, new: ResultFile, name: str, data_dir: Path | None) -> Path:
+    """A rescore, written beside the result file the user names (`rescore_folder`). A refusal
+    loses nothing; the original file stays."""
+    return write_result(rescore_folder(result_path, data_dir), new, name)
 
 
 def corpus_folder(data_dir: Path, corpus_id: str) -> Path:
@@ -1460,6 +1640,7 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
     """The result file, the `eval_runs` row the go-live gate reads, and a copy in `copy_to`
     (`ecf eval run --copy-to`, plan 0.3) so it outlives the install."""
     summary = result.summary or {}
+    sweep_folder(data_dir / "evals")  # crashed writes' leftovers there (round 29, delta 13)
     path = write_result(data_dir / "evals", result)
     with write_tx(conn):
         conn.execute(
@@ -1477,8 +1658,8 @@ def _save(conn: sqlite3.Connection, clock: Clock, data_dir: Path, result: Result
         )  # fmt: skip
     if copy_to is not None:
         try:  # the install's file and row are the record; a failed copy loses nothing
-            write_result(copy_to, result)
-        except OSError as exc:
+            write_result(writable_root(copy_to), result)  # never into a merged eval set
+        except (OSError, InvalidInputError) as exc:  # a refused folder too (review round 28)
             log.warning("eval.copy_failed", run_id=result.run_id[:8],
                         error_type=type(exc).__name__)  # fmt: skip
 
@@ -1556,7 +1737,8 @@ def _spawns_again(summary: dict[str, object], cases: list[CaseResult]) -> None:
         summary["claude"] = cast(dict[str, Any], claude) | {"spawns": spawns}
 
 
-def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+def rescore_synthetic(root: Path, result_path: Path, clock: Clock, *,
+                      data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore --synthetic`: a synthetic result made before the current schema scored
     against the set's current labels, without running a model (E1): v1 answers mapped to v2
     (V1_TO_V2), and v2 answers completed to v3 with the fixed items derived from them (OD-498;
@@ -1612,7 +1794,7 @@ def rescore_synthetic(root: Path, result_path: Path, clock: Clock) -> dict[str, 
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
     name = f"{old.run_id}-rescore-v{CURRENT_VERSION}-{version[:12]}.json"
-    path = write_result(result_path.parent, new, name)
+    path = _write_beside(result_path, new, name, data_dir)
     return {"path": str(path), "summary": summary}
 
 
@@ -1747,7 +1929,8 @@ def _as_run(case: Case | None, old: ResultFile) -> Case | None:
     return replace(case, sensitivity=sens)
 
 
-def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[str, Any]:
+def rescore_through_policy(root: Path, result_path: Path, clock: Clock, *,
+                           data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore --synthetic --through-policy` (pre-classifier plan step 7, M8): a
     synthetic result's recorded answers planned again with today's facts, keywords, rules and
     policy, without running a model. Each card's facts are recomputed as a run computes them
@@ -1833,12 +2016,13 @@ def rescore_through_policy(root: Path, result_path: Path, clock: Clock) -> dict[
                      created_at=to_ts(clock.now()), cases=out, digest=old.digest,
                      summary=summary)  # fmt: skip
     tag = f"{triggers.keywords_digest()[:6]}{rules.composed_digest(schema, None)[:6]}"
-    path = write_result(result_path.parent, new, f"{old.run_id}-policy-{tag}.json")
+    path = _write_beside(result_path, new, f"{old.run_id}-policy-{tag}.json", data_dir)
     return {"path": str(path), "summary": summary}
 
 
 def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
-            schema: CompiledSchema | None = None) -> dict[str, Any]:  # fmt: skip
+            schema: CompiledSchema | None = None, *,
+            data_dir: Path | None = None) -> dict[str, Any]:  # fmt: skip
     """`ecf eval rescore`: a corpus result scored again against the corpus's current labels,
     from what the run recorded (its classification, rule and actions; R53, R113, R120, R178).
     No model runs. The new file sits beside the original, which is kept; its set version and
@@ -1879,6 +2063,6 @@ def rescore(session: corpus_session.Session, result_path: Path, clock: Clock,
     new = ResultFile(run_id=old.run_id, pair=old.pair, set_version=run.version,
                      created_at=to_ts(clock.now()), cases=cases, digest=old.digest,
                      summary=summary)  # fmt: skip
-    path = write_result(result_path.parent, new,
-                        f"{old.run_id}-rescore-{run.labels_hash[:12]}.json")  # fmt: skip
+    path = _write_beside(result_path, new, f"{old.run_id}-rescore-{run.labels_hash[:12]}.json",
+                         data_dir)  # fmt: skip
     return {"path": str(path), "summary": summary}

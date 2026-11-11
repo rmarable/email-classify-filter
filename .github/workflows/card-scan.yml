@@ -1,0 +1,66 @@
+# The card scan (planning-docs/EVAL-PRIVATE.md X5, X8, X12): no public prompt-injection test card
+# or email. Its own workflow, with no path filter, because ci.yml skips pushes that change only
+# `*.md` files, and every card is one. No `concurrency` block (a group keeps only one pending run,
+# so a range could be dropped) and never `pull_request_target`. A push or pull request runs the
+# pushed tree's copy (X10); the daily run uses main's workflow and code, which no commit message
+# or branch can skip. Set up as ci.yml is (SPEC §17.4): the runner from vars.CI_RUNNER, actions
+# pinned by SHA, uv pinned.
+name: card-scan
+
+on:
+  push: {}  # any ref, tags included
+  pull_request: {}
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.15"
+
+jobs:
+  scan:
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-26.04"') }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12.6"
+          enable-cache: true
+      - run: uv sync --locked --no-dev
+      - name: scan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          scan() { uv run --no-sync python scripts/check_card_injection.py "$@"; }
+          zero=0000000000000000000000000000000000000000
+          case "$EVENT" in
+            schedule|workflow_dispatch) scan --daily ;;
+            pull_request) scan --ref "$REF" --tip "$HEAD" --revs "$BASE..$HEAD" ;;
+            push)
+              if [ "$AFTER" = "$zero" ]; then echo "deleted ref: nothing to scan"; exit 0; fi
+              if [ "$(git cat-file -t "$AFTER^{}")" != commit ]; then
+                echo "refused: $REF: the pushed object isn't a commit"; exit 1
+              fi
+              if [ "$BEFORE" != "$zero" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                scan --ref "$REF" --tip "$AFTER" --revs "$BEFORE..$AFTER"
+              elif [ "$REF" = refs/heads/main ]; then
+                echo "refused: a push to main whose previous commit is missing (fails closed)"; exit 1
+              else
+                scan --ref "$REF" --tip "$AFTER" --revs "$AFTER" --not origin/main
+              fi
+              ;;
+          esac

@@ -27,6 +27,7 @@ from ecf.eval import generate as gen
 from ecf.eval import labels as label_file
 from ecf.eval import models
 from ecf.eval.results import RESULT_FORMAT, CaseResult, ResultFile
+from ecf.eval.setio import atomic_write, real, writable_set
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import load_schema
 
@@ -63,7 +64,7 @@ def case_view(root: Path, case_id: str) -> str | None:
 
     if case_email(root, case_id) is None:
         return None
-    path = root.resolve() / "cases" / f"{case_id}.md"
+    path = real(root) / "cases" / f"{case_id}.md"
     if not path.is_file():
         raise InvalidInputError(f"{case_id}: its card isn't in the set")
     return "\n".join(screen(parse_card(path.read_text(encoding="utf-8"), source=path.name)))
@@ -75,8 +76,8 @@ def case_email(root: Path, case_id: str) -> bytes | None:
     row = next((r for r in label_file.read(root) if r.get("id") == case_id), None)
     if row is None:
         raise InvalidInputError(f"{case_id}: no such case in {root}")
-    base = root.resolve()
-    path = (base / str(row["file"])).resolve()
+    base = real(root)
+    path = real(base / str(row["file"]))
     if not path.is_relative_to(base) or not path.is_file():
         raise InvalidInputError(f"{case_id}: its file isn't in the set")
     data = path.read_bytes()
@@ -105,7 +106,9 @@ class Grading:
     echo: Callable[[str], None] = field(default=lambda _s: None)
 
     def run(self, *, resume: bool) -> tuple[Path | None, dict[str, int], str]:
-        """(the result file, counts by outcome, detail). No file while the run is stopped."""
+        """(the result file, counts by outcome, detail). No file while the run is stopped, and
+        nothing written or asked in a merged view (review round 27)."""
+        writable_set(self.root)
         doc = gen.verify(self.root)
         models.check_judge(doc, (self.adapter.provider, self.adapter.model))
         work = gen.Work(self.root)
@@ -129,7 +132,8 @@ class Grading:
             if isinstance(self.adapter, CaseGrader):
                 reply = self.adapter.ask_case(self.root, row["id"], schema)
             else:
-                reply = self.adapter.ask(grade_prompt(view), schema, self.root / "work" / "call")
+                call = writable_set(self.root, self.root / "work" / "call")  # round 28
+                reply = self.adapter.ask(grade_prompt(view), schema, call)
             # one call log per judge, so judges can run side by side (J19)
             work.append(f"calls-{_slug(self.adapter.model)}", [{"stage": "grade", "case": row["id"],
                                    "at": self.now().isoformat()} | reply.record()])  # fmt: skip
@@ -159,10 +163,10 @@ class Grading:
                      "schema_digest": load_schema().digest},
             format=RESULT_FORMAT,
         )  # fmt: skip
-        folder = self.root / GRADES
+        folder = writable_set(self.root) / GRADES
         folder.mkdir(exist_ok=True)
         path = folder / f"{_slug(self.adapter.model)}-{result.run_id}.json"
-        path.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        atomic_write(path, result.model_dump_json(indent=2) + "\n")  # never through a link
         return path
 
 

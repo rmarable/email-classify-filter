@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +15,12 @@ import pytest
 
 from ecf import cli
 from ecf.cli_items import describe
-from ecf.eval import labels
-from ecf.eval.builder import build_all
 from ecf.eval.results import load_result
 from ecf.text import plain
 from ecf_server import claude_review, db, evalrun, excerpt, inbox, jev, message, ruletest, triggers
 from ecf_server.clock import FakeClock
 from ecf_server.db import write_tx
+from tests.eval_checkout import split_set
 from tests.test_claude_review import add, read_msg, waiting_item, with_tokens
 from tests.test_eval_jev import run_jev
 from tests.test_eval_window import FILLER, LONG
@@ -149,11 +147,12 @@ def test_a_jev_run_measures_what_jev_reads(conn: sqlite3.Connection, db_path: Pa
     4,000 excerpt but not in a 1,500 one, and the Jev run records it unseen (and its excerpt
     length as Jev's)."""
     monkeypatch.setattr(jev, "WINDOW", 1500)
-    r = tmp_path / "synthetic"
-    (r / "cases").mkdir(parents=True)
-    (r / "cases" / "long-signal.md").write_text(LONG.replace(FILLER, FILLER[:2000]))
-    assert not build_all(r).findings
-    labels.confirm(r, "long-signal", date(2026, 10, 1))
+    r = split_set(
+        tmp_path,
+        "synthetic",
+        {"long-signal": LONG.replace(FILLER, FILLER[:2000])},
+        ("long-signal",),
+    )  # marked: the private half
     cases, _ = evalrun.load(r, fraud_only=False)
     scratch = ruletest.Scratch(FakeClock())
     try:

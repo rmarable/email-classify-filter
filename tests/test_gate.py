@@ -17,8 +17,12 @@ from ecf_server.clock import FakeClock, to_ts
 from ecf_server.db import write_tx
 from ecf_server.state_machine import Status
 from ecf_server.stepper import FakeStepper
+from tests.eval_checkout import checkout_set
 from tests.test_decide import KNOWN_BULK, MARKETING, make_classified
 from tests.test_decide import make_address as _address
+
+pytestmark = pytest.mark.usefixtures("fake_gate_counts")
+SYNTHETIC = Path(__file__).parent / "eval" / "synthetic"
 
 
 def _c_key() -> str:
@@ -49,8 +53,8 @@ def make_address(conn: sqlite3.Connection, clock: FakeClock, stage: str) -> None
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    (tmp_path / "labels.jsonl").write_text('{"id": "x"}\n')
-    return tmp_path
+    """A set the gate can count: a checkout's two halves, committed and pushed."""
+    return checkout_set(tmp_path, ("starter-control",), ("starter-injection",))
 
 
 def _eval(conn: sqlite3.Connection, clock: FakeClock, root: Path, *,  # noqa: PLR0913 - run fields
@@ -346,8 +350,8 @@ def test_s3_the_gate_version_is_an_input(conn: sqlite3.Connection, clock: FakeCl
     """A gate computed under the old accuracy definition isn't reused (P4, OD-500)."""
     make_address(conn, clock, "assist")
     before = gate.inputs(conn, "ap", DIGEST)
-    assert before[0] == gate.GATE_VERSION == 3  # S4, D4 (OD-502)
-    monkeypatch.setattr(gate, "GATE_VERSION", 4)
+    assert before[0] == gate.GATE_VERSION == 4  # S4, D4 (OD-502); 4: the eval/private guard
+    monkeypatch.setattr(gate, "GATE_VERSION", 5)
     assert gate.inputs(conn, "ap", DIGEST) != before
 
 
@@ -358,13 +362,13 @@ def test_s4_the_first_tick_under_a_new_version_writes_one_audit_row(
     stages.tick(conn, clock)
     stages.tick(conn, clock)
     rows = conn.execute("SELECT data FROM audit WHERE event = 'gate.version'").fetchall()
-    assert [json.loads(r[0]) for r in rows] == [{"from": None, "to": 3}]
+    assert [json.loads(r[0]) for r in rows] == [{"from": None, "to": 4}]
     with write_tx(conn):
         conn.execute("UPDATE settings SET value = '\"2\"' WHERE key = ?", (gate.VERSION_KEY,))
     assert gate.note_version(conn, to_ts(clock.now())) is True
     last = conn.execute("SELECT data FROM audit WHERE event = 'gate.version' ORDER BY id DESC"
                         " LIMIT 1").fetchone()[0]  # fmt: skip
-    assert json.loads(last) == {"from": 2, "to": 3}
+    assert json.loads(last) == {"from": 2, "to": 4}
 
 
 def test_s4_a_fix_to_your_field_doesnt_count_against_the_gate(

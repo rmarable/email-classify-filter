@@ -66,7 +66,7 @@ def test_a_grade_is_a_result_file_with_the_graders_answers_and_nothing_scored(
     assert len(g.cases) == 20 and all(c.got == LABELS and not c.scored for c in g.cases)
     grading.check_grade(g, gen.verify(root))
     graded = [c for c in calls(tmp_path) if not c["seeds"]][-20:]
-    assert all(c["cwd_files"] == ["schema.json"] for c in graded)
+    assert all(len(f := c["cwd_files"]) == 1 and f[0].startswith(".call-") for c in graded)
     with pytest.raises(InvalidInputError, match="already graded"):
         _grade(tmp_path, root)
 

@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import writable_root, write_durable
 from ecf.schema import (
     FIXED_ITEMS,
     CompiledSchema,
@@ -140,19 +140,11 @@ def put(labels: dict[Key, Label], new: Label) -> bool:
 def save(path: Path, labels: dict[Key, Label]) -> str:
     """Write every row, sorted by key, to a 0600 temp file, then rename it into place (R90).
     Returns the file's sha256."""
+    writable_root(path)
     body = "".join(json.dumps(labels[k].row(), sort_keys=True) + "\n" for k in sorted(labels))
-    tmp = path.with_name(f".{path.name}.partial")
-    tmp.unlink(missing_ok=True)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(body)
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    # a temporary file of its own, never another writer's fixed name (review round 29,
+    # thirteenth delta check)
+    write_durable(path, body)
     return hashlib.sha256(body.encode()).hexdigest()
 
 

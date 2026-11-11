@@ -643,8 +643,9 @@ def _forwards(
             raise InvalidInputError(f"config: forward_allow_list: {addr} must be in org_domains"
                                     " or exactly in org_addresses (forwards stay with people you"
                                     " work with; a Gmail address with other dots or a +tag"
-                                    " doesn't match; to remove an org domain or address a"
-                                    " forward needs, remove the forward too)")  # fmt: skip
+                                    " doesn't match)",
+                                    advice="to remove an org domain or address a forward"
+                                           " needs, remove the forward too")  # fmt: skip
         if email.lower() in monitored:
             raise InvalidInputError(f"config: forward_allow_list: {addr} is a monitored address"
                                     " (a forward there would be fetched again)")  # fmt: skip
@@ -731,7 +732,7 @@ def _schema(conn: sqlite3.Connection, v: Any, old: Any, rules_doc: Any) -> Any:
     value a confirmed sender uses can't be removed."""
     if v is None:
         raise InvalidInputError("config: schema: a mapping with fields and/or category_values,"
-                                " or `default` to remove the extension")  # fmt: skip
+                                " or `default`, which removes the extension")  # fmt: skip
     # always: built-in labels, the fixed and default rule ids, and the applied file's (P2, C8);
     # and a fixed rule's id before a rename (OD-508): `spam_or_phishing` is refused earlier as a
     # removed value, but a later rename's old id may not be one
@@ -766,8 +767,9 @@ def _check_sender_categories(conn: sqlite3.Connection, old: Any, new: Any) -> No
         named = ", ".join(f"{r[0]}: a sender at {r[1]} ({r[2]})" for r in rows[:5])
         more = f" (+{len(rows) - 5} more)" if len(rows) > 5 else ""
         raise InvalidInputError(f"config: schema: confirmed senders use a category value this"
-                                f" removes: {named}{more}; confirm them as another category"
-                                " first (ecf sender confirm)")  # fmt: skip
+                                f" removes: {named}{more}",
+                                advice="confirm them as another category first (ecf sender"
+                                       " confirm)")  # fmt: skip
 
 
 def _rule_ids(rules_doc: Any) -> frozenset[str]:

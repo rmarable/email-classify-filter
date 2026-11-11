@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 from ecf.errors import InvalidInputError, NotFoundError
+from ecf.eval.setio import atomic_write, writable_set
 
 
 def expected_hash(expected: dict[str, Any]) -> str:
@@ -79,10 +79,8 @@ def valid(name: str, value: Any) -> bool:
 
 def write(root: Path, rows: list[dict[str, Any]]) -> None:
     """Through a temporary file and a rename, so a crash never leaves a half-written index."""
-    path = root / "labels.jsonl"
-    tmp = root / ".labels.jsonl.tmp"
-    tmp.write_text("".join(json.dumps(x, sort_keys=True) + "\n" for x in rows), encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write(writable_set(root) / "labels.jsonl",
+                 "".join(json.dumps(x, sort_keys=True) + "\n" for x in rows))  # fmt: skip
 
 
 def judged(row: dict[str, Any]) -> bool:
@@ -168,10 +166,16 @@ def set_version(root: Path) -> str:
     use it (J12 Phase R P3)."""
     from ecf.eval import fixed_labels  # noqa: PLC0415 - fixed_labels imports this module
 
-    h = hashlib.sha256((root / "labels.jsonl").read_bytes())
     fixed = root / fixed_labels.FILE
-    if fixed.is_file():
-        h.update(b"\0" + fixed.read_bytes())
+    return version_of((root / "labels.jsonl").read_bytes(),
+                      fixed.read_bytes() if fixed.is_file() else None)  # fmt: skip
+
+
+def version_of(labels: bytes, fixed: bytes | None) -> str:
+    """`set_version` from bytes the caller has read (a reader that reads each file once)."""
+    h = hashlib.sha256(labels)
+    if fixed is not None:
+        h.update(b"\0" + fixed)
     return h.hexdigest()[:16]
 
 

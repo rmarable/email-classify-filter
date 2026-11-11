@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import create_file, reason, writable_root
 from ecf.yamlio import load_yaml
 
 SHIPPED = "eval_mix.yaml"
@@ -165,14 +166,13 @@ def load(path: Path) -> Mix:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise InvalidInputError(f"{path}: can't read it ({exc.strerror})") from None
+        raise InvalidInputError(f"{path}: can't read it ({reason(exc)})") from None
     return parse(load_yaml(text, source=path.name), source=path.name)
 
 
 def write_default(path: Path) -> None:
     """The shipped default mix as a file to edit (`ecf eval generate --write-mix`)."""
-    if path.exists():
-        raise InvalidInputError(f"{path} already exists")
+    writable_root(path)
     m = default().as_dict()
     pub = published()
     lines = ["# ecf eval generate mix: ids and shares only (names and definitions are ecf's",
@@ -187,7 +187,8 @@ def write_default(path: Path) -> None:
     lines += [f"  {k}: {s:g}" for k, s in m["delivery"].items()]
     kept = [t.id for t in pub.ic3.values() if t.kept]
     lines.append(f"# IC3 type ids you can group: {', '.join(kept)}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    text = "\n".join(lines) + "\n"
+    create_file(path, text)  # refused if anything is there, a link to nothing too (round 29)
 
 
 def apportion(shares: dict[str, float], total: int, rotate: int = 0) -> dict[str, int]:

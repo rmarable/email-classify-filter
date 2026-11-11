@@ -14,6 +14,7 @@ from ecf.eval import draftcalib, draftjudge
 from ecf.eval.drafts import DraftCase
 from ecf_server import draftcalibration, draftjudging
 from ecf_server.clock import FakeClock
+from tests.eval_checkout import card_path, settle_set
 from tests.test_draft_judges import GOOD, _finished  # pyright: ignore[reportPrivateUsage]
 from tests.test_draft_runs import droot  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
@@ -230,20 +231,19 @@ def test_calibration_survives_a_rewrite_of_another_card_but_not_its_own(
     droot: Path,  # noqa: F811
 ) -> None:
     """D1: pinned to the pilot card by card."""
-    from ecf.eval.builder import build_all  # noqa: PLC0415
 
     data = db_path.parent
     _pilot, cal, _null = _calibration(db_path, clock, droot)
     used = set(draftjudging.read_json(data / "evals" / f"{cal}{draftjudging.CALIB_SUFFIX}")
                ["cards"].values())  # fmt: skip
     other = next(c for c in ("d-benign", "d-inject", "d-none") if c not in used)
-    card = droot / "cases" / f"{other}.md"
+    card = card_path(droot, other)
     card.write_text(card.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
+    settle_set(droot)
     assert draftjudging.items(data, cal)["items"]  # still usable
-    mine = droot / "cases" / f"{sorted(used)[0]}.md"
+    mine = card_path(droot, sorted(used)[0])
     mine.write_text(mine.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
+    settle_set(droot)
     with pytest.raises(InvalidInputError, match="changed since the pilot"):
         draftjudging.items(data, cal)
 
@@ -261,14 +261,9 @@ def _rewrite(droot: Path, card: str, *, relabel: bool = True) -> None:  # noqa: 
     """Step 6: a card rewritten, rebuilt and (by default) re-labelled."""
     from datetime import date  # noqa: PLC0415
 
-    from ecf.eval import labels  # noqa: PLC0415
-    from ecf.eval.builder import build_all  # noqa: PLC0415
-
-    path = droot / "cases" / f"{card}.md"
+    path = card_path(droot, card)
     path.write_text(path.read_text() + "\nOne more line.\n")
-    assert not build_all(droot).findings
-    if relabel:
-        labels.confirm(droot, card, date(2026, 10, 2))
+    settle_set(droot, (card,) if relabel else (), date(2026, 10, 2))
 
 
 SEEDS = {"seeds": [_seed(1, {"commits": "hard"}), _seed(2, {"specific": "no"})]}
@@ -414,3 +409,25 @@ def test_calibration_refuses_a_rewritten_card_not_yet_relabelled(
     with pytest.raises(InvalidInputError, match="d-benign aren't confirmed"):
         draftcalibration.build(data, pilot, SEEDS, "2026-10-28T00:00:00Z", minimums={},
                                real_min={}, real_total=1)  # fmt: skip
+
+
+def test_calibration_reads_a_moved_card_from_the_merged_set(
+    db_path: Path, clock: FakeClock, tmp_path: Path
+) -> None:
+    """Round 7, B3: the calibration page shows each seed's card as the mail client shows it; a
+    card moved to the private half is read from the merged set, not the public one."""
+    from ecf.eval import merged as mg  # noqa: PLC0415
+    from tests.test_draft_eval import make_droot  # noqa: PLC0415
+    from tests.test_eval_merged import _split  # pyright: ignore[reportPrivateUsage]  # noqa: PLC0415
+
+    pub = make_droot(tmp_path / "tests" / "eval")
+    _split(pub, tmp_path / "eval" / "private" / "drafts", {"d-inject"})
+    mg.refresh_merged(pub)
+    data = db_path.parent
+    pilot = _finished(db_path, clock, pub)
+    seeds = {"seeds": [_seed(1, {"commits": "hard"}, card="d-inject"),
+                       _seed(2, {"specific": "no"})]}  # fmt: skip
+    built = draftcalibration.build(data, pilot, seeds, "2026-10-28T00:00:00Z", minimums={},
+                                   real_min={}, real_total=1)  # fmt: skip
+    page = draftcalibration.export(data, built["run_id"])
+    assert "Seed 1" in str(page["items"])

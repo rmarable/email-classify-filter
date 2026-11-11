@@ -31,6 +31,18 @@ SHAPES = {
 }
 
 
+def _in_set() -> set[str]:
+    """The set's card IDs as a reader sees it: merged when the private half is here."""
+    cases, _ = evalrun.load(SYNTHETIC, fraud_only=False)
+    return {c.id for c in cases}
+
+
+@pytest.mark.private("synthetic")
+def test_every_archived_case_is_in_the_merged_set() -> None:
+    ids = {c.id for name in SHAPES for c in load_result(FIXTURES / name).cases}
+    assert ids <= _in_set()
+
+
 def _copy(name: str, tmp_path: Path) -> Path:
     path = tmp_path / name
     shutil.copy(FIXTURES / name, path)
@@ -53,11 +65,12 @@ def test_every_shape_loads_and_rescores(
         out = rescore(SYNTHETIC, path, clock)
         new = load_result(Path(out["path"]))
         assert new.pair == pair and new.run_id == old.run_id and new.digest == old.digest
-        assert {c.id for c in new.cases} == {c.id for c in old.cases}
+        # cards in the private half are rescored only where it is present (EVAL-PRIVATE.md)
+        assert {c.id for c in new.cases} == {c.id for c in old.cases} & _in_set()
         assert out["summary"]["gate_passed"] is False  # a rescore never passes the gate
         assert out["summary"]["rescored_from"]["run_id"] == old.run_id
         by_id = {c.id: c for c in new.cases}
-        for c in old.cases:  # what the run measured is kept
+        for c in (c for c in old.cases if c.id in by_id):  # what the run measured is kept
             assert by_id[c.id].probabilities == c.probabilities
             assert by_id[c.id].classifier_ms == c.classifier_ms
             assert by_id[c.id].claims == c.claims
