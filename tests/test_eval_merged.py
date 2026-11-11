@@ -1026,22 +1026,6 @@ def test_a_planted_tree_deeper_than_the_recursion_limit_is_removed(tmp_path: Pat
     assert not deep.exists()
 
 
-def test_a_link_loop_is_a_refusal_and_any_other_runtime_error_is_raised() -> None:
-    """Python 3.12 raises RuntimeError on a symbolic link loop; every entry point turns it into
-    the refusal readers and the gate handle. Raised here directly, so 3.13 tests it too."""
-
-    @mg.named
-    def loops() -> None:
-        raise RuntimeError("Symlink loop from '/x/a'")
-
-    with pytest.raises(InvalidInputError, match="symbolic link loop"):
-        loops()
-    with pytest.raises(InvalidInputError, match="symbolic link loop"), mg.named_errors():
-        raise RuntimeError("Symlink loop from '/x/a'")
-    with pytest.raises(RuntimeError, match="a bug"), mg.named_errors():
-        raise RuntimeError("a bug")
-
-
 def test_a_looped_email_in_a_public_only_set_never_raises_out_of_the_gate(tmp_path: Path) -> None:
     """A labels row whose email is a link to itself: the gate reports it, the tick carries on
     (on 3.12 the read raised RuntimeError past the gate's guard; Step 7 review)."""
@@ -1053,5 +1037,5 @@ def test_a_looped_email_in_a_public_only_set_never_raises_out_of_the_gate(tmp_pa
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (s / "labels.jsonl").write_text(json.dumps({"id": "x", "file": "eml/x.eml"}) + "\n")
     (s / "eml" / "x.eml").symlink_to("x.eml")
-    got = gate.set_state(s, fresh=True)  # never raises
-    assert got.error or got.problems, got
+    got = gate.set_state(s, fresh=True)  # never raises: the loop reads as a missing file
+    assert got.error is None and got.problems == (("x", "missing"),), got

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ecf.eval.setio import canonical, reason
+from ecf.eval.setio import canonical, real, reason
 
 GIT = "/usr/bin/git"
 TIMEOUT_S = 5.0  # for the whole check: every git call in one pass shares it
@@ -179,9 +179,9 @@ def git_dir(top: Path) -> tuple[Path, Path] | None:
         return None
     if not line.startswith("gitdir:"):
         return None
-    own = (top / line[7:].strip()).resolve()
+    own = real(top / line[7:].strip())
     try:
-        common = (own / (own / "commondir").read_text(encoding="utf-8").strip()).resolve()
+        common = real(own / (own / "commondir").read_text(encoding="utf-8").strip())
     except OSError:
         common = own
     return own, common

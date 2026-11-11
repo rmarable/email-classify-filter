@@ -81,7 +81,7 @@ from ecf.eval.results import (
     spawn_figures,
     window_figures,
 )
-from ecf.eval.setio import canonical, replace_file, sweep_folder, writable_root, write_new
+from ecf.eval.setio import canonical, real, replace_file, sweep_folder, writable_root, write_new
 from ecf.ids import new_random_id
 from ecf.schema import (
     CURRENT_VERSION,
@@ -348,7 +348,7 @@ def read_set(root: Path) -> SetRead:
             merged.one_read(),
             merged.named_errors(),
         ):  # each email hashed once: freshness check and row check share it
-            return _read_set(merged.resolve(root).resolve(), merged.paths(root).public)
+            return _read_set(real(merged.resolve(root)), merged.paths(root).public)
     finally:
         merged.release(held)
 
@@ -370,7 +370,7 @@ def _read_set(root: Path, logical: Path | None = None) -> SetRead:
     # never from a file in the merged view (review round 12, B2)
     ok = label_file.models_ok(logical or root)
     for r in rows:
-        path = (root / r["file"]).resolve()
+        path = real(root / r["file"])
         why = (OUTSIDE if not path.is_relative_to(root) else MISSING if not path.is_file()
                else OVERSIZED if path.stat().st_size > MAX_CASE_BYTES else None)  # fmt: skip
         if why is not None:

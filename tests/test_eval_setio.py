@@ -3497,3 +3497,25 @@ def test_a_settle_page_folder_is_made_private(
     out = tmp_path / "page"
     settle.export(tmp_path / "set", out)
     assert stat.S_IMODE(out.stat().st_mode) == 0o700
+
+
+# The eval-set readers, the gate and the git checks: Python 3.12's `Path.resolve()` raises
+# RuntimeError on a symbolic link loop, which escaped the gate and failed every service tick;
+# they use `setio.real` (Step 7 review)
+_SERVER_READERS = ("evalrun.py", "ruletest.py", "gate.py", "claude_eval.py")
+NO_RESOLVE = sorted([*SRC.joinpath("eval").glob("*.py"),
+                     *(SRC.parent / "ecf_server" / n for n in _SERVER_READERS)])  # fmt: skip
+
+
+def test_eval_and_gate_code_never_calls_path_resolve() -> None:
+    found = [
+        f"{p.name}:{node.lineno}"
+        for p in NO_RESOLVE
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "resolve"
+        and not node.args
+        and not node.keywords
+    ]  # `merged.resolve(root)` takes the set: only the no-argument Path method is refused
+    assert len(NO_RESOLVE) > 30 and all(p.is_file() for p in NO_RESOLVE) and not found, found

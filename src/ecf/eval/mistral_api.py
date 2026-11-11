@@ -18,6 +18,7 @@ from typing import Any
 from ecf.client import LocalClient
 from ecf.errors import InvalidInputError
 from ecf.eval import models, tools
+from ecf.eval.setio import real
 from ecf.paths import Paths
 
 MAX_COST = 15.0  # US$ per run (`--max-cost`)
@@ -67,7 +68,7 @@ class MistralAdapter:
         raise InvalidInputError("the Mistral grader takes a case, not a prompt (ask_case)")
 
     def ask_case(self, root: Path, case_id: str, schema: dict[str, Any]) -> tools.Reply:
-        return self._call("/v1/eval/mistral", {"root": str(root.resolve()), "case": case_id,
+        return self._call("/v1/eval/mistral", {"root": str(real(root)), "case": case_id,
                                                "model": self.model}, schema)  # fmt: skip
 
     def ask_draft(self, run_id: str, case_id: str, schema: dict[str, Any]) -> tools.Reply:

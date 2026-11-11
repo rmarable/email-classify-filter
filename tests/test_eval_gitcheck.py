@@ -363,3 +363,16 @@ def test_a_private_clone_stored_in_another_case_is_no_private_half(top: Path) ->
     got = gitcheck.clean_and_pushed(top, "heldout3")
     assert not got.ok and got.no_private
     assert gitcheck.fingerprint(top, "heldout3")[3] is None
+
+
+def test_a_looped_gitdir_is_unreadable_never_raised(tmp_path: Path) -> None:
+    """A `.git` file whose `gitdir:` is a symbolic link loop: the checks say the repository
+    can't be read; nothing raises out of the gate (Python 3.12's resolve() raised; Step 7)."""
+    (tmp_path / "tests" / "eval" / "syn").mkdir(parents=True)
+    (tmp_path / "eval" / "private" / "syn").mkdir(parents=True)
+    (tmp_path / ".git").write_text(f"gitdir: {tmp_path}/loop\n")
+    (tmp_path / "loop").symlink_to("loop")
+    got = gitcheck.clean_and_pushed(tmp_path, "syn", fresh=True)
+    assert not got.ok and got.error and "can't be read" in got.detail, got
+    assert gitcheck.read_head(tmp_path) is None
+    assert isinstance(gitcheck.fingerprint(tmp_path, "syn"), tuple)

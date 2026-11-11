@@ -27,7 +27,7 @@ from ecf.eval import generate as gen
 from ecf.eval import labels as label_file
 from ecf.eval import models
 from ecf.eval.results import RESULT_FORMAT, CaseResult, ResultFile
-from ecf.eval.setio import atomic_write, writable_set
+from ecf.eval.setio import atomic_write, real, writable_set
 from ecf.eval.tools import Adapter, Breaker, Reply
 from ecf.schema import load_schema
 
@@ -64,7 +64,7 @@ def case_view(root: Path, case_id: str) -> str | None:
 
     if case_email(root, case_id) is None:
         return None
-    path = root.resolve() / "cases" / f"{case_id}.md"
+    path = real(root) / "cases" / f"{case_id}.md"
     if not path.is_file():
         raise InvalidInputError(f"{case_id}: its card isn't in the set")
     return "\n".join(screen(parse_card(path.read_text(encoding="utf-8"), source=path.name)))
@@ -76,8 +76,8 @@ def case_email(root: Path, case_id: str) -> bytes | None:
     row = next((r for r in label_file.read(root) if r.get("id") == case_id), None)
     if row is None:
         raise InvalidInputError(f"{case_id}: no such case in {root}")
-    base = root.resolve()
-    path = (base / str(row["file"])).resolve()
+    base = real(root)
+    path = real(base / str(row["file"]))
     if not path.is_relative_to(base) or not path.is_file():
         raise InvalidInputError(f"{case_id}: its file isn't in the set")
     data = path.read_bytes()

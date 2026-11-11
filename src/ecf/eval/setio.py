@@ -37,6 +37,16 @@ SET_FILES = ("labels.jsonl", "fixed_labels.jsonl", "checks.yaml", "reviews.jsonl
 _LAYOUT_FILES = (*SET_FILES, "manifest.json")
 
 
+def real(path: Path) -> Path:
+    """`Path.resolve()` for eval sets and the gate: links followed, the path made absolute, but
+    a symbolic link loop is left in the path rather than raised. Python 3.12's `resolve()` raises
+    RuntimeError on a loop (3.13's doesn't), which escaped the gate and failed every service tick;
+    `os.path.realpath` raises on neither, so a loop reads as a file that isn't there, which every
+    reader already refuses (Step 7 review). A source scan keeps `.resolve()` out of these modules
+    (tests/test_eval_setio.py)."""
+    return Path(os.path.realpath(path))
+
+
 def canonical(path: Path) -> Path:
     """What a path is, not how it was typed: symlinks followed and, on a case-insensitive file
     system, every name in the case it is stored in. Every layout check compares canonical paths,
