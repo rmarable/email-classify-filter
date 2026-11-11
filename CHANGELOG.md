@@ -6,6 +6,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 ## Next release (not yet tagged)
 
 - `ecf eval build` refuses a prompt-injection test card in a public test set; such cards live in the private set (generated sets excepted; OD-705).
+- Decided: an eval test set may hold only plain files and folders: a symbolic link or other special file in it is refused rather than followed, so the gate can't count a run on content no commit holds (OD-705).
 - Decided: M1 (AWS mode) won't move an install between your Mac and AWS; you choose local or AWS when you set up. Moving an install, and backup-key rotation in AWS mode, are later items (OD-783).
 - Decided: the eval gate treats a test set as committed only when every file matches the commit, so an edit hidden from `git status` can't count, and the prompt-injection card scan reads label and check files exactly as the merge does (OD-704).
 - Decided: in AWS mode (M1) a key rotation is finished only on the computer that holds its key text; finishing a maintenance job from another computer is a separate M2 task, apart from multi-user teams (OD-732).
