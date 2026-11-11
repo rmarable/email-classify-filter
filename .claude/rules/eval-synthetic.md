@@ -25,8 +25,10 @@ with `uv run ecf eval build --root tests/eval/drafts`.
   repository, gitignored here; `planning-docs/EVAL-PRIVATE.md`), never under `tests/eval/`. A card
   is an injection card when its front matter has `injection_target`, `injection_phrase` or
   `hidden_text` at any level, a `threat` containing `inject`, or `expected.draft.group: injection`
-  (X1, `ecf.eval.markers`). `ecf eval build`, the pre-push card scan and the sdist test refuse one
-  in a public set; the only public one is the pinned `starter-injection` (V3, OD-654). A private
+  (X1, `ecf.eval.markers`). The pre-push card scan and the sdist test refuse one in a public set,
+  and so does `ecf eval build`, except a generated card (`ecf eval generate` writes `hidden_text`;
+  never gate evidence, and the scans still refuse it); the only public one is the pinned
+  `starter-injection` (V3, OD-654). A private
   card without a marker is refused too. `ecf eval new-case --template injection` writes to the
   private set; `ecf eval build` builds both halves and the merged view readers use
   (`eval/private/.merged/<set>`), then says to commit both.

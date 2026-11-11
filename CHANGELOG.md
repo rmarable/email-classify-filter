@@ -5,7 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
-- The prompt-injection test emails (107 cards) moved out of the public repository into a private one, cloned into `eval/private/`; eval runs read both through a merged view, and a run without the private set can't count for the release gate (OD-626, OD-627).
+- The prompt-injection test emails (107 cards) moved out of the public repository into a private one, cloned into `eval/private/`; eval runs read both through a merged view, and a run without the private set can't count for the release gate (OD-626, OD-627, OD-643).
 - `ecf eval build` refuses a prompt-injection test card in a public test set; such cards live in the private set (generated sets excepted; OD-705).
 - Decided: an eval test set may hold only plain files and folders: a symbolic link or other special file in it is refused rather than followed, so the gate can't count a run on content no commit holds (OD-705).
 - Decided: M1 (AWS mode) won't move an install between your Mac and AWS; you choose local or AWS when you set up. Moving an install, and backup-key rotation in AWS mode, are later items (OD-783).

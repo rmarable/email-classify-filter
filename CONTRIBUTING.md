@@ -22,7 +22,7 @@ rule and the commit rules are in `AGENTS.md`, shared by Claude Code and Codex.
 
 ```sh
 uv sync            # creates .venv from uv.lock, including dev tools and the [eval] extra
-git config core.hooksPath .githooks   # the pre-push card scan (every checkout and worktree)
+git config core.hooksPath .githooks   # the pre-push card scan (once per clone)
 ```
 
 The pre-push hook refuses a push that adds a prompt-injection test card under `tests/eval/`

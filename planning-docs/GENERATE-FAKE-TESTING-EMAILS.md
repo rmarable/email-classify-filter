@@ -191,4 +191,5 @@ These parts of the plan arrive with the milestones that need them:
 Rebuilding is explicit (`ecf eval build`) and the diff is reviewed. Patterns seen in shadow mode
 become new paraphrased cards, never real content. The repository is public, so injection cards
 live in the private set, `eval/private/<set>` (gitignored; `planning-docs/EVAL-PRIVATE.md`), and
-`ecf eval build` refuses one under `tests/eval/` (`.claude/rules/eval-synthetic.md`).
+`ecf eval build` and the card scans refuse one in a public set (the build lets a generated card
+through; `.claude/rules/eval-synthetic.md`).

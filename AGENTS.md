@@ -9,9 +9,8 @@ through `CLAUDE.md`, which adds what only Claude does.
 > the macOS merge gate, real-service tests, Keychain, launchd and Slack, evals, the main checkout and
 > the accept service, reading or writing `eval/private/` in any checkout, writing a test card with an
 > injection marker (`.claude/rules/eval-synthetic.md`), and reading `state-archive/`,
-> `CLAUDE-STATE.md` or `CLAUDE.local.md`. If a task
-> needs one of these, stop, put a `Handoff: ready` block saying what's needed in your branch's newest
-> commit, and tell the operator. Never work around this rule (by renaming a branch, pushing through
+> `CLAUDE-STATE.md` or `CLAUDE.local.md`. If a task needs one of these, stop, put a `Handoff: ready`
+> block saying what's needed in your branch's newest commit, and tell the operator. Never work around this rule (by renaming a branch, pushing through
 > another remote, editing these rules, or anything else).
 
 ## Rules
@@ -66,7 +65,7 @@ Python ≥ 3.12.6, managed with uv (`.python-version`). `docs/` is excluded from
 
 ```sh
 uv sync                                   # create/update .venv from uv.lock
-git config core.hooksPath .githooks       # once per checkout and worktree: the pre-push card scan
+git config core.hooksPath .githooks       # once per clone (its worktrees share it): the pre-push card scan
 uv run ruff check . && uv run ruff format --check .
 uv run pyright                            # strict
 uv run lint-imports                       # ecf must never import ecf_server
