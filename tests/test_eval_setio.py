@@ -40,6 +40,8 @@ from ecf.eval.setio import (
 )
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "ecf"
+# macOS only: Linux's type stubs lack it, so it is read by name (as `setio` does)
+FULLFSYNC: int | None = getattr(fcntl, "F_FULLFSYNC", None)
 
 CARD = """---
 id: {id}
@@ -3314,7 +3316,7 @@ def test_a_full_flush_that_works_or_fails_on_the_disk_is_never_followed_by_fsync
     fail: list[int] = []
 
     def full(fd: int, op: int, *a: Any) -> Any:
-        if op == fcntl.F_FULLFSYNC and fail:
+        if op == FULLFSYNC and fail:
             raise OSError(fail[0], os.strerror(fail[0]))
         return real(fd, op, *a)
 
@@ -3342,7 +3344,7 @@ def test_a_volume_without_the_full_flush_falls_back_to_fsync(
     synced: list[int] = []
 
     def full(fd: int, op: int, *a: Any) -> Any:
-        if op == fcntl.F_FULLFSYNC:
+        if op == FULLFSYNC:
             raise OSError(err, os.strerror(err))
         return real(fd, op, *a)
 

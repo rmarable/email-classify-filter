@@ -37,6 +37,13 @@ from tests.test_eval_resolver_wiring import _split_set, complete_copy  # pyright
 from tests.test_gate import DIGEST, make_address
 
 SET = "heldout3"  # the smallest real set (30 cards): what's proved doesn't depend on its size
+
+
+def _chflags(path: Path, flags: int) -> None:
+    """`os.chflags` (macOS and BSD only; Linux's type stubs lack it, so it is read by name)."""
+    getattr(os, "chflags")(path, flags)  # noqa: B009
+
+
 S = f"tests/eval/{SET}"
 P = f"eval/private/{SET}"
 M = f"eval/private/.merged/{SET}"
@@ -518,7 +525,7 @@ def test_a_refused_write_names_the_file_it_writes_and_leaves_no_temporary_file(c
     new = case.startswith("a new file")
     path = folder / ("absent.jsonl" if new else "labels.jsonl")
     if locked:
-        os.chflags(path, stat.UF_IMMUTABLE)
+        _chflags(path, stat.UF_IMMUTABLE)
     else:
         folder.chmod(0o555)
     try:
@@ -528,7 +535,7 @@ def test_a_refused_write_names_the_file_it_writes_and_leaves_no_temporary_file(c
     finally:
         folder.chmod(0o755)
         if locked:
-            os.chflags(path, 0)
+            _chflags(path, 0)
     _named_as(str(got.value), folder if new else path)
     assert ".tmp" not in str(got.value), got.value
     if locked:
@@ -618,7 +625,7 @@ def test_a_refused_refresh_names_what_it_writes_and_leaves_no_temporary_file(
         source = _source_of(top, target) if locked in PICK else None
     with _healed(pub), _stale(top, source):
         if locked != "merge.json's rename":
-            os.chflags(target, stat.UF_IMMUTABLE)
+            _chflags(target, stat.UF_IMMUTABLE)
         try:
             with pytest.raises(mg.Unreadable) as got:
                 mg.refresh_merged(pub)
@@ -626,7 +633,7 @@ def test_a_refused_refresh_names_what_it_writes_and_leaves_no_temporary_file(
         finally:
             monkeypatch.undo()
             if locked != "merge.json's rename":
-                os.chflags(target, 0)
+                _chflags(target, 0)
     message = str(got.value)
     assert ".tmp" not in message and "lock flag" in message, message
     assert temps == [], temps
