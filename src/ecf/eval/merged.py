@@ -294,9 +294,11 @@ def owner(root: Path, case_id: str) -> Path:
 def refresh_after_write(root: Path) -> str | None:
     """A CLI writer's refresh at its end, in a `finally`: None when done (or no private half),
     else the refusal, which the caller prints as a note after its own result."""
-    if paths(root).private is None:
-        return None
     try:
+        # inside the try: finding the halves can fail too (a folder made unreadable since the
+        # write), and that must not replace the writer's own result either
+        if paths(root).private is None:
+            return None
         refresh_merged(root, wait=CLI_WAIT_S)
     except Exception as exc:  # never masks the writer's own result or error (C89)
         return f"note: the merged set wasn't refreshed: {reason(exc)}"

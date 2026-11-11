@@ -172,6 +172,19 @@ def test_a_failed_refresh_never_masks_the_writers_result(
     assert r.exit_code != 0 and "no-such-card" in str(r.exception)  # the writer's own refusal
 
 
+def test_a_failed_lookup_of_the_halves_is_a_note_too(
+    pub: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding the halves sits inside the refresh's guard: its error is a note, never raised."""
+    _build(pub)
+
+    def boom(*_a: object, **_k: object) -> object:
+        raise PermissionError("tests")
+
+    monkeypatch.setattr(mg, "paths", boom)
+    assert (mg.refresh_after_write(pub) or "").startswith("note: the merged set wasn't refreshed")
+
+
 def test_review_refreshes_after_each_changed_card(
     pub: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
