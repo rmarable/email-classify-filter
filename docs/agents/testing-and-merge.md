@@ -1,7 +1,8 @@
 # Testing and the macOS merge gate
 
 Rules for coding agents (Claude Code and Codex), moved out of `AGENTS.md` so they load only when
-needed. `AGENTS.md` says when to read this file. The text is unchanged from `AGENTS.md`.
+needed. `AGENTS.md` says when to read this file. The text came from `AGENTS.md`; the private eval
+set and card scan lines were added with `planning-docs/EVAL-PRIVATE.md`.
 
 ## When to run tests
 
@@ -33,6 +34,12 @@ Reserved for Claude Code. GitHub CI runs on Linux only (to stay within free minu
   and run again rather than merge.
 - Tests that touch the real Keychain or launchd use `ecf-test-*` names and remove what they create.
 - No `ecf models install` step before the gate.
+- **The private eval set** (`planning-docs/EVAL-PRIVATE.md`, "Releases and CI"): the gate's full
+  run is made twice, with `eval/private/` present (0 skipped) and with it moved aside, CI's view,
+  where only tests marked `private` may skip. The private repository must be clean, pushed and
+  private (`gh repo view --json visibility`), and the merge message names both commits. A change
+  to the eval builder rebuilds both halves of every set (`uv run ecf eval build --root ...`) before
+  the gate.
 - **Card scan** (EVAL-PRIVATE.md X5): every merge to `main`, docs-only merges included (a
   card-only merge is `.md` only), runs `uv run python scripts/check_card_injection.py --tree HEAD
   --no-skip` on the local merge commit; it must refuse nothing.

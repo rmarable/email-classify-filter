@@ -40,6 +40,6 @@ The rules shared with Codex are in `AGENTS.md` (OD-532, ADR 0033):
 ## Path-scoped rules
 
 `.claude/rules/*.md` files with `paths:` frontmatter load only when Claude works on matching files: `eval-synthetic.md`
-(`tests/eval/synthetic/**`, `tests/eval/drafts/**`), `roadmap.md` (`docs/roadmap/**`) and `user-docs.md` (README and the
+(`tests/eval/synthetic/**`, `tests/eval/drafts/**`, `eval/private/**`), `roadmap.md` (`docs/roadmap/**`) and `user-docs.md` (README and the
 user guides). They hold the full text; `AGENTS.md`, "Read before you do these", points Codex at them and at
 `docs/agents/*.md`. An `infra/**` rule arrives with M1.
