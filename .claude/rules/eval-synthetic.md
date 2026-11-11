@@ -28,10 +28,9 @@ with `uv run ecf eval build --root tests/eval/drafts`.
   (X1, `ecf.eval.markers`). The pre-push card scan and the sdist test refuse one in a public set,
   and so does `ecf eval build`, except a generated card (`ecf eval generate` writes `hidden_text`;
   never gate evidence, and the scans still refuse it); the only public one is the pinned
-  `starter-injection` (V3, OD-654). A private
-  card without a marker is refused too. `ecf eval new-case --template injection` writes to the
-  private set; `ecf eval build` builds both halves and the merged view readers use
-  (`eval/private/.merged/<set>`), then says to commit both.
+  `starter-injection` (V3, OD-654). A private card without a marker is refused too. `ecf eval
+  new-case --template injection` writes to the private set; `ecf eval build` builds both halves
+  and the merged view readers use (`eval/private/.merged/<set>`), then says to commit both.
 - A private card's text is never quoted in tests, docs or fixtures: tests build their own marked
   cards (`tests/eval_checkout.py`, `split_set`). Result files and the gate's detail name private
   IDs only (closed vocabulary, OD-259).

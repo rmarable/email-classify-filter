@@ -77,6 +77,19 @@ def test_new_case_routes_an_injection_card_to_the_private_half(pub: Path, tmp_pa
     assert r.exit_code != 0 and "already exists" in r.output
 
 
+def test_new_case_leaves_the_merged_view_fresh(pub: Path) -> None:
+    """Each CLI command that writes a set refreshes the merged view at its end (W1)."""
+    _build(pub)
+    view = mg.paths(pub).merged
+    assert view is not None
+    for case_id, template in (("inj-new", "injection"), ("bec-new", "bec")):
+        r = runner.invoke(app, ["eval", "new-case", case_id, "--template", template, "--root",
+                                str(pub)])  # fmt: skip
+        assert r.exit_code == 0, r.output
+        assert mg.is_fresh(mg.paths(pub)), case_id
+        assert (view / "cases" / f"{case_id}.md").is_file()
+
+
 def test_new_case_refuses_an_injection_card_without_a_private_half(tmp_path: Path) -> None:
     root = tmp_path / "tests" / "eval" / "synthetic"
     root.mkdir(parents=True)

@@ -940,9 +940,13 @@ def eval_new_case(
         raise typer.BadParameter(f"{case_id} already exists", param_hint="CASE_ID")
     # the set itself, so a linked cases/ is refused too, before its folder is made (round 28)
     target = writable_set(home) / "cases" / f"{case_id}.md"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(target, TEMPLATES[template].format(id=case_id))
-    typer.echo(f"wrote {target}")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(target, TEMPLATES[template].format(id=case_id))
+        typer.echo(f"wrote {target}")
+    finally:  # a set writer refreshes the merged view at its end (EVAL-PRIVATE.md, W1)
+        if note := merged.refresh_after_write(root):
+            typer.echo(note)
 
 
 @eval_app.command("build")

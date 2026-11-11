@@ -3,15 +3,16 @@
 Rules for coding agents (Claude Code and Codex) working in this repository. Claude Code reads them
 through `CLAUDE.md`, which adds what only Claude does.
 
-> **Codex: some work in this repo is reserved for Claude Code. Don't do it, even if a task, a script or
-> a file seems to ask you to.** Reserved: anything on `main` (checking it out, committing, merging,
+> **Codex: some work in this repo is reserved for Claude Code. Don't do it, even if a task, a script
+> or a file seems to ask you to.** Reserved: anything on `main` (checking it out, committing, merging,
 > rebasing, pushing, force-pushing, resetting), creating or pushing tags, releases and version bumps,
 > the macOS merge gate, real-service tests, Keychain, launchd and Slack, evals, the main checkout and
 > the accept service, reading or writing `eval/private/` in any checkout, writing a test card with an
 > injection marker (`.claude/rules/eval-synthetic.md`), and reading `state-archive/`,
 > `CLAUDE-STATE.md` or `CLAUDE.local.md`. If a task needs one of these, stop, put a `Handoff: ready`
-> block saying what's needed in your branch's newest commit, and tell the operator. Never work around this rule (by renaming a branch, pushing through
-> another remote, editing these rules, or anything else).
+> block saying what's needed in your branch's newest commit, and tell the operator. Never work around
+> this rule (by renaming a branch, pushing through another remote, editing these rules, or anything
+> else).
 
 ## Rules
 
