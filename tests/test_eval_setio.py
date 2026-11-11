@@ -3502,9 +3502,32 @@ def test_a_settle_page_folder_is_made_private(
 # The eval-set readers, the gate and the git checks: Python 3.12's `Path.resolve()` raises
 # RuntimeError on a symbolic link loop, which escaped the gate and failed every service tick;
 # they use `setio.real` (Step 7 review)
-_SERVER_READERS = ("evalrun.py", "ruletest.py", "gate.py", "claude_eval.py")
+_SERVER_READERS = (
+    "evalrun.py",
+    "ruletest.py",
+    "gate.py",
+    "claude_eval.py",
+    "stages.py",
+    "reprocess.py",
+    "api.py",
+)  # the readers and the tick's callers of the gate
 NO_RESOLVE = sorted([*SRC.joinpath("eval").glob("*.py"),
                      *(SRC.parent / "ecf_server" / n for n in _SERVER_READERS)])  # fmt: skip
+
+
+# module functions named `resolve` that take no path: the set resolver and the inbox's
+_NOT_PATHS = ("merged", "mg", "inbox")
+
+
+def _resolve_call(node: ast.Call) -> bool:
+    """A path `.resolve(...)` call in any form (`p.resolve()`, `p.resolve(strict=...)`,
+    `Path.resolve(p)`), or a strict realpath: both raise on a link loop on Python 3.12."""
+    if not isinstance(node.func, ast.Attribute):
+        return False
+    if node.func.attr == "resolve":
+        owner = node.func.value
+        return not (isinstance(owner, ast.Name) and owner.id in _NOT_PATHS)
+    return node.func.attr == "realpath" and any(k.arg == "strict" for k in node.keywords)
 
 
 def test_eval_and_gate_code_never_calls_path_resolve() -> None:
@@ -3512,10 +3535,21 @@ def test_eval_and_gate_code_never_calls_path_resolve() -> None:
         f"{p.name}:{node.lineno}"
         for p in NO_RESOLVE
         for node in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "resolve"
-        and not node.args
-        and not node.keywords
-    ]  # `merged.resolve(root)` takes the set: only the no-argument Path method is refused
+        if isinstance(node, ast.Call) and _resolve_call(node)
+    ]
     assert len(NO_RESOLVE) > 30 and all(p.is_file() for p in NO_RESOLVE) and not found, found
+
+
+def _call(src: str) -> ast.Call:
+    node = ast.parse(src, mode="eval").body
+    assert isinstance(node, ast.Call)
+    return node
+
+
+def test_the_resolve_scan_catches_every_form() -> None:
+    caught = ("p.resolve()", "p.resolve(strict=False)", "Path.resolve(p)",
+              "os.path.realpath(p, strict=True)")  # fmt: skip
+    passed = ("merged.resolve(root)", "mg.resolve(root)", "inbox.resolve(c, clock, sel)",
+              "os.path.realpath(p)")  # fmt: skip
+    assert all(_resolve_call(_call(s)) for s in caught)
+    assert not any(_resolve_call(_call(s)) for s in passed)
