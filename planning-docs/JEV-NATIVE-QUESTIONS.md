@@ -1,12 +1,12 @@
 # Jev with Jev-designed questions
 
-Status: draft 5, 2026-11-12 (built; diff review by two Fable lenses, findings in the findings file as D-perf and D-safety, all taken). Draft 1 went through Phase R (four Fable lenses: safety,
+Status: Stage A run 2026-11-12 (results: SPEC §21.2, OD-840: no native arm passes; Stage B not entered). Draft 5, 2026-11-12 (built; diff review by two Fable lenses, findings in the findings file as D-perf and D-safety, all taken). Draft 1 went through Phase R (four Fable lenses: safety,
 measurement, cost and design, performance; P1-P31), draft 2 and draft 3 through delta checks (four
 Opus lenses each; Q1-Q22, R1-R20; round 3 found no HIGH); both in `state-archive/jev-native/review-findings.md` (gitignored). Every
 recommendation was accepted under the operator's standing instruction of 2026-11-12; where lenses
 differed, the findings file records the choice. Branch `jev-native` (worktree
 `../ecf-jev-native`, off `acc7c40`). Eval only: no service path change, preset D stays held back
-(OD-516). New OD number: OD-NEW, assigned at commit.
+(OD-516). OD-840.
 
 ## 1. Why
 
