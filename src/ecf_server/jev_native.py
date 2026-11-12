@@ -26,6 +26,7 @@ from importlib import resources
 from typing import Any, cast
 
 from ecf.errors import InvalidInputError
+from ecf.eval.setio import reason
 from ecf.schema import CompiledSchema, FieldKind
 from ecf.yamlio import load_yaml
 from ecf_server import jev_mapping, systemone
@@ -305,7 +306,7 @@ def parse(text: str, schema: CompiledSchema) -> Native:  # noqa: PLR0912 - one c
     try:
         mapping = jev_mapping.parse(mapping_doc)
     except Exception as exc:  # jev_mapping raises InternalError for the shipped file's faults
-        raise _bad(f"mapping: {exc}") from exc
+        raise _bad(f"mapping: {reason(exc)}") from exc
     questions = d.get("questions")
     if not isinstance(questions, dict) or not questions:
         raise _bad("`questions` is a mapping of question ids")

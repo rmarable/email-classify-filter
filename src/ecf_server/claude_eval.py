@@ -519,7 +519,8 @@ def run_mapping(m: dict[str, Any]) -> jev_mapping.JevMapping:
     try:
         mapping = jev_mapping.parse(o["mapping"])
     except Exception as exc:  # jev_mapping raises InternalError for a bad document
-        raise InvalidInputError(f"the source run's recorded mapping doesn't parse: {exc}") from exc
+        raise InvalidInputError(f"the source run's recorded mapping doesn't parse:"
+                                f" {reason(exc)}") from exc  # fmt: skip
     if jev_mapping.digest(mapping) != o.get("mapping_digest"):
         raise InvalidInputError("the source run's recorded mapping doesn't match its digest")
     return mapping
