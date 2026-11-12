@@ -171,6 +171,12 @@ protected_modules = ["ecf_server.jev_dispatch"]
 allowed_importers = ["ecf_server.service", "ecf_server.api"]
 
 [[tool.importlinter.contracts]]
+name = "Only the Jev eval imports the Jev-designed questions (JEV-NATIVE-QUESTIONS P8): eval only"
+type = "protected"
+protected_modules = ["ecf_server.jev_native"]
+allowed_importers = ["ecf_server.evaljev"]
+
+[[tool.importlinter.contracts]]
 name = "Only the API imports the Mistral client (eval generate plan step 3): eval grading only"
 type = "protected"
 protected_modules = ["ecf_server.mistral"]

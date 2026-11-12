@@ -1022,7 +1022,11 @@ def _eval_routes(state: ServiceState, allow: Allow) -> list[Route]:  # noqa: PLR
                                for_gate=body.get("for_gate") is not False,
                                copy_to=_copy_to(body),
                                signals=body.get("signals") is not False,
-                               jev_concurrency=_jev_concurrency(body))  # fmt: skip
+                               jev_concurrency=_jev_concurrency(body),
+                               jev_questions=_opt_str(body, "jev_questions") or "claude",
+                               jev_state=_opt_str(body, "jev_state") or "s1",
+                               jev_reverse_choices=body.get("jev_reverse_choices")
+                               is True)  # fmt: skip
         asker = None
         if opts.backend == evalrun.JEV:  # the key is read here, then re-read per try (P12, J10)
             from ecf_server import evaljev, jev  # noqa: PLC0415 - eval only, not a service import

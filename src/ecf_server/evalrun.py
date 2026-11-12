@@ -189,6 +189,12 @@ class Options:
     # format, preamble placement, `fraud_risk` type, option order, an extra question) went once
     # it chose the configuration (OD-512); their runs' files keep the record
     jev_concurrency: int = 1
+    # Jev-designed questions (planning-docs/JEV-NATIVE-QUESTIONS.md §3.4): `claude` (today's) or
+    # `native`; the state `s1` (today's) or `s3` (JSON, native only); every Choice's options
+    # reversed (R7, native only). Each away from its default makes the run measuring
+    jev_questions: str = "claude"
+    jev_state: str = "s1"
+    jev_reverse_choices: bool = False
 
     @property
     def switches_off(self) -> list[str]:
@@ -198,7 +204,14 @@ class Options:
     @property
     def measuring(self) -> list[str]:
         """The Jev measurement options away from their defaults, as `name value`."""
-        return [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
+        out = [f"jev_concurrency {self.jev_concurrency}"] if self.jev_concurrency != 1 else []
+        if self.jev_questions != "claude":
+            out.append(f"jev_questions {self.jev_questions}")
+        if self.jev_state != "s1":
+            out.append(f"jev_state {self.jev_state}")
+        if self.jev_reverse_choices:
+            out.append("jev_reverse_choices")
+        return out
 
     def sent(self, facts: dict[str, Any]) -> tuple[str, ...]:
         """The signals this run asks with for these facts."""
@@ -780,6 +793,11 @@ def _check_options(opts: Options) -> None:
         raise InvalidInputError("a jev run classifies: --no-classifier is for the null backend")
     if opts.jev_concurrency != 1:
         raise InvalidInputError("--jev-concurrency above 1 is not in v3.0.0 (S3-D4)")
+    if opts.jev_questions not in ("claude", "native") or opts.jev_state not in ("s1", "s3"):
+        raise InvalidInputError("--jev-questions is claude or native; --jev-state is s1 or s3")
+    if opts.jev_questions == "claude" and (opts.jev_state != "s1" or opts.jev_reverse_choices):
+        raise InvalidInputError("--jev-state s3 and --jev-reverse-choices are for"
+                                " --jev-questions native (R19)")  # fmt: skip
 
 
 def check_schema(connect: Callable[[], sqlite3.Connection]) -> None:
@@ -951,6 +969,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
          problems: tuple[tuple[str, str], ...] = ()) -> dict[str, Any]:  # fmt: skip
     """Run the cases; the end state for `RUN`. `problems`: the set's rows that couldn't run."""
     started = time.monotonic()
+    started_at = to_ts(clock.now())  # the wall-clock start, for the void rule's sleep check (Q14)
     redact = triggers.redact_injection if opts.redact else _unredacted
     on_ac_at_start = power().on_ac
     conn = connect()
@@ -998,8 +1017,9 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
             band: dict[str, Any] = {}
             if cls is not None:
                 ctx, plan, blocked = planned(case, cls, facts, rules_now, known)
-                if asker is not None:  # step 3's caution, from Jev's probabilities
-                    derived = jev_mapping.derive(cls, asked.probabilities)
+                if asker is not None:  # step 3's caution, under the run's mapping (Q1)
+                    derived = jev_mapping.derive(cls, asked.probabilities,
+                                                 getattr(asker, "mapping", None))  # fmt: skip
                     plan, band = held(ctx, plan, derived, known, rules_now)
             alone = rules_alone(case, facts, rules_now, known, schema)
             results.append(score(case, cls, plan, None, derived).model_copy(update={
@@ -1049,6 +1069,7 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
         summary["scoring"] = "live"
         summary["wall_s"] = round(time.monotonic() - started, 1)  # the run's wall time (P18)
+        summary["started_at"] = started_at
         summary["label_map_unlabelled"] = map_effect(cases)
         summary["backend"] = opts.backend
         summary["redact"] = opts.redact
@@ -1058,7 +1079,8 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         if asker is not None:  # what Jev was asked with (P13), and its figures (§5.5)
             summary.update(asker.inputs(schema, rules_now))
             summary["jev"] = asker.figures(schema, faulted, determinism)
-            summary["band"] = band_figures(results, cases, rules_now)
+            summary["band"] = band_figures(results, cases, rules_now,
+                                           getattr(asker, "mapping", None))  # fmt: skip
             digest = str(summary["gate_key"])
         summary["fraud_under"] = fraud_under(results, cases, schema)
         summary.update(fraud_metrics(results, cases, schema))
@@ -1120,6 +1142,8 @@ def same_answer(a: Asked, b: Asked) -> bool:
     PROB_TOLERANCE (§6)."""
     if a.classification != b.classification:
         return False
+    if not _same_raw(a.recorded.get("question_answers"), b.recorded.get("question_answers")):
+        return False
     pa, pb = a.probabilities or {}, b.probabilities or {}
     if pa.keys() != pb.keys():
         return False
@@ -1128,6 +1152,41 @@ def same_answer(a: Asked, b: Asked) -> bool:
         if opts.keys() != other.keys():
             return False
         if any(abs(v - other[k]) > PROB_TOLERANCE for k, v in opts.items()):
+            return False
+    return True
+
+
+def _numbers(v: Any) -> list[float]:
+    """A raw answer's numbers in a fixed order (a Noul's p, a Choice's or Score's probabilities)."""
+    if isinstance(v, int | float) and not isinstance(v, bool):
+        return [float(v)]
+    if isinstance(v, dict):
+        d = cast("dict[str, Any]", v)
+        ps = d.get("probabilities")
+        if isinstance(ps, dict):
+            return [float(x) for _k, x in sorted(cast("dict[str, Any]", ps).items())]
+        if isinstance(ps, list):
+            return [float(x) for x in cast("list[Any]", ps)]
+    return []
+
+
+def _same_raw(a: Any, b: Any) -> bool:
+    """Two native runs' raw answers agree: the same questions, the same choices, every number
+    within PROB_TOLERANCE (P7); both None (the Claude-style path keeps none) agrees."""
+    if a is None or b is None:
+        return a is None and b is None
+    da, db = cast("dict[str, Any]", a), cast("dict[str, Any]", b)
+    if da.keys() != db.keys():
+        return False
+    for k, va in da.items():
+        vb = db[k]
+        if isinstance(va, dict) and isinstance(vb, dict) and cast("dict[str, Any]", va).get(
+                "choice") != cast("dict[str, Any]", vb).get("choice"):  # fmt: skip
+            return False
+        na, nb = _numbers(va), _numbers(vb)
+        if len(na) != len(nb) or any(
+            abs(x - y) > PROB_TOLERANCE for x, y in zip(na, nb, strict=True)
+        ):
             return False
     return True
 
@@ -1467,8 +1526,8 @@ def automation_lost(results: list[CaseResult], cases: list[Case],
                           for h in r.held or ()))  # fmt: skip
 
 
-def band_figures(results: list[CaseResult], cases: list[Case],
-                 rules_now: rules.CompiledRules) -> dict[str, Any]:  # fmt: skip
+def band_figures(results: list[CaseResult], cases: list[Case], rules_now: rules.CompiledRules,
+                 mapping: jev_mapping.JevMapping | None = None) -> dict[str, Any]:  # fmt: skip
     """`summary.band` (step 3, §3.2): the mapping a Jev run was scored under, the cases its
     caution held (left and flagged), by cause, the unsure and below-bar counts per field, and the
     automation lost (`automation_lost`)."""
@@ -1481,7 +1540,7 @@ def band_figures(results: list[CaseResult], cases: list[Case],
         for f in r.below_bar or ():
             below[f] = below.get(f, 0) + 1
     lost = automation_lost(results, cases, rules_now)
-    return {"mapping_digest": jev_mapping.digest(), "held_cases": len(held_cases),
+    return {"mapping_digest": jev_mapping.digest(mapping), "held_cases": len(held_cases),
             "held_by": {"unsure": sum(bool(r.unsure) for r in held_cases),
                         "below_bar": sum(any(h.startswith("below bar") for h in r.held or ())
                                          for r in held_cases)},

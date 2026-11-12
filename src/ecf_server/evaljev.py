@@ -24,6 +24,7 @@ digest it matches its source run on from here (`source_inputs`).
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,8 +34,8 @@ from typing import Any
 import httpx
 
 from ecf.eval.results import CaseResult, ResultFile
-from ecf.schema import CompiledSchema
-from ecf_server import jev, jev_mapping, policy, rules, ruletest, triggers
+from ecf.schema import CompiledSchema, load_schema
+from ecf_server import jev, jev_mapping, jev_native, policy, rules, ruletest, systemone, triggers
 from ecf_server.clock import Clock
 from ecf_server.evalrun import (
     FATAL,
@@ -94,6 +95,28 @@ def factory(setup: Setup) -> Callable[[Options, Clock], JevAsker]:
     return lambda opts, clock: JevAsker(opts, clock, setup)
 
 
+def asking(opts: Options, schema: CompiledSchema) -> jev.Asking:
+    """The run's question style (planning-docs/JEV-NATIVE-QUESTIONS.md §3.4): today's
+    Claude-style request, or the Jev-designed questions with their own mapping (Q1), state format
+    and option order (R7)."""
+    if opts.jev_questions != "native":
+        return jev.CLAUDE
+    native = jev_native.load(schema)
+    inspect, reverse = opts.jev_state == "s3", opts.jev_reverse_choices
+
+    def questions(_schema: CompiledSchema) -> dict[str, Any]:
+        return jev_native.questions(native, inspect=inspect, reverse=reverse)
+
+    def answer(body: dict[str, Any],
+               s: CompiledSchema) -> tuple[systemone.Answer, dict[str, Any] | None]:  # fmt: skip
+        return jev_native.compose(native, body, s)
+
+    return jev.Asking(style="native", state_format=opts.jev_state, questions=questions,
+                      answer=answer, mapping=native.mapping, questions_digest=native.digest,
+                      record=jev_native.options_record(native, state=opts.jev_state,
+                                                       reverse=reverse))  # fmt: skip
+
+
 def source_inputs(schema: CompiledSchema) -> tuple[str, str]:
     """The pin and the default-options prompt digest a preset D source run must have (D5)."""
     pin = jev.load_pin()
@@ -105,10 +128,14 @@ class JevAsker:
 
     def __init__(self, opts: Options, clock: Clock, setup: Setup) -> None:
         self.opts = opts
+        self.asking = asking(opts, load_schema())
+        # the run's caution mapping (Q1): None is the shipped one
+        self.mapping = self.asking.mapping
         self.client = jev.Client(setup.key, transport=setup.transport, clock=clock,
                                  stop=RUN.stop, wait=setup.wait, on_pause=self._paused,
                                  budget_s=setup.budget_s,
-                                 concurrency=opts.jev_concurrency)  # fmt: skip
+                                 concurrency=opts.jev_concurrency,
+                                 asking=self.asking)  # fmt: skip
         self.pin = self.client.pin
         self.window = jev.WINDOW
         # until a request gets a reply classed ok or request error (not a provider fault): a 404
@@ -144,6 +171,9 @@ class JevAsker:
         res = self.client.classify(schema, email, sent, first=self.first,
                                    redact=self.opts.redact)  # fmt: skip
         took = 1000 * (time.monotonic() - t0)
+        if res.fault is None and res.classification is None:
+            # a 200 whose answer doesn't map or compose: a fault, so the void rule sees it (R8)
+            res = dataclasses.replace(res, fault="unusable_answer")
         (self.end_to_end_ms if res.fault is None else self.end_to_end_faulted_ms).append(took)
         self.first = self.first and not res.replied
         recorded: dict[str, Any] = {
@@ -153,6 +183,8 @@ class JevAsker:
             "concurrency": res.concurrency, "confidence": res.confidence or None,
             "input_tokens": res.input_tokens, "output_tokens": res.output_tokens,
         }  # fmt: skip
+        if res.question_answers is not None:
+            recorded["question_answers"] = res.question_answers
         return Asked(res.classification, res.probabilities or None, res.fault, recorded,
                      res.concurrency)  # fmt: skip
 
@@ -193,10 +225,10 @@ class JevAsker:
         """What the run asked with (P13): top-level, so `ecf eval compare` prints differences."""
         pin = self.pin
         return {
-            "prompt_digest": jev.prompt_digest(schema, pin=pin),
-            "input_format": jev.state_format_id(),
+            "prompt_digest": jev.prompt_digest(schema, pin=pin, asking=self.asking),
+            "input_format": jev.state_format_id(self.asking),
             "excerpt_cap": jev.excerpt_cap(),
-            "gate_key": jev.gate_key(schema, rules_now, pin=pin),
+            "gate_key": jev.gate_key(schema, rules_now, pin=pin, asking=self.asking),
         }  # fmt: skip
 
     def figures(self, schema: CompiledSchema, faulted: dict[str, str],
@@ -210,9 +242,11 @@ class JevAsker:
             by_type[f] = by_type.get(f, 0) + 1
         return self.client.stats.summary() | {
             "pin": self.pin,
-            "options": {"state": "s1", "preamble": "state", "fraud_risk": "choice",
-                        "requires_action": "three questions",
-                        "concurrency": self.opts.jev_concurrency},
+            "options": ({"state": "s1", "preamble": "state", "fraud_risk": "choice",
+                         "requires_action": "three questions",
+                         "concurrency": self.opts.jev_concurrency}
+                        if self.asking.default
+                        else self.asking.record | {"concurrency": self.opts.jev_concurrency}),
             "schema_digest": schema.digest,
             "end_to_end_ms": spread(self.end_to_end_ms),
             "end_to_end_faulted_ms": spread(self.end_to_end_faulted_ms),

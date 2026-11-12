@@ -1524,6 +1524,30 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
     jev_concurrency: Annotated[
         int, typer.Option("--jev-concurrency", help="With jev: 1 (the only value in v3.0.0).")
     ] = 1,
+    jev_questions: Annotated[
+        str,
+        typer.Option(
+            "--jev-questions",
+            help="With jev: claude (default; the schema's questions) or native (the Jev-designed"
+            " questions; an experiment, never counts for the go-live gate).",
+        ),
+    ] = "claude",
+    jev_state: Annotated[
+        str,
+        typer.Option(
+            "--jev-state",
+            help="With --jev-questions native: s1 (default; today's text state) or s3 (a JSON"
+            " object; an experiment).",
+        ),
+    ] = "s1",
+    jev_reverse_choices: Annotated[
+        bool,
+        typer.Option(
+            "--jev-reverse-choices",
+            help="With --jev-questions native: every choice question's options in reverse"
+            " order (the option-order check; an experiment).",
+        ),
+    ] = False,
 ) -> None:
     """Run the synthetic set through ecf's rules with the null classifier (every field at its
     least risky value; seconds, no model): the rules-alone floor and a wiring check, never
@@ -1545,9 +1569,10 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
         if not classifier:
             raise InvalidInputError("--no-classifier is for `ecf eval run` without --claude")
         if (classifier_backend != "null" or not redact or not signals
-                or jev_concurrency != 1):  # fmt: skip
-            raise InvalidInputError("--classifier-backend, --no-redact, --no-signals and"
-                                    " --jev-concurrency are for `ecf eval run` without"
+                or jev_concurrency != 1 or jev_questions != "claude" or jev_state != "s1"
+                or jev_reverse_choices):  # fmt: skip
+            raise InvalidInputError("--classifier-backend, --no-redact, --no-signals and the"
+                                    " --jev-* options are for `ecf eval run` without"
                                     " --claude")  # fmt: skip
         _claude_eval(root, preset.upper(), sensitivity, fraud_only, classifier_model,
                      actor_model, batch, copy, actor_high_model=actor_high_model,
@@ -1561,7 +1586,8 @@ def eval_run(  # noqa: PLR0913, PLR0917 - typer options
             "root": str(root.resolve()), "classifier": classifier, "fraud_only": fraud_only,
             "backend": classifier_backend, "redact": redact, "for_gate": not not_for_gate,
             "signals": signals, "copy_to": str(copy) if copy else None,
-            "jev_concurrency": jev_concurrency})  # fmt: skip
+            "jev_concurrency": jev_concurrency, "jev_questions": jev_questions,
+            "jev_state": jev_state, "jev_reverse_choices": jev_reverse_choices})  # fmt: skip
     typer.echo(f"Eval {r['run_id'][:8]} started: {r['total']} cases.")
     if copy:
         typer.echo(f"  The result is also written to {copy}/ when the run ends.")
