@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -199,6 +199,10 @@ class JevAsker:
         whose first pass faulted isn't asked again (J3)."""
         diffs = 0
         flipped: dict[str, int] = {}
+        raw_flipped: dict[str, int] = {}
+        band_crossings = 0
+        native = jev_native.load(schema) if not self.asking.default else None
+        bands = dict(self.mapping.bands) if self.mapping is not None else {}
         conc: dict[str, list[int | None]] = {}
         faulted: list[str] = []
         for case in (c for c in cases if c.id in repeat and c.id in firsts):
@@ -212,14 +216,25 @@ class JevAsker:
             if again.fault is not None:
                 faulted.append(case.id)
                 continue
+            ra, rb = (first.recorded.get("question_answers"),
+                      again.recorded.get("question_answers"))  # fmt: skip
+            if native is not None and isinstance(ra, dict) and isinstance(rb, dict):
+                qs, crossed = jev_native.raw_flips(native, cast("dict[str, Any]", ra),
+                                                   cast("dict[str, Any]", rb), bands)  # fmt: skip
+                band_crossings += crossed
+                for q in qs:
+                    raw_flipped[q] = raw_flipped.get(q, 0) + 1
             if not same_answer(first, again):
                 diffs += 1
                 for f in field_flips(first.classification, again.classification) or ["probs"]:
                     flipped[f] = flipped.get(f, 0) + 1
         compared = sorted(c for c in conc if c not in faulted)
-        return diffs, {"cases": compared, "faulted_pairs": sorted(faulted),
-                       "field_flips": flipped, "prob_tolerance": PROB_TOLERANCE,
-                       "concurrency": conc, "tokens": "fresh per repeat"}  # fmt: skip
+        out: dict[str, Any] = {"cases": compared, "faulted_pairs": sorted(faulted),
+                               "field_flips": flipped, "prob_tolerance": PROB_TOLERANCE,
+                               "concurrency": conc, "tokens": "fresh per repeat"}  # fmt: skip
+        if native is not None:  # R19: counts only, never the answers (D6)
+            out |= {"raw_flips": raw_flipped, "band_crossings": band_crossings}
+        return diffs, out
 
     def inputs(self, schema: CompiledSchema, rules_now: rules.CompiledRules) -> dict[str, Any]:
         """What the run asked with (P13): top-level, so `ecf eval compare` prints differences."""

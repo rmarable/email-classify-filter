@@ -154,7 +154,8 @@ def test_a_case_records_its_length_and_where_its_phrases_fall(root: Path) -> Non
 
 
 def test_a_result_carries_the_measures_and_its_format_is_six() -> None:
-    assert RESULT_FORMAT == 6  # 5 added the text measures (OD-555); 6 the deferred fields (OD-563)
+    # 5 added the text measures (OD-555); 6 the deferred fields (OD-563); 7 native raw answers
+    assert RESULT_FORMAT == 7
     r = CaseResult(id="c", correct=True, prepared_chars=4200, signal_offset=2100,
                    injection_offset=3000, injection_seen=False, injection_hit=False,
                    moved_mark=True)  # fmt: skip

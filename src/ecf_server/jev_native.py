@@ -522,6 +522,64 @@ def compose(native: Native, body: dict[str, Any],
     return systemone.Answer(cls, probs, n_in), rawa
 
 
+def thresholds(native: Native) -> dict[str, set[float]]:
+    """Each Noul's composing thresholds: 0.5 under `noul` and the yes/no expressions, the
+    cascade's threshold in its steps and fallbacks, the companion's own (R19)."""
+    out: dict[str, set[float]] = {}
+
+    def add(expr: Any, t: float) -> None:
+        for i in _expr_ids(expr, "thresholds"):
+            out.setdefault(i, set()).add(t)
+
+    for spec in native.fields.values():
+        if spec["compose"] == "noul":
+            add(spec["from"], systemone.NOUL_TRUE)
+        elif spec["compose"] == "cascade":
+            thr = float(spec["threshold"])
+            for _v, expr in cast("list[list[Any]]", spec["steps"]):
+                add(expr, thr)
+            els = spec["else"]
+            if isinstance(els, dict):
+                e = cast("dict[str, Any]", els)
+                if "companion" in e:
+                    add(e["companion"], float(e["companion_threshold"]))
+                for _v, expr in cast("list[list[Any]]", e.get("fallback") or []):
+                    add(expr, thr)
+    return out
+
+
+def _top(ps: list[float]) -> int:
+    return max(range(len(ps)), key=lambda i: (ps[i], i))
+
+
+def raw_flips(native: Native, a: dict[str, Any], b: dict[str, Any],
+              bands: dict[str, float]) -> tuple[list[str], int]:  # fmt: skip
+    """Between two raw answers to one case (R19): the questions that flipped (a Noul crossing
+    one of its composing thresholds; a Choice or Score changing its top option or level), and
+    the band crossings (a banded field's question crossing its band's lower bound)."""
+    flips: list[str] = []
+    crossings = 0
+    thr = thresholds(native)
+    for qid, va in a.items():
+        vb = b.get(qid)
+        if isinstance(va, float) and isinstance(vb, float):
+            if any((va >= t) != (vb >= t) for t in thr.get(qid, ())):
+                flips.append(qid)
+            if qid in bands and (va >= bands[qid]) != (vb >= bands[qid]):
+                crossings += 1
+        elif isinstance(va, dict) and isinstance(vb, dict):
+            da, db = cast("dict[str, Any]", va), cast("dict[str, Any]", vb)
+            if "choice" in da:
+                if da.get("choice") != db.get("choice"):
+                    flips.append(qid)
+            else:
+                pa = cast("list[float]", da["probabilities"])
+                pb = cast("list[float]", db["probabilities"])
+                if _top(pa) != _top(pb):
+                    flips.append(qid)
+    return flips, crossings
+
+
 def options_record(native: Native, *, state: str, reverse: bool) -> dict[str, Any]:
     """What a native run records in `summary.jev.options` (Q1, R7)."""
     return {"questions": "native", "questions_digest": native.digest, "state": state,

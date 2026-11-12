@@ -49,9 +49,9 @@ HOLM_ALPHA = 0.05  # family-wise, over the per-field tests (SPEC §16.5)
 # the result file's format (v3.0.0 step 2, P16): 1 for files without the key; 2 adds the Jev
 # per-case fields; 3 (step 3) the unsure, below-bar and held fields; 4 (step 6, OD-518) the
 # proposal checks; 5 (window tuning, OD-555) each case's text measures; 6 (OD-563) the deferred
-# fields and their subset scores. A file of a later format is refused with a reason, not a
-# validation dump
-RESULT_FORMAT = 6
+# fields and their subset scores; 7 (JEV-NATIVE-QUESTIONS P7) a native Jev case's raw answer to
+# every question. A file of a later format is refused with a reason, not a validation dump
+RESULT_FORMAT = 7
 
 
 class CallMetrics(BaseModel):
@@ -164,6 +164,10 @@ class CaseResult(BaseModel):
     queue_ms: int | None = None
     concurrency: int | None = None
     confidence: dict[str, float] | None = None
+    # a native Jev case (format 7, JEV-NATIVE-QUESTIONS P7): every question's raw answer, keyed
+    # by question id: a Noul's p, or a Choice's choice and option probabilities, or a Score's
+    # level probabilities. Numbers and option names only
+    question_answers: dict[str, Any] | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     # a Jev case under step 3's mapping (format 3; `jev_mapping`): its unsure and below-bar

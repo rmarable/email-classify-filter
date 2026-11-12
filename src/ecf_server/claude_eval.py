@@ -402,7 +402,8 @@ def models_for(conn: sqlite3.Connection, opts: Options,
                                     " claude-sonnet-*, claude-opus-*)")  # fmt: skip
         models |= dict.fromkeys(roles, model)
     used = used_roles(opts)
-    frozen = opts.preset == "C" and opts.source_run is not None  # never a gate run (P2)
+    # never a gate run: a frozen C run (P2), or D on a named Jev run (JEV-NATIVE-QUESTIONS P6)
+    frozen = opts.source_run is not None
     pinned = (opts.preset in claude_pins.PAIR and not frozen and opts.for_gate
               and all(models[r] == eff[r] for r in used))  # fmt: skip
     if opts.preset == jev_keys.PRESET:  # Jev's side must be D's current one too (P8)
@@ -493,6 +494,78 @@ def _jev_run(conn: sqlite3.Connection, version: str, schema: CompiledSchema, ids
 SOURCE_MIN = 8  # characters of a `--source-run` ID prefix, as `ecf eval status` shows them
 
 
+def _source_row(conn: sqlite3.Connection, ref: str) -> sqlite3.Row:
+    """The one eval run whose ID starts with `ref` (at least SOURCE_MIN characters)."""
+    if len(ref) < SOURCE_MIN:
+        raise InvalidInputError("--source-run: too short",
+                                advice=f"give the run ID, or at least its first {SOURCE_MIN}"
+                                       " characters")  # fmt: skip
+    rows = conn.execute("SELECT run_id, pair, set_version, metrics, path FROM eval_runs WHERE"
+                        " substr(run_id, 1, ?) = ?", (len(ref), ref)).fetchall()  # fmt: skip
+    if len(rows) != 1:
+        why = "no such eval run" if not rows else "more than one run starts so; give more of it"
+        raise InvalidInputError(f"--source-run {ref}: {why}")
+    return rows[0]
+
+
+def run_mapping(m: dict[str, Any]) -> jev_mapping.JevMapping:
+    """The caution mapping a Jev run was scored under (JEV-NATIVE-QUESTIONS Q1): the one its
+    options record, checked against its recorded digest, or the shipped one when it records
+    none (a Claude-style run). A recorded mapping that doesn't parse or match is refused."""
+    figures: dict[str, Any] = m.get("jev") or {}
+    o: dict[str, Any] = figures.get("options") or {}
+    if "mapping" not in o:
+        return jev_mapping.load()
+    try:
+        mapping = jev_mapping.parse(o["mapping"])
+    except Exception as exc:  # jev_mapping raises InternalError for a bad document
+        raise InvalidInputError(f"the source run's recorded mapping doesn't parse: {exc}") from exc
+    if jev_mapping.digest(mapping) != o.get("mapping_digest"):
+        raise InvalidInputError("the source run's recorded mapping doesn't match its digest")
+    return mapping
+
+
+def _jev_named_run(conn: sqlite3.Connection, opts: Options, version: str,
+                   schema: CompiledSchema, ids: set[str]
+                   ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any],
+                              dict[str, jev_mapping.Derived]]:  # fmt: skip
+    """Preset D on a named Jev run (JEV-NATIVE-QUESTIONS P6, Q1, Q21): `ecf eval run
+    --classifier-backend jev` on the pinned Jev version, either question style, complete,
+    redacted, on this version of the set and `schema`, its result file present with every case
+    of this run. Its cases' unsure and below-bar fields are derived under the mapping the run
+    recorded (`run_mapping`). Such a D run is never a gate run (`models_for`)."""
+    from ecf_server import evaljev  # noqa: PLC0415 - eval only, not a service import
+
+    ref = opts.source_run or ""
+    row = _source_row(conn, ref)
+    m: dict[str, Any] = json.loads(row["metrics"])
+    figures: dict[str, Any] = m.get("jev") or {}
+    pin, _prompt = evaljev.source_inputs(schema)
+    checks = (
+        (m.get("backend") == evalrun.JEV, "isn't an `ecf eval run --classifier-backend jev` run"),
+        (figures.get("pin") == pin, "asked another Jev version"),
+        (m.get("complete") is True and m.get("redact") is True, "isn't complete and redacted"),
+        (row["set_version"] == version, "is on another version of the set"),
+        (m.get("schema_digest") == schema.digest, "asked another schema"),
+        (bool(row["path"]) and Path(row["path"]).is_file(),
+         "has no result file on this computer (an imported run)"),
+    )  # fmt: skip
+    for ok, why in checks:
+        if not ok:
+            raise InvalidInputError(f"--source-run {ref}: that run {why}")
+    mapping = run_mapping(m)
+    result = load_result(Path(row["path"]))
+    if not ids <= {c.id for c in result.cases}:
+        raise InvalidInputError(f"--source-run {ref}: that run lacks some of this run's cases (a"
+                                " `--fraud-only` run can't serve a full one)")  # fmt: skip
+    got = {c.id: {k: v for k, v in c.got.items() if k != "rule"} for c in result.cases}
+    derived = {c.id: jev_mapping.derive(got[c.id], c.probabilities, mapping)
+               for c in result.cases}  # fmt: skip
+    source = {k: m[k] for k in SOURCE_KEYS if k in m}
+    source["jev_options"] = figures.get("options") or {}
+    return str(row["run_id"]), got, source, derived
+
+
 def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: CompiledSchema,
                 ids: set[str]
                 ) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any]]:  # fmt: skip
@@ -504,16 +577,7 @@ def _claude_run(conn: sqlite3.Connection, opts: Options, version: str, schema: C
     full run ID, each case's classification (a failed one empty, so it is scored as a failure)
     and its inputs (C_SOURCE_KEYS). Refused, naming the first check it fails."""
     ref = opts.source_run or ""
-    if len(ref) < SOURCE_MIN:
-        raise InvalidInputError("--source-run: too short",
-                                advice=f"give the run ID, or at least its first {SOURCE_MIN}"
-                                       " characters")  # fmt: skip
-    rows = conn.execute("SELECT run_id, pair, set_version, metrics, path FROM eval_runs WHERE"
-                        " substr(run_id, 1, ?) = ?", (len(ref), ref)).fetchall()  # fmt: skip
-    if len(rows) != 1:
-        why = "no such eval run" if not rows else "more than one run starts so; give more of it"
-        raise InvalidInputError(f"--source-run {ref}: {why}")
-    row = rows[0]
+    row = _source_row(conn, ref)
     m: dict[str, Any] = json.loads(row["metrics"])
     claude: dict[str, Any] = m.get("claude") or {}
     o: dict[str, Any] = m.get("options") or {}
@@ -579,9 +643,8 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
                                 " v3.0.0, ADR 0031)")  # fmt: skip
     if opts.preset == "D" and opts.classifier_model is not None:
         raise InvalidInputError("preset D classifies with Jev: no classifier model")
-    if opts.source_run is not None and opts.preset != "C":
-        raise InvalidInputError("--source-run is for preset C (preset D takes Jev's"
-                                " classifications)")  # fmt: skip
+    if opts.source_run is not None and opts.preset not in ("C", "D"):
+        raise InvalidInputError("--source-run is for preset C or D")
     if opts.source_run is not None and opts.classifier_model is not None:
         raise InvalidInputError("a run on a source run's classifications asks no classifier:"
                                 " no --classifier-model")  # fmt: skip
@@ -645,7 +708,10 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
             _check_root(conn, opts.root)
             clean = _check_clean(opts.root)
         schema = config.current_schema(conn)
-        if opts.preset == "D":
+        if opts.preset == "D" and opts.source_run is not None:
+            source_run, got, source, derived = _jev_named_run(conn, opts, version, schema,
+                                                              {c.id for c in cases})  # fmt: skip
+        elif opts.preset == "D":
             source_run, got, source, derived = _jev_run(conn, version, schema,
                                                         {c.id for c in cases})  # fmt: skip
         elif opts.source_run is not None:

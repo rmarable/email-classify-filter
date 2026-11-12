@@ -1498,7 +1498,8 @@ def test_a_frozen_run_refuses_a_source_that_doesnt_fit(
     pinned = _source(conn, db_path, clock, root)
     with pytest.raises(InvalidInputError, match="no --classifier-model"):
         start(db_path, clock, root, source_run=pinned, classifier_model="claude-sonnet-5-5")
-    with pytest.raises(InvalidInputError, match="for preset C"):
+    # preset D takes a named Jev run since JEV-NATIVE-QUESTIONS P6: a C run is refused as one
+    with pytest.raises(InvalidInputError, match="isn't an `ecf eval run --classifier-backend jev`"):
         start(db_path, clock, root, preset="D", source_run=pinned)
     with pytest.raises(InvalidInputError, match="first 8 characters"):
         start(db_path, clock, root, source_run=pinned[:7])
