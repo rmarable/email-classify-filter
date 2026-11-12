@@ -1,0 +1,59 @@
+{
+  "pin": "jev-1.14.0",
+  "question_file_digest": "c27422cd8840c90d5178e57fe3a94d5e199822d4dc36a0058276186649294e3d",
+  "set": {
+    "root": "/Users/rmarable/src/email-classify-filter/tests/eval/synthetic",
+    "set_version": "ba4e130f036fbfc1",
+    "cases": 399,
+    "private_cases": 50,
+    "injection_cards": 45,
+    "unconfirmed": 0
+  },
+  "heldout3": {
+    "root": "/Users/rmarable/src/email-classify-filter/tests/eval/heldout3",
+    "set_version": "07625d6cafa4b278",
+    "cases": 30,
+    "private_cases": 4,
+    "injection_cards": 4,
+    "unconfirmed": 0
+  },
+  "arms": {
+    "J-claude": {
+      "options": {},
+      "prompt_digest": "960beb38b231716c0a3865980e11cd4426f7205ade7a0778709731eb5b731a07",
+      "gate_key": "jev:jev-1.14.0+f241b4a5ad55e342+jev-s1-state-b58d481303a0+0fd82c418986dfe7",
+      "input_format": "jev-s1-state-b58d481303a0"
+    },
+    "J-native-s1": {
+      "options": {
+        "jev_questions": "native"
+      },
+      "prompt_digest": "2cff8221ff59bae25cede198423aeaae37525eda7b561b1f617c5106e66fb705",
+      "gate_key": "jev:jev-1.14.0+c27422cd8840c90d+jev-s1-state-b58d481303a0+ba96df0a6449656a",
+      "input_format": "jev-s1-state-b58d481303a0"
+    },
+    "J-native-s3": {
+      "options": {
+        "jev_questions": "native",
+        "jev_state": "s3"
+      },
+      "prompt_digest": "fedfc30a857b17db39de50ad269594a213874b5dd6fde891ff2958e36f404436",
+      "gate_key": "jev:jev-1.14.0+c27422cd8840c90d+jev-s3-state-801a1e6dba20+ba96df0a6449656a",
+      "input_format": "jev-s3-state-801a1e6dba20"
+    },
+    "J-native-s1-rev": {
+      "options": {
+        "jev_questions": "native",
+        "jev_reverse_choices": true
+      },
+      "prompt_digest": "580a5ade211b515538d71d2414285c078f95dfbc4757b579a7589034987f9a53",
+      "gate_key": "jev:jev-1.14.0+c27422cd8840c90d+jev-s1-state-b58d481303a0+ba96df0a6449656a",
+      "input_format": "jev-s1-state-b58d481303a0"
+    }
+  },
+  "opus_runs": [
+    "4cf8a43e",
+    "a9019a61"
+  ],
+  "note": "the reversed run's gate_key equals s1's: option order is in prompt_digest only"
+}

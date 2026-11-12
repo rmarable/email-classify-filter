@@ -234,6 +234,15 @@ def groups_for(inputs: evaljev.RemapInputs) -> dict[str, list[str]]:
 
 def report(paths: list[Path], root: Path) -> dict[str, Any]:
     results = [load_result(p) for p in paths]
+    for p, r in zip(paths, results, strict=True):
+        # a native run's per-field probabilities are composed, not distributions; sweeping them
+        # needs recomposing from the raw answers (JEV-NATIVE-QUESTIONS P7), which this script
+        # doesn't do
+        figures = cast("dict[str, Any]", (r.summary or {}).get("jev") or {})
+        opts = cast("dict[str, Any]", figures.get("options") or {})
+        if (any(c.question_answers is not None for c in r.cases)
+                or opts.get("questions") == "native"):  # fmt: skip
+            raise SystemExit(f"{p}: a native-question Jev run; jev_sweep reads Claude-style runs")
     if any((r.summary or {}).get("backend") != "jev" for r in results):
         raise InvalidInputError("every result must be a Jev run (`ecf eval run`, backend jev)")
     if len({(r.summary or {}).get("prompt_digest") for r in results}) != 1:
