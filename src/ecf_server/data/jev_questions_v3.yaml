@@ -1,5 +1,5 @@
 # Jev-designed questions for classification schema v3 (planning-docs/JEV-NATIVE-QUESTIONS.md,
-# draft 3). Eval only (`ecf eval run --classifier-backend jev --jev-questions native`);
+# draft 4). Eval only (`ecf eval run --classifier-backend jev --jev-questions native`);
 # schema_v3.yaml stays the Claude-style set. `jev_native.load(schema)` checks this file against
 # the compiled schema and refuses it on any structural fault (plan §3.2).
 #

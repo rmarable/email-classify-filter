@@ -509,21 +509,30 @@ def _source_row(conn: sqlite3.Connection, ref: str) -> sqlite3.Row:
 
 
 def run_mapping(m: dict[str, Any]) -> jev_mapping.JevMapping:
-    """The caution mapping a Jev run was scored under (JEV-NATIVE-QUESTIONS Q1): the one its
-    options record, checked against its recorded digest, or the shipped one when it records
-    none (a Claude-style run). A recorded mapping that doesn't parse or match is refused."""
+    """The caution mapping a Jev run was scored under (JEV-NATIVE-QUESTIONS Q1, diff review F2):
+    the one its options record, or the shipped one when it records none (a Claude-style run);
+    either way it must be the mapping the run's own `band.mapping_digest` names, so a native run
+    without its mapping, a mismatch, or a run scored under an older shipped mapping is refused."""
     figures: dict[str, Any] = m.get("jev") or {}
     o: dict[str, Any] = figures.get("options") or {}
-    if "mapping" not in o:
-        return jev_mapping.load()
     try:
-        mapping = jev_mapping.parse(o["mapping"])
+        mapping = jev_mapping.parse(o["mapping"]) if "mapping" in o else jev_mapping.load()
     except Exception as exc:  # jev_mapping raises InternalError for a bad document
         raise InvalidInputError(f"the source run's recorded mapping doesn't parse:"
                                 f" {reason(exc)}") from exc  # fmt: skip
-    if jev_mapping.digest(mapping) != o.get("mapping_digest"):
+    band: dict[str, Any] = m.get("band") or {}
+    if jev_mapping.digest(mapping) != band.get("mapping_digest"):
+        raise InvalidInputError("the source run's mapping isn't the one it was scored under"
+                                " (its band's mapping digest)")  # fmt: skip
+    if "mapping" in o and o.get("mapping_digest") != band.get("mapping_digest"):
         raise InvalidInputError("the source run's recorded mapping doesn't match its digest")
     return mapping
+
+
+def _d_mapping(source: dict[str, Any]) -> jev_mapping.JevMapping | None:
+    """The mapping a D run on a named source recorded (`jev_options`), else None (shipped)."""
+    o: dict[str, Any] = source.get("jev_options") or {}
+    return jev_mapping.parse(o["mapping"]) if "mapping" in o else None
 
 
 def _jev_named_run(conn: sqlite3.Connection, opts: Options, version: str,
@@ -546,6 +555,8 @@ def _jev_named_run(conn: sqlite3.Connection, opts: Options, version: str,
         (m.get("backend") == evalrun.JEV, "isn't an `ecf eval run --classifier-backend jev` run"),
         (figures.get("pin") == pin, "asked another Jev version"),
         (m.get("complete") is True and m.get("redact") is True, "isn't complete and redacted"),
+        (not cast("dict[str, Any]", m.get("options") or {}).get("switches_off"),
+         "turned an eval switch off (signals)"),
         (row["set_version"] == version, "is on another version of the set"),
         (m.get("schema_digest") == schema.digest, "asked another schema"),
         (bool(row["path"]) and Path(row["path"]).is_file(),
@@ -694,6 +705,8 @@ def _start(connect: Callable[[], sqlite3.Connection],  # noqa: PLR0912, PLR0915 
         cases = [c for c in cases if any(fnmatch.fnmatchcase(c.id, g) for g in opts.cases)]
     if not cases:
         raise InvalidInputError("no cases to run", advice="build the set with `ecf eval build`")
+    if opts.preset == "D" and opts.source_run is not None:  # never for the gate (P6, F1)
+        opts = replace(opts, for_gate=False)
     conn = connect()
     source_run: str | None = None
     got: dict[str, dict[str, Any]] = {}
@@ -1272,7 +1285,10 @@ def _finish_run(connect: Callable[[], sqlite3.Connection], clock: Clock, run: Ru
         summary.update(run.source)
         # the caution its source's answers asked for (step 3): the same mapping, by the source's
         # prompt digest
-        summary["band"] = evalrun.band_figures(results, [w.case for w in run.works], run.rules)
+        # (a named source: the mapping it recorded, checked at registration, F1)
+        recorded = _d_mapping(run.source)
+        summary["band"] = evalrun.band_figures(results, [w.case for w in run.works], run.rules,
+                                               recorded)  # fmt: skip
         # the source run and the pin it matched (`_jev_run`), for the D Check (P8)
         summary["jev_source"] = {"run_id": run.source_run, "pin": jev_keys.pin(),
                                  **({"determinism": summary.pop("jev_determinism")}

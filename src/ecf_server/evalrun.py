@@ -1069,7 +1069,10 @@ def _run(  # noqa: PLR0912, PLR0913, PLR0915, PLR0917 - collaborators and option
         summary["rules_digest"] = rules.composed_digest(schema, None)  # as items (OD-507, P14)
         summary["scoring"] = "live"
         summary["wall_s"] = round(time.monotonic() - started, 1)  # the run's wall time (P18)
+        # the wall clock at both ends, read beside the monotonic times: a gap between the two
+        # spans is time the computer slept (JEV-NATIVE-QUESTIONS Q14, diff review F7)
         summary["started_at"] = started_at
+        summary["ended_at"] = to_ts(clock.now())
         summary["label_map_unlabelled"] = map_effect(cases)
         summary["backend"] = opts.backend
         summary["redact"] = opts.redact
@@ -1752,7 +1755,7 @@ MEASURE_FIELDS = (
 )
 KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
                     "confidence", "input_tokens", "output_tokens", "unsure", "below_bar",
-                    "held", *MEASURE_FIELDS)  # fmt: skip
+                    "held", "question_answers", *MEASURE_FIELDS)  # fmt: skip
 KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "actor_prompt_digest", "input_format",
                      "excerpt_cap", "determinism", "band", "extra")  # fmt: skip
 

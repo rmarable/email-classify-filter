@@ -90,6 +90,11 @@ def _bad(old: str, new: str, match: str) -> None:
     ("version: 1\nschema_version: 3", "version: 1\nschema_version: 3\nsurprise: 1", "unknown keys"),
     ("  none_bars: {fraud_risk: 0.7}", "  none_bars: {phishing: 0.7}", "mapping"),
     ("    else_p_steps: [high, medium]", "    else_p_steps: [nope]", "else_p_steps"),
+    ("  claims_internal: {compose: noul, from: claims_internal}",
+     "  claims_internal: {compose: noul, from: {any: [claims_internal, phishing]}}",
+     "same-named Noul"),
+    ('"false": {what: "No request for gift cards"', '"false": {what: "x", note: "y"',
+     "unknown keys"),
 ])  # fmt: skip
 def test_load_refuses_each_fault(old: str, new: str, match: str) -> None:
     _bad(old, new, match)
@@ -273,12 +278,20 @@ def test_a_native_request_fits_the_limits() -> None:
 
 def test_run_mapping_reads_and_checks_the_recorded_mapping() -> None:
     rec = jev_native.options_record(NATIVE, state="s1", reverse=False)
-    m = {"jev": {"options": rec}}
-    assert claude_eval.run_mapping(m) == NATIVE.mapping
-    assert claude_eval.run_mapping({"jev": {"options": {"state": "s1"}}}) == jev_mapping.load()
-    bad = {"jev": {"options": rec | {"mapping_digest": "0" * 64}}}
+    native_band = {"mapping_digest": jev_mapping.digest(NATIVE.mapping)}
+    shipped_band = {"mapping_digest": jev_mapping.digest()}
+    assert claude_eval.run_mapping({"jev": {"options": rec}, "band": native_band}) == NATIVE.mapping
+    claude = {"jev": {"options": {"state": "s1"}}, "band": shipped_band}
+    assert claude_eval.run_mapping(claude) == jev_mapping.load()
+    # diff review F2: a native run without its mapping, or a mapping its band doesn't name, or an
+    # options digest that disagrees, is refused
+    with pytest.raises(InvalidInputError, match="scored under"):
+        claude_eval.run_mapping({"jev": {"options": {"state": "s1"}}, "band": native_band})
+    with pytest.raises(InvalidInputError, match="scored under"):
+        claude_eval.run_mapping({"jev": {"options": rec}, "band": shipped_band})
     with pytest.raises(InvalidInputError, match="doesn't match"):
-        claude_eval.run_mapping(bad)
+        claude_eval.run_mapping({"jev": {"options": rec | {"mapping_digest": "0" * 64}},
+                                 "band": native_band})  # fmt: skip
 
 
 # Raw-answer flips (R19)

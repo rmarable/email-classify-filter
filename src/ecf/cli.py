@@ -2089,9 +2089,14 @@ PRESET_D_ONLY = "comparison only (preset D: not the pinned actors, or a Jev run 
 
 
 def _frozen_only(f: dict[str, Any]) -> str | None:
-    """A preset C run on another run's classifications: comparison only (step 6, P2)."""
+    """A preset C run on another run's classifications, or a preset D run on a named Jev run:
+    comparison only (step 6, P2; JEV-NATIVE-QUESTIONS P6)."""
     if f.get("preset") == "C" and f.get("source_run"):
         return f"comparison only (actor only, on run {str(f['source_run'])[:8]}'s classifications)"
+    if f.get("preset") == "D" and f.get("source_run"):
+        return (
+            f"comparison only (preset D on Jev run {str(f['source_run'])[:8]}, never for the gate)"
+        )
     return None
 
 

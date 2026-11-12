@@ -35,7 +35,8 @@ FILE = "jev_questions_v3.yaml"
 TOP_KEYS = frozenset({"version", "schema_version", "notes", "mapping", "questions", "fields"})
 TYPES = frozenset({"noul", "choice", "score"})
 INSTRUCTION_KEYS = frozenset({"question", "note", "kinds"})
-NOUL_SIDE_KEYS = frozenset({"what", "examples", "note"})
+NOUL_TRUE_KEYS = frozenset({"what", "examples", "note"})
+NOUL_FALSE_KEYS = frozenset({"what", "examples"})  # notes go on the `true` side only (P2)
 OPTION_KEYS = frozenset({"what", "not_for", "examples"})
 LEVEL_KEYS = frozenset({"situation", "examples"})
 COMPOSERS = frozenset({"noul", "choice", "score", "cascade"})
@@ -151,11 +152,14 @@ def _check_question(qid: str, q: Any, all_q: dict[str, Any]) -> None:  # noqa: P
         if not isinstance(crit, dict) or set(cast("dict[str, Any]", crit)) != {"true", "false"}:
             raise _bad(f"question {qid}: a Noul's criteria are `true` and `false`")
         for side, v in cast("dict[str, Any]", crit).items():
-            _check_side(v, NOUL_SIDE_KEYS, f"question {qid}.{side}", need="what")
+            keys = NOUL_TRUE_KEYS if side == "true" else NOUL_FALSE_KEYS
+            _check_side(v, keys, f"question {qid}.{side}", need="what")
     elif t == "choice":
         if not isinstance(crit, dict) or not 2 <= len(cast("dict[str, Any]", crit)) <= 255:
             raise _bad(f"question {qid}: a Choice has 2-255 described options")
         for opt, v in cast("dict[str, Any]", crit).items():
+            if not isinstance(v, dict):
+                raise _bad(f"question {qid}.{opt}: a Choice option is an object with `what`")
             _check_side(v, OPTION_KEYS, f"question {qid}.{opt}", need="what")
     else:
         if not isinstance(crit, list) or not 2 <= len(cast("list[Any]", crit)) <= 10:
@@ -275,6 +279,8 @@ def _check_field(  # noqa: PLR0912, PLR0915 - one check per composer rule (§3.2
         if not isinstance(els, str) or not isinstance(eps, list) or not eps or not set(
                 cast("list[Any]", eps)) <= set(step_values):  # fmt: skip
             raise _bad(f"{where}: `else_p_steps` names steps of a cascade with a plain `else`")
+    if any(not isinstance(v, str) for v in made):
+        raise _bad(f"{where}: every value is a string")
     if bad := sorted(str(v) for v in made if v not in values):
         raise _bad(f"{where}: values not in the schema {bad}")
     if missing := sorted(str(v) for v in values - set(made)):
@@ -324,6 +330,10 @@ def parse(text: str, schema: CompiledSchema) -> Native:  # noqa: PLR0912 - one c
     used: set[str] = set()
     for name, spec in fs.items():
         used |= _check_field(name, spec, schema, qs)
+    for name in mapping.bands:  # band crossings count by question id (diff review F10)
+        spec = cast("dict[str, Any]", fs.get(name) or {})
+        if spec.get("compose") != "noul" or spec.get("from") != name:
+            raise _bad(f"field {name}: a banded field is composed from its same-named Noul")
     for q in qs.values():
         ins = cast("dict[str, Any]", q).get("instructions")
         if isinstance(ins, dict) and "kinds" in cast("dict[str, Any]", ins):
@@ -561,6 +571,21 @@ def raw_flips(native: Native, a: dict[str, Any], b: dict[str, Any],
     flips: list[str] = []
     crossings = 0
     thr = thresholds(native)
+    # the native none bar (diff review F8): p(none) = 1 - the largest raw p of `else_p_steps`;
+    # a crossing of its bar is a crossing of 1 - bar by that largest p
+    bar = native.mapping.none_bars.get("fraud_risk")
+    fr = native.fields.get("fraud_risk") or {}
+    if bar is not None and fr.get("else_p_steps"):
+        steps = {str(st[0]): st[1] for st in cast("list[list[Any]]", fr["steps"])}
+        pa = {k: v for k, v in a.items() if isinstance(v, float)}
+        pb = {k: v for k, v in b.items() if isinstance(v, float)}
+        exprs = [steps[s] for s in cast("list[str]", fr["else_p_steps"])]
+        try:
+            ma, mb = (max(_expr_p(e, p) for e in exprs) for p in (pa, pb))
+        except KeyError:
+            ma = mb = 0.0
+        if (ma > 1 - bar) != (mb > 1 - bar):
+            crossings += 1
     for qid, va in a.items():
         vb = b.get(qid)
         if isinstance(va, float) and isinstance(vb, float):

@@ -1042,8 +1042,9 @@ class NativeFake:
     """TypeSafe answering whatever questions it is asked: each Noul at 0.1 (the category
     companion at 0.95), each Choice its first option, each Score its second level."""
 
-    def __init__(self, *, empty: bool = False) -> None:
+    def __init__(self, *, empty: bool = False, nouls: dict[str, float] | None = None) -> None:
         self.empty = empty
+        self.nouls = {"cat_fits": 0.95} | (nouls or {})
         self.bodies: list[dict[str, Any]] = []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
@@ -1055,7 +1056,7 @@ class NativeFake:
         answers: dict[str, Any] = {}
         for qid, q in cast("dict[str, Any]", sent["questions"]).items():
             if q["type"] == "noul":
-                answers[qid] = {"type": "noul", "noul": 0.95 if qid == "cat_fits" else 0.1}
+                answers[qid] = {"type": "noul", "noul": self.nouls.get(qid, 0.1)}
             elif q["type"] == "choice":
                 opts = list(q["criteria"])
                 answers[qid] = {"type": "choice", "choice": opts[0], "confidence": 0.8,
@@ -1105,3 +1106,69 @@ def test_an_unusable_answer_is_a_fault(conn: sqlite3.Connection, db_path: Path, 
                    for_gate=False)  # fmt: skip
     s = snap["result"]
     assert s["faulted"] and s["jev"]["faulted_cases"].get("unusable_answer")
+
+
+def test_preset_d_on_a_named_native_run(conn: sqlite3.Connection, db_path: Path,
+                                        clock: FakeClock, root: Path) -> None:  # fmt: skip
+    """P6, Q1 and diff review F1-F3: D takes a named native run's classifications, derives the
+    hold under the mapping that run recorded (p(none) 0.65 is unsure under its 0.7 none bar), is
+    never for the gate, and records that mapping."""
+    run_jev(db_path, clock, root, NativeFake(nouls={"fr_credentials": 0.35}),
+            jev_questions="native", for_gate=False)  # fmt: skip
+    source = _row(conn)
+    _clear()
+    r = _start_d(db_path, clock, root, source_run=str(source["run_id"])[:8])
+    assert r["pinned"] is False
+    run = claude_eval.current()
+    assert run is not None and run.source_run == source["run_id"]
+    assert run.key.startswith("eval-") and run.opts.for_gate is False
+    assert run.source["jev_options"]["questions"] == "native"
+    assert all("fraud_risk" in w.derived.unsure for w in run.works if w.classification)
+    native = evaljev.jev_native.load(evalrun.load_schema())
+    if run.state == "done":  # nothing went to the actor: the record is saved now
+        m = json.loads(_row(conn)["metrics"])
+        assert m["band"]["mapping_digest"] == jev_mapping.digest(native.mapping)
+    assert claude_eval._d_mapping(run.source) == native.mapping  # pyright: ignore[reportPrivateUsage]
+
+
+def test_preset_d_refuses_a_named_run_with_signals_off(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+) -> None:  # fmt: skip
+    run_jev(db_path, clock, root, NativeFake(), jev_questions="native", signals=False,
+            for_gate=False)  # fmt: skip
+    source = _row(conn)
+    _clear()
+    with pytest.raises(InvalidInputError, match="eval switch off"):
+        _start_d(db_path, clock, root, source_run=str(source["run_id"])[:8])
+
+
+def test_the_route_passes_the_native_options(conn: sqlite3.Connection, db_path: Path,
+                                             root: Path) -> None:  # fmt: skip
+    """Diff review F10: `jev_questions`, `jev_state` and `jev_reverse_choices` reach the run
+    through the API, and `claude` with `s3` is refused there."""
+    del conn
+    store = MemorySecretStore()
+    store.set(jev.KEY_SECRET, KEY)
+    state = make_state(db_path, store)
+    fake = NativeFake()
+    state.jev_transport = httpx.MockTransport(fake)
+    r = call(state, "POST", "/v1/eval/runs", {"root": str(root), "backend": "jev",
+                                               "for_gate": False, "jev_questions": "native",
+                                               "jev_state": "s3",
+                                               "jev_reverse_choices": True})  # fmt: skip
+    assert r.status_code == 200, r.text
+    deadline = time.monotonic() + 30
+    while evalrun.RUN.snapshot()["state"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.05)
+    snap = evalrun.RUN.snapshot()
+    assert snap["state"] == "done", snap
+    o = snap["result"]["jev"]["options"]
+    assert o["questions"] == "native" and o["state"] == "s3" and o["reverse_choices"] is True
+    assert isinstance(fake.bodies[0]["state"], dict)
+    topic = list(fake.bodies[0]["questions"]["cat_topic"]["criteria"])
+    native = evaljev.jev_native.load(evalrun.load_schema())
+    assert topic == list(reversed(list(native.questions["cat_topic"]["criteria"])))
+    _clear()
+    r = call(state, "POST", "/v1/eval/runs", {"root": str(root), "backend": "jev",
+                                               "jev_state": "s3"})  # fmt: skip
+    assert r.status_code == 400 and "--jev-questions native" in r.text
