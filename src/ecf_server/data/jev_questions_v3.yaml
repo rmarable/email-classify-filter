@@ -1,0 +1,240 @@
+# Jev-designed questions for classification schema v3 (planning-docs/JEV-NATIVE-QUESTIONS.md).
+# Eval only (`ecf eval run --classifier-backend jev --jev-questions native`); schema_v3.yaml stays
+# the Claude-style set and is never changed by this file. `jev_native.load` checks this file
+# against the compiled schema: every field has exactly one composer, every value can come out.
+#
+# How the file follows TypeSafe's guidance (docs.typesafe.ai, read 2026-11-12; copies in
+# state-archive/jev-native/tsdocs-2026-11-12/):
+# - One narrow judgment per question, combined in code (/concepts/how-to-build-with-system-one,
+#   "Decompose the questions"; /primitives/noul, "Writing a Noul question").
+# - A yes is the high value; negations and "No when..." clauses live in the `false` criteria, not
+#   the question (/model-jaggedness, "Contradictory instructions and criteria"; /primitives/noul).
+# - Easily confused options say what they cover, what they're not for, and give examples
+#   (/primitives/choice, "Structured instructions and criteria"; /primitives/advanced).
+# - Ordering rules ("when several fit, choose in this order") are code, not model text
+#   (/model-jaggedness, "Indirection"): the `cascade` composer.
+# - Claims an email makes about itself are named in the criteria (/model-jaggedness,
+#   "Adversarial content": "be explicit in the criteria").
+#
+# Composers (jev_native.py): `noul` (one yes/no question), `any` (yes when any question is yes:
+# the largest probability), `choice` (one choice question), `cascade` (steps in order: the first
+# yes/no question at p >= 0.5 gives its value; otherwise `else`, a value or a choice question,
+# with an optional companion yes/no that gives `other` when it is a clear no).
+version: 1
+schema_version: 3
+
+questions:
+  # category: the precedence the schema states, as code (security, then money, then topic)
+  cat_security:
+    type: noul
+    instructions: "Is the email a sign-in alert, password reset, verification code or security warning about an account?"
+    criteria:
+      "true": {what: "An alert or code about access to an account, genuine or fake", examples: ["New sign-in to your account from Chrome on Windows", "Your verification code is 482913", "Reset your password", "Unusual activity: your account has been locked"]}
+      "false": {what: "Anything else", not_for: ["A newsletter about security in general", "An expiring certificate or domain (a system alert, not account access)"]}
+  cat_bill:
+    type: noul
+    instructions: "Does the email ask us to pay a bill, or tell us to change the account or address we pay a bill to?"
+    criteria:
+      "true": {what: "A bill, invoice, overdue reminder, renewal to pay, or new payment details for paying someone, business or personal, genuine or fake", examples: ["Invoice #2231 is due on 3 March", "Your subscription renews at $49; pay now", "Our bank account has changed, please send future payments to"]}
+      "false": {what: "No bill for us to pay and no change to where we pay", not_for: ["A receipt for something already paid", "Money coming to us", "A question about a charge"]}
+  cat_paid:
+    type: noul
+    instructions: "Does the email confirm money that we paid?"
+    criteria:
+      "true": {what: "A receipt, order confirmation or 'payment received' from someone we pay", examples: ["Thanks, we received your payment of $120", "Your order #8812 is confirmed"]}
+      "false": {what: "Not a confirmation of our payment", not_for: ["A bill still to pay", "Money coming to us"]}
+  cat_incoming:
+    type: noul
+    instructions: "Does the email tell us that money is coming to us?"
+    criteria:
+      "true": {what: "Remittance advice, a customer saying they have paid us, a refund or a payout to us", examples: ["Remittance advice: $4,200 sent to your account", "Your refund of $35 has been issued"]}
+      "false": {what: "No money coming to us"}
+  cat_account:
+    type: noul
+    instructions: "Is the email about a bank account, investment, loan or insurance policy we hold, without asking for a payment?"
+    criteria:
+      "true": {what: "Statements, balances, interest or dividends, rate or policy changes, tax forms, beneficiary reviews", examples: ["Your March statement is ready", "Your policy renewal terms have changed", "Your 1099 is available"]}
+      "false": {what: "Not about an account or policy we hold, or it asks for a payment"}
+  cat_topic:
+    type: choice
+    instructions: "What is the email mainly about?"
+    criteria:
+      billing_inquiry: {what: "A question or dispute about a charge, invoice or balance", not_for: "A bill to pay", examples: ["Why was I charged twice?"]}
+      customer_request: {what: "A customer asking us for help, service or information", not_for: ["Charges", "Defects", "Buying from us"], examples: ["Can you send me the manual?"]}
+      sales_inquiry: {what: "Someone asking about buying from us or about our prices", examples: ["Do you offer volume pricing?"]}
+      partnership: {what: "A one-to-one proposal to work together", not_for: "Mail sent to many", examples: ["Would you like to co-host a webinar with us?"]}
+      bug_report: {what: "A report of a bug, defect, outage or incident", examples: ["The export button crashes the app"]}
+      marketing: {what: "Mail sent to many: newsletters, promotions, advertising", not_for: "A personal one-to-one pitch", examples: ["Spring sale: 20% off everything"]}
+      notification: {what: "A message that only informs and fits no other option", examples: ["Our office is closed on Monday"]}
+      action_alert: {what: "A machine or service asking someone to act on a system", not_for: "Account sign-in or password alerts", examples: ["Your SSL certificate expires in 7 days", "Backup job failed", "Storage quota reached"]}
+      shipping: {what: "A delivery: tracking, delivered, missed, returns", examples: ["Your package is out for delivery"]}
+      appointment: {what: "A meeting or service booking, or a reminder for one", examples: ["Reminder: dentist on Tuesday at 10:00"]}
+      travel: {what: "Flights, trains, hotels or rental cars", examples: ["Your boarding pass for flight 214"]}
+      school_or_family: {what: "School, childcare, activities or family logistics", examples: ["Pickup moved to 3:30 on Friday"]}
+      private: {what: "A personal note from a person, not about the business", examples: ["Great seeing you last weekend!"]}
+  cat_fits:
+    type: noul
+    instructions: {question: "Does the email fit one of the kinds of email in `kinds`?", kinds: from cat_topic}
+    criteria:
+      "true": "It clearly fits at least one kind"
+      "false": "It fits none of them"
+
+  # requires_action: three narrow questions, any yes is a yes (OD-514's split, kept)
+  ra_do:
+    type: noul
+    instructions: "Does the email ask us to pay, sign, approve, confirm, send, book, fix or provide something?"
+    criteria:
+      "true": {what: "A request addressed to us that someone on our side must carry out", examples: ["Please sign and return the contract", "Approve the purchase order by Friday"]}
+      "false": {what: "No request we must carry out", not_for: ["Marketing calls to action such as 'Shop now' or 'Learn more'", "Notices that need nothing from us", "Automated reports that need no response"]}
+  ra_reply:
+    type: noul
+    instructions: "Does the email ask us for a reply, a decision or an answer?"
+    criteria:
+      "true": {what: "The sender is waiting for our answer or decision", examples: ["Can you let me know by Thursday?", "Which option do you prefer?"]}
+      "false": {what: "Nobody is waiting for our answer", not_for: ["'Reply STOP to unsubscribe'", "Surveys sent to many"]}
+  ra_deadline:
+    type: noul
+    instructions: "Must something on our side happen by a date, or before something else happens?"
+    criteria:
+      "true": {what: "A due date or time limit for something we must do", examples: ["Payment due 5 June", "Renew before your domain expires"]}
+      "false": {what: "No date by which we must act", not_for: "Sale end dates in marketing"}
+
+  requires_reply:
+    type: noul
+    instructions: "Does the sender expect a written reply from us?"
+    criteria:
+      "true": {what: "A person or business is waiting for us to write back", examples: ["Let me know if that works for you", "Could you confirm the details?"]}
+      "false": {what: "No written reply is expected", not_for: ["Automated or no-reply senders", "Marketing", "Receipts and notices"]}
+  payment_related:
+    type: noul
+    instructions: "Is money moving or owed in this email?"
+    criteria:
+      "true": {what: "A payment sent, received or requested, an amount owed, or payment instructions", examples: ["Invoice for $1,200", "We have paid you", "Please wire the funds to"]}
+      "false": {what: "No money moving or owed", not_for: ["A question about prices, plans or quotes", "The email saying about itself that it is not about money"]}
+  deadline_mentioned:
+    type: noul
+    instructions: "Does the email state or imply a specific due date or time limit?"
+    criteria:
+      "true": {what: "A date or time by which something is due or will lapse", examples: ["Due 12 May", "Expires in 48 hours"]}
+      "false": "No due date or time limit"
+
+  sender_role:
+    type: choice
+    instructions: "What is the sender's role toward us, judged from what the email says?"
+    criteria:
+      vendor: {what: "Someone we buy from or who serves us, including notices about our accounts, bookings or orders", not_for: "A firm we don't buy from", examples: ["Your hosting provider", "Your airline"]}
+      customer: {what: "Someone we sell to or serve", examples: ["A client asking about their order"]}
+      regulator: {what: "A government agency or regulatory body", examples: ["The tax authority"]}
+      company: {what: "A firm we don't buy from, including cold pitches and potential partners", not_for: "A vendor we already use"}
+      friend: {what: "Someone we know personally, writing as a friend", not_for: "A stranger or a relative"}
+      family: {what: "A relative"}
+      person: {what: "A private person we don't know well, or at all", not_for: ["A friend", "A relative"]}
+      automated: {what: "A machine or service reporting on systems we monitor", examples: ["Backup report", "HPC job finished"], not_for: "Account, booking or order notices from a vendor"}
+      unknown: {what: "The role can't be told, or the sender is a colleague or co-worker of ours, genuine or not"}
+
+  # fraud_risk: one question per level, highest first; the level is code (cascade)
+  fr_known:
+    type: noul
+    instructions: "Does the email follow a known fraud pattern?"
+    criteria:
+      "true": {what: "Changed bank details, gift cards, a request for employee tax or payroll data, a request for passwords or codes, or someone posing as a colleague or executive", examples: ["Please update our bank details before paying the next invoice", "Can you buy gift cards for a client? Keep this between us"]}
+      "false": {what: "None of these patterns", not_for: "The email saying about itself that it is legitimate"}
+  fr_say_so:
+    type: noul
+    instructions: "Does the email ask us to move money, data, passwords or access, with the email itself as the only reason to trust the request?"
+    criteria:
+      "true": {what: "A request to pay, send data or credentials, or grant access, that we could only trust because the email says so", examples: ["Call this number to secure your account", "Click here to verify your payment details"]}
+      "false": {what: "No such request, or the request goes through a channel we already use", not_for: ["A genuine service's sign-in alert that asks nothing", "A bill from a supplier we already pay, through its usual channel", "An official notice asking us to file through the agency's own process"]}
+  fr_doubt:
+    type: noul
+    instructions: "Is there anything about the email that gives reason for doubt?"
+    criteria:
+      "true": {what: "Something does not fit: an odd sender, an unexpected request, a mismatch, unusual urgency", examples: ["A first-time sender asking for payment", "The reply address differs from the sender"]}
+      "false": {what: "Ordinary mail, including genuine service notices that ask for nothing"}
+
+  # the fixed safety items: one question each, negations in the `false` criteria
+  bank_detail_change:
+    type: noul
+    instructions: "Does the email say that the bank account, payee or check address that money goes to or comes from has changed, or ask us to update it?"
+    criteria:
+      "true": {what: "A changed or new account, payee or address for payments, or a request to switch payment method away from bank transfer or check", examples: ["Please use our new account for this invoice", "We now only accept payment by card link"], note: "Yes even when the email is also an invoice, a lure or a statement"}
+      "false": "No change to where money goes or comes from"
+  regulator_claim:
+    type: noul
+    instructions: "Does the email come from, or claim to come from, a regulator, government agency, court or tax authority acting toward us?"
+    criteria:
+      "true": {what: "A permit, warning letter, citation, audit, inspection, hearing, filing demand or other notice about us or our business, genuine or fake", note: "Yes even when it asks nothing of us"}
+      "false": {what: "No such body acting toward us", not_for: ["A newsletter that mentions an agency", "A notice about a public service, such as an outage or office hours"]}
+  phishing:
+    type: noul
+    instructions: "Is the email an attempt to deceive us, with a false sender or a false premise?"
+    criteria:
+      "true": {what: "A fake invoice, notice or alert; a fake security or sign-in alert; someone posing as a colleague, executive, relative or company we know; a request to change where money is sent; an extortion threat", examples: ["Your mailbox is full, sign in here to keep receiving mail"]}
+      "false": {what: "A genuine sender, or plain unsolicited marketing", not_for: ["A genuine sender asking for details through its real channel", "Instructions aimed at an automated assistant, on their own"]}
+  claims_internal:
+    type: noul
+    instructions: "Does the email present itself as from a colleague, co-worker or executive of our organization?"
+    criteria:
+      "true": "It says or implies the sender works in our organization, genuine or not"
+      "false": "It doesn't claim to be from inside our organization"
+  private_individual:
+    type: noul
+    instructions: "Is the sender a private person writing for themselves from a personal address?"
+    criteria:
+      "true": {what: "A friend, a relative, or someone we don't know, writing for themselves"}
+      "false": {what: "Someone writing for an organization, or an automated sender"}
+
+  # priority: one question per level, most urgent first (cascade)
+  pr_hours:
+    type: noul
+    instructions: "Does the email need attention within hours?"
+    criteria:
+      "true": {what: "A deadline today, an outage, or money or account access at risk now"}
+      "false": "It can wait until later today or longer"
+  pr_today:
+    type: noul
+    instructions: "Should someone look at the email today?"
+    criteria:
+      "true": "It matters today: a request, a problem or a deadline in the next day or two"
+      "false": "It can wait a working day or more"
+  pr_workday:
+    type: noul
+    instructions: "Should someone look at the email within a working day?"
+    criteria:
+      "true": "Someone should see it soon, though not today"
+      "false": "Nobody needs to see it soon"
+
+fields:
+  category:
+    compose: cascade
+    steps:
+      - [account_security, cat_security]
+      - [invoice, cat_bill]
+      - [payment_confirmation, cat_paid]
+      - [remittance, cat_incoming]
+      - [finance, cat_account]
+    else: {choice: cat_topic, companion: cat_fits, none_value: other}
+  priority:
+    compose: cascade
+    steps:
+      - [urgent, pr_hours]
+      - [high, pr_today]
+      - [medium, pr_workday]
+    else: low
+  requires_action: {compose: any, from: [ra_do, ra_reply, ra_deadline]}
+  requires_reply: {compose: noul, from: requires_reply}
+  payment_related: {compose: noul, from: payment_related}
+  deadline_mentioned: {compose: noul, from: deadline_mentioned}
+  sender_type: {compose: choice, from: sender_role}
+  fraud_risk:
+    compose: cascade
+    steps:
+      - [high, fr_known]
+      - [medium, fr_say_so]
+      - [low, fr_doubt]
+    else: none
+  bank_detail_change: {compose: noul, from: bank_detail_change}
+  regulator_claim: {compose: noul, from: regulator_claim}
+  phishing: {compose: noul, from: phishing}
+  claims_internal: {compose: noul, from: claims_internal}
+  private_individual: {compose: noul, from: private_individual}
