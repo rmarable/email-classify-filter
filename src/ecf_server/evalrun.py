@@ -1693,7 +1693,7 @@ MEASURE_FIELDS = (
 )
 KEPT_CASE_FIELDS = ("fault", "status", "tries", "wait_ms", "queue_ms", "concurrency",
                     "confidence", "input_tokens", "output_tokens", "unsure", "below_bar",
-                    "held", *MEASURE_FIELDS)  # fmt: skip
+                    "held", "question_answers", *MEASURE_FIELDS)  # fmt: skip
 KEPT_SUMMARY_KEYS = ("jev", "gate_key", "prompt_digest", "actor_prompt_digest", "input_format",
                      "excerpt_cap", "determinism", "band", "extra")  # fmt: skip
 
