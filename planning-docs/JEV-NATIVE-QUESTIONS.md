@@ -1,6 +1,6 @@
 # Jev with Jev-designed questions
 
-Status: draft 4, 2026-11-12. Draft 1 went through Phase R (four Fable lenses: safety,
+Status: draft 5, 2026-11-12 (built; diff review by two Fable lenses, findings in the findings file as D-perf and D-safety, all taken). Draft 1 went through Phase R (four Fable lenses: safety,
 measurement, cost and design, performance; P1-P31), draft 2 and draft 3 through delta checks (four
 Opus lenses each; Q1-Q22, R1-R20; round 3 found no HIGH); both in `state-archive/jev-native/review-findings.md` (gitignored). Every
 recommendation was accepted under the operator's standing instruction of 2026-11-12; where lenses
@@ -203,13 +203,20 @@ These error types guided the structure. No card was tuned on, but the clauses th
   refused for preset D, `claude_eval.py:582-584`; the refusal is lifted for D with a Jev source run,
   a new branch beside `_jev_run`) takes a named Jev run, native allowed, after the existing checks (complete, pin, schema digest, set, redaction);
   derives with the source's recorded mapping, re-parsed by `jev_mapping.parse` (no `jev_native`
-  import), refusing a missing or mismatched one; such a D run is not for the gate and records the
-  source's digests.
+  import), refusing one that isn't the mapping the source's own `band.mapping_digest` names, and a
+  source with an eval switch off; such a D run is forced `for_gate` false, never pinned, records
+  the source's options and reports its band under that mapping.
 - **`scripts/jev_questions.py`:** `show [--field F]` (Claude-style beside native per field);
-  `request --card ID [--state s1|s3]` (offline request body); `overlap --root R` (R1: every example
+  `request --card ID [--native] [--state s1|s3]` (offline request body); `register --root R
+  --heldout3 H --out F` (every pre-registered value from code); `overlap --root R` (R1: every example
   and note against every card of both halves by 5-word overlap; must report 0 before the freeze);
-  `report --registration F --root R <result files…>` (Q12, R9, R17; refuses a `set_version`
-  mismatch): applies
+  `record` (HEAD and status of the worktree, main checkout and `eval/private` at each round's start
+  and end; refuses a rounds file inside a repo unless ignored there, an overwrite, a missing repo;
+  `--failed ARM` for a run with no result file); `report --worktree W --rounds F --root R --run
+  ARM:ROUND:FILE … [--opus F …] [--d-run F …]` (Q12, R9, R17; takes the registration as committed
+  in the commit that added it, refuses a changed copy, a `set_version` mismatch, a duplicate run, a
+  question file other than the registered one, and a run that its own recorded mapping doesn't
+  reproduce): applies
   the void rule and the Stage A pass rule and prints every report item in §5, including the
   threshold-sensitivity table recomposed from raw answers (it may import `jev_native`: scripts are
   outside the contract).
@@ -264,10 +271,13 @@ These error types guided the structure. No card was tuned on, but the clauses th
   - Each arm's expected `prompt_digest`, `gate_key` and question-file digest written here before
     its first run; J-claude's equal the `SHIPPED_*` pins.
   - TypeSafe's console rate limits read by the operator, or recorded as not read.
-- **Void runs** (P22, Q14, R9, R15, R18): a run counts only if complete, `faulted` empty,
+- **Void runs** (P22, Q14, R9, R15, R18, diff review): a run counts only if it is a Jev run on the
+  registered pin, redacted, with no eval switch off, complete, `faulted` empty,
   `determinism.faulted_pairs` empty, `usage_missing` 0, `options.for_gate` false, its digests
-  and set as registered, AC power at start and end, `created_at − started_at − wall_s` at most
-  30 s, the worktree HEAD the freeze commit, and every recorded status empty. A round with a void
+  and set as registered, AC power at start and end, `ended_at − started_at − wall_s` at most
+  30 s (both clocks read together), started and ended inside its round's records, the worktree
+  HEAD the freeze commit, every repo's HEAD unchanged across the round, all three repos
+  recorded, and every recorded status empty; a round with a `--failed` arm is void. A round with a void
   run is excluded whole (kept, reported) and repeated once; the repeat replaces it; a second void
   round stops for the operator. A void reversed run is repeated once.
 - **Stage A** (frozen set, Jev alone, two runs each, interleaved A B C A B C): J-claude,
