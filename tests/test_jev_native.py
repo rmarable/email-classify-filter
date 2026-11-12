@@ -90,6 +90,9 @@ def _bad(old: str, new: str, match: str) -> None:
     ("version: 1\nschema_version: 3", "version: 1\nschema_version: 3\nsurprise: 1", "unknown keys"),
     ("  none_bars: {fraud_risk: 0.7}", "  none_bars: {phishing: 0.7}", "mapping"),
     ("    else_p_steps: [high, medium]", "    else_p_steps: [nope]", "else_p_steps"),
+    ("    else_p_steps: [high, medium]", "    else_p_steps: [[high]]", "else_p_steps"),
+    ("      - [account_security, cat_security]", "      - [[account_security], cat_security]",
+     "string"),
     ("  claims_internal: {compose: noul, from: claims_internal}",
      "  claims_internal: {compose: noul, from: {any: [claims_internal, phishing]}}",
      "same-named Noul"),
@@ -317,3 +320,20 @@ def test_the_service_never_loads_the_native_file() -> None:
     code = ("import sys, ecf_server.service, ecf_server.jev_dispatch, ecf_server.jev;"
             " assert 'ecf_server.jev_native' not in sys.modules")  # fmt: skip
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_the_none_bar_crossing_counts_only_when_the_bar_applies() -> None:
+    """Fix check L2: a none-bar crossing (the largest high or medium p crossing 0.3) counts
+    only when an answer composes to `none`."""
+
+    def raw(**nouls: float) -> dict[str, Any]:
+        _a, r = jev_native.compose(NATIVE, reply(nouls), SCHEMA)
+        assert r is not None
+        return r
+
+    a, b = raw(fr_credentials=0.2, fd_other_doubt=0.6), raw(fr_credentials=0.4, fd_other_doubt=0.6)
+    _f, low_both = jev_native.raw_flips(NATIVE, a, b, {})
+    assert low_both == 0
+    _f, none_both = jev_native.raw_flips(NATIVE, raw(fr_credentials=0.2),
+                                         raw(fr_credentials=0.4), {})  # fmt: skip
+    assert none_both == 1

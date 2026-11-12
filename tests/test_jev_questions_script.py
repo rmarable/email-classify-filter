@@ -486,3 +486,24 @@ def test_no_gain_doesnt_pass_and_a_foreign_question_file_is_refused(labelled: No
 def test_main_refuses_s3_without_native(capsys: pytest.CaptureFixture[str]) -> None:
     assert JQ.main(["request", "--root", "/x", "--card", "c", "--state", "s3"]) == 2
     assert "--state s3 is for --native" in capsys.readouterr().err
+
+
+def test_register_refuses_unshipped_pins_or_another_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """Fix check L5: `register` refuses when J-claude's digests aren't the shipped pins or the
+    set isn't 399/50/45."""
+    good = {"set_version": "v", "cases": 399, "private_cases": 50, "injection_cards": 45}
+
+    def info(_root: Path) -> dict[str, Any]:
+        return dict(good)
+
+    monkeypatch.setattr(JQ, "_set_info", info)
+    JQ.register(tmp_path, tmp_path)
+    good["cases"] = 398
+    with pytest.raises(InvalidInputError, match="expected one"):
+        JQ.register(tmp_path, tmp_path)
+    good["cases"] = 399
+    monkeypatch.setattr(JQ, "SHIPPED_GATE_KEY", "jev:other")
+    with pytest.raises(InvalidInputError, match="shipped pins"):
+        JQ.register(tmp_path, tmp_path)

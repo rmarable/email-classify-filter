@@ -278,8 +278,9 @@ def _check_field(  # noqa: PLR0912, PLR0915 - one check per composer rule (§3.2
     eps = d.get("else_p_steps")
     if eps is not None:
         step_values = [cast("list[Any]", st)[0] for st in cast("list[Any]", steps)]
-        if not isinstance(els, str) or not isinstance(eps, list) or not eps or not set(
-                cast("list[Any]", eps)) <= set(step_values):  # fmt: skip
+        if (not isinstance(els, str) or not isinstance(eps, list) or not eps
+                or not all(isinstance(x, str) for x in cast("list[Any]", eps))
+                or not set(cast("list[str]", eps)) <= set(step_values)):  # fmt: skip
             raise _bad(f"{where}: `else_p_steps` names steps of a cascade with a plain `else`")
     if bad := sorted(str(v) for v in made if v not in values):
         raise _bad(f"{where}: values not in the schema {bad}")
