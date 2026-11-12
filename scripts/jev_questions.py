@@ -262,13 +262,30 @@ def _git(path: Path, *args: str) -> str:
         raise InvalidInputError(f"git {' '.join(args)} in {path} failed") from exc
 
 
+def preflight(repos: dict[str, Path], root: Path, heldout3: Path) -> None:
+    """A round may start only when it can count (fix check F2): the registration recomputed
+    here equals the committed one, the worktree is at the freeze commit, and every repo is
+    clean. Refused otherwise, before any TypeSafe call."""
+    reg = load_registration(repos["worktree"])
+    fresh = register(root, heldout3)
+    if {k: reg[k] for k in fresh} != fresh:
+        raise InvalidInputError("the registration recomputed here isn't the committed one")
+    if _git(repos["worktree"], "rev-parse", "HEAD") != reg["freeze_commit"]:
+        raise InvalidInputError("the worktree isn't at the freeze commit")
+    if dirty := [k for k, p in repos.items() if _git(p, "status", "--porcelain")]:
+        raise InvalidInputError(f"uncommitted changes in {', '.join(dirty)}")
+
+
 def record(rounds: Path, n: str, at: str, repos: dict[str, Path],
-           failed: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+           failed: list[str] | None = None,
+           check: tuple[Path, Path] | None = None) -> dict[str, Any]:  # fmt: skip
     """HEAD and status of the three repos at a round's start or end (R9, F4). Refused: a repo
     missing, a rounds file a recorded repo would see as a change, or an entry already written.
     `failed`: arms whose run ended with no result file (F6), which void the round."""
     if set(repos) != set(REPOS):
         raise InvalidInputError(f"--repo must name exactly {', '.join(REPOS)}")
+    if at == "start" and check is not None:
+        preflight(repos, *check)
     target = rounds.resolve()
     for p in repos.values():
         top = Path(_git(p, "rev-parse", "--show-toplevel")).resolve()
@@ -654,8 +671,11 @@ def report(  # noqa: PLR0912, PLR0915 - the report's items, in the plan's order
     injection_cards = sum(1 for e in labels.values()
                           if _d(e.get("safety")).get("injection_target"))  # fmt: skip
     void = {_key(r): void_reasons(r, reg, rounds, injection_cards) for r in runs}
+    # a void reversed run is repeated on its own; it never voids a round (fix check F4)
     bad_rounds = sorted({r.round for r in runs if void[_key(r)] and not r.arm.endswith("-rev")}
-                        | {n for n, rd in rounds.items() if _l(_d(rd).get("failed"))})  # fmt: skip
+                        | {n for n, rd in rounds.items()
+                           if any(not str(a).endswith("-rev")
+                                  for a in _l(_d(rd).get("failed")))})  # fmt: skip
     out: dict[str, Any] = {"void": {k: v for k, v in void.items() if v}, "void_rounds": bad_rounds}
     if len(bad_rounds) > 1:
         return out | {"stage_a": "stopped: a second void round (§5); the operator decides"}
@@ -806,6 +826,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one branch pe
     p.add_argument("--at", required=True, choices=["start", "end"])
     p.add_argument("--repo", action="append", required=True, help="NAME=PATH")
     p.add_argument("--failed", action="append", default=[], help="an arm with no result file")
+    p.add_argument("--root", type=Path, help="with --at start: the set, for the preflight")
+    p.add_argument("--heldout3", type=Path, help="with --at start: heldout3, for the preflight")
     p = sub.add_parser("report")
     p.add_argument("--worktree", type=Path, required=True)
     p.add_argument("--rounds", type=Path, required=True)
@@ -834,8 +856,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 - one branch pe
             print(f"wrote {a.out}")
         elif a.cmd == "record":
             repos = dict(x.split("=", 1) for x in a.repo)
+            if a.at == "start" and (a.root is None or a.heldout3 is None):
+                raise InvalidInputError("--at start needs --root and --heldout3 (the preflight)")
+            check = (a.root, a.heldout3) if a.at == "start" else None
             print(json.dumps(record(a.rounds, a.round, a.at,
-                                    {k: Path(v) for k, v in repos.items()}, a.failed),
+                                    {k: Path(v) for k, v in repos.items()}, a.failed, check),
                              indent=2))  # fmt: skip
         else:
             reg = load_registration(a.worktree)

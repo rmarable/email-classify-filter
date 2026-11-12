@@ -422,3 +422,58 @@ def test_overlap_finds_a_shared_run(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(JQ, "_cases", cases)
     found = JQ.overlap(tmp_path)
     assert found and {f[0] for f in found} == {"card"}
+
+
+def test_preflight_refuses_a_round_that_cant_count(tmp_path: Path,
+                                                   monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+    """Fix check F2: `record --at start` checks the registration, the freeze commit and clean
+    repos before any call."""
+    import subprocess  # noqa: PLC0415
+
+    repos = {k: _repo(tmp_path / k) for k in ("worktree", "main", "private")}
+    head = subprocess.run(["git", "-C", str(repos["worktree"]), "rev-parse", "HEAD"],
+                          check=True, capture_output=True, text=True).stdout.strip()  # fmt: skip
+    reg = {"pin": "p", "freeze_commit": head}
+    monkeypatch.setattr(JQ, "load_registration", lambda _w: reg)
+    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "p"})
+    rounds = tmp_path / "rounds.json"
+    JQ.record(rounds, "1", "start", repos, check=(tmp_path, tmp_path))
+    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "other"})
+    with pytest.raises(InvalidInputError, match="recomputed"):
+        JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
+    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "p"})
+    (repos["main"] / "stray.txt").write_text("x")
+    with pytest.raises(InvalidInputError, match="uncommitted changes in main"):
+        JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
+    (repos["main"] / "stray.txt").unlink()
+    reg["freeze_commit"] = "0" * 40
+    with pytest.raises(InvalidInputError, match="freeze commit"):
+        JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
+
+
+def test_a_failed_reversed_run_doesnt_void_its_round(labelled: None) -> None:
+    del labelled
+    rounds = {**ROUNDS, "1": {**ROUNDS["1"], "failed": ["J-native-s1-rev"]}}
+    out = JQ.report(REG_FULL, rounds, Path("/x"), _all(runs()), remapper=FakeRemap())
+    assert out["void_rounds"] == [] and out["stage_a"][0]["passes"] is True
+
+
+def test_no_gain_doesnt_pass_and_a_foreign_question_file_is_refused(labelled: None) -> None:
+    del labelled
+    assert JQ.arm_pass("J-native-s1", runs(30), LABELS, FakeRemap())["passes"] is False
+    rs = runs()
+    other = rs["J-native-s1"][0].result
+    s = dict(other.summary or {})
+    s["jev"] = {"usage_missing": 0, "options": {"questions": "native", "questions_digest": "x"}}
+    rs["J-native-s1"][0] = JQ.Run("J-native-s1", "1", Path("c.json"),
+                                  other.model_copy(update={"summary": s}))  # fmt: skip
+    with pytest.raises(InvalidInputError, match="another question file"):
+        _report(_all(rs))
+    with pytest.raises(InvalidInputError, match="isn't the registered one"):
+        JQ.report(REG_FULL | {"question_file_digest": "y"}, ROUNDS, Path("/x"), _all(runs()),
+                  remapper=FakeRemap())  # fmt: skip
+
+
+def test_main_refuses_s3_without_native(capsys: pytest.CaptureFixture[str]) -> None:
+    assert JQ.main(["request", "--root", "/x", "--card", "c", "--state", "s3"]) == 2
+    assert "--state s3 is for --native" in capsys.readouterr().err

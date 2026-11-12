@@ -251,13 +251,18 @@ These error types guided the structure. No card was tuned on, but the clauses th
 ## 5. Runs (pre-registered)
 
 - **Conditions** (P1, P24, P29, Q14, Q15, Q22):
-  - A card freeze on the main checkout and `eval/private`, agreed with peers, starts before the
-    freeze commit and lasts to the end of Stage A. The freeze commit adds
+  - A freeze on the main checkout and `eval/private`, agreed with every active peer by message
+    before the freeze commit and recorded in the state entry: no commit, merge, pull, checkout or
+    card edit there from the freeze commit to the end of Stage A (any HEAD move or uncommitted
+    change voids a round, fix check F1). No history rewrite on `jev-native` until the report's
+    JSON is saved beside the rounds file (F5). The freeze commit adds
     `planning-docs/jev-native-registration.json` (R9): the question-file digest; each arm's and
     the reversed run's `prompt_digest` and `gate_key`; the frozen set's and heldout3's
     `set_version` and counts. No worktree commit until Stage A ends.
-  - `accept` started once, fresh, from the clean worktree at the freeze commit, and held for all
-    runs by agreement with the other sessions; `git rev-parse HEAD` and `git status --porcelain`
+  - `accept` (re)started fresh from the clean worktree after the freeze commit and before round
+    1's start record, and held for all runs by agreement with the other sessions;
+    `record --at start` refuses to write unless the registration recomputed in the worktree equals
+    the committed one, the worktree is at the freeze commit and every repo is clean (F2); `git rev-parse HEAD` and `git status --porcelain`
     of the worktree, the main checkout and `eval/private` recorded at each round's start and end;
     a stale merged view stops the work.
   - AC power, `caffeinate -i`, lid open.
@@ -281,8 +286,8 @@ These error types guided the structure. No card was tuned on, but the clauses th
   run is excluded whole (kept, reported) and repeated once; the repeat replaces it; a second void
   round stops for the operator. A void reversed run is repeated once.
 - **Stage A** (frozen set, Jev alone, two runs each, interleaved A B C A B C): J-claude,
-  J-native-s1, J-native-s3; one key check first; then one report-only reversed-option native-s1
-  run (`--jev-reverse-choices`; each Choice's flip rate beside the same Choice's flip rate between
+  J-native-s1, J-native-s3; one key check first; then, in its own round number, one report-only
+  reversed-option native-s1 run (a failed or void reversed run never voids a round, F4) (`--jev-reverse-choices`; each Choice's flip rate beside the same Choice's flip rate between
   the two forward native-s1 runs; Q10, R7).
 - **Comparisons:** paired Newcombe on the cards common to both runs (`metrics.newcombe_paired`),
   every comparison (Q16).
