@@ -42,7 +42,7 @@ not only their wording. Its pass rule includes K5's caution test (§5).
   - fixed items only: 46 against 22;
   - rule and a fixed item: 17 against 6;
   - the rest: the rule alone.
-- In 14 cases (and 18 in `dd5ed69e`) the stored answer was right and the case failed only because p fell in the 0.30-0.50 band (§5, second figure).
+- In 14 cases (and 18 in `dd5ed69e`; (rv), measurement lens) the stored answer was right and the case failed only because p fell in the 0.30-0.50 band (§5, second figure).
 - Rule errors: 79 against 32.
 
 **Routes to `fraud_guard` that the label doesn't want:**
