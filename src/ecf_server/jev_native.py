@@ -273,14 +273,14 @@ def _check_field(  # noqa: PLR0912, PLR0915 - one check per composer rule (§3.2
         made.append(els)
     else:
         raise _bad(f"{where}: `else` is a value or a choice")
+    if any(not isinstance(v, str) for v in made):
+        raise _bad(f"{where}: every value is a string")
     eps = d.get("else_p_steps")
     if eps is not None:
         step_values = [cast("list[Any]", st)[0] for st in cast("list[Any]", steps)]
         if not isinstance(els, str) or not isinstance(eps, list) or not eps or not set(
                 cast("list[Any]", eps)) <= set(step_values):  # fmt: skip
             raise _bad(f"{where}: `else_p_steps` names steps of a cascade with a plain `else`")
-    if any(not isinstance(v, str) for v in made):
-        raise _bad(f"{where}: every value is a string")
     if bad := sorted(str(v) for v in made if v not in values):
         raise _bad(f"{where}: values not in the schema {bad}")
     if missing := sorted(str(v) for v in values - set(made)):
@@ -584,7 +584,11 @@ def raw_flips(native: Native, a: dict[str, Any], b: dict[str, Any],
             ma, mb = (max(_expr_p(e, p) for e in exprs) for p in (pa, pb))
         except KeyError:
             ma = mb = 0.0
-        if (ma > 1 - bar) != (mb > 1 - bar):
+        thr_fr = float(fr["threshold"])
+        none_a, none_b = (all(_expr_p(st[1], p) < thr_fr
+                              for st in cast("list[list[Any]]", fr["steps"]))
+                          for p in (pa, pb))  # fmt: skip
+        if (none_a or none_b) and (ma > 1 - bar) != (mb > 1 - bar):  # the bar applied (L2)
             crossings += 1
     for qid, va in a.items():
         vb = b.get(qid)

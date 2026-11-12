@@ -181,6 +181,10 @@ ARMS: dict[str, dict[str, Any]] = {
     f"{NATIVE_PREFIX}-s1-rev": {"jev_questions": "native", "jev_reverse_choices": True},
 }
 OPUS_RUNS = ("4cf8a43e", "a9019a61")  # the recorded Opus runs Stage B's entry reads (P20)
+# the shipped Claude-style digests (tests/test_jev_dispatch.py SHIPPED_*) and §5's set counts
+SHIPPED_PROMPT_DIGEST = "960beb38b231716c0a3865980e11cd4426f7205ade7a0778709731eb5b731a07"
+SHIPPED_GATE_KEY = "jev:jev-1.14.0+f241b4a5ad55e342+jev-s1-state-b58d481303a0+0fd82c418986dfe7"
+EXPECTED_SET = {"cases": 399, "private_cases": 50, "injection_cards": 45}
 
 
 def _set_info(root: Path) -> dict[str, Any]:
@@ -207,8 +211,14 @@ def register(root: Path, heldout3: Path) -> dict[str, Any]:
         arms[arm] = {"options": kw, "prompt_digest": jev.prompt_digest(SCHEMA, pin=pin, asking=a),
                      "gate_key": jev.gate_key(SCHEMA, rules_now, pin=pin, asking=a),
                      "input_format": jev.state_format_id(a)}  # fmt: skip
+    want = {"prompt_digest": SHIPPED_PROMPT_DIGEST, "gate_key": SHIPPED_GATE_KEY}
+    if {k: arms[CLAUDE_ARM][k] for k in want} != want:  # §5: J-claude is today's request (L5)
+        raise InvalidInputError("J-claude's digests aren't the shipped pins")
+    info = _set_info(root)
+    if {k: info[k] for k in EXPECTED_SET} != EXPECTED_SET:
+        raise InvalidInputError(f"the set isn't the expected one: {info}")
     return {"pin": pin, "question_file_digest": jev_native.load(SCHEMA).digest,
-            "set": _set_info(root), "heldout3": _set_info(heldout3), "arms": arms,
+            "set": info, "heldout3": _set_info(heldout3), "arms": arms,
             "opus_runs": list(OPUS_RUNS),
             "note": "the reversed run's gate_key equals s1's: option order is in"
                     " prompt_digest only"}  # fmt: skip
@@ -718,7 +728,9 @@ def report(  # noqa: PLR0912, PLR0915 - the report's items, in the plan's order
                                 "enters": all(float(c["lo"]) > STAGE_B_BAR
                                               for c in checks)}  # fmt: skip
     if d_runs:
-        out["stage_b_sources"] = d_source_check(d_runs, by_arm.get(f"{NATIVE_PREFIX}-s1") or [])
+        out["stage_b_sources"] = (d_source_check(d_runs, by_arm[f"{NATIVE_PREFIX}-s1"])
+                                  if passing_s1 is not None
+                                  else {"ok": False, "why": "no passing s1 arm"})  # fmt: skip
     out["notes"] = [
         "the reversed run's gate_key equals s1's by design; prompt_digest tells them apart (F9)",
         "s3's inspect paths name `email` (sender questions `email.from`, `email.body`), not"
@@ -740,20 +752,28 @@ def _opus_problem(opus: list[ResultFile], reg: dict[str, Any]) -> str | None:
     return None
 
 
-def d_source_check(d_runs: list[ResultFile], s1_runs: list[Run]) -> list[dict[str, Any]]:
-    """Stage B (Q21): each D file took its classifications from one of the passing s1 arm's
-    runs, under that run's recorded mapping, and is not for the gate."""
-    ids = {r.result.run_id for r in s1_runs}
-    digests = {r.result.run_id: _d(r.result.summary).get("band") for r in s1_runs}
-    out: list[dict[str, Any]] = []
+def d_source_check(d_runs: list[ResultFile], s1_runs: list[Run]) -> dict[str, Any]:
+    """Stage B (Q21, L4): one D file per run of the passing s1 arm, each complete, unpinned, not
+    for the gate, on that run's classifications under its recorded mapping and question file."""
+    by_src = {r.result.run_id: r for r in s1_runs}
+    rows: list[dict[str, Any]] = []
     for d in d_runs:
         s = d.summary or {}
         src = str(_d(s.get("jev_source")).get("run_id") or "")
-        band = _d(digests.get(src)).get("mapping_digest")
-        out.append({"d_run": d.run_id[:8], "source_run": src[:8], "ok": (
-            src in ids and _d(s.get("band")).get("mapping_digest") == band
-            and _d(s.get("options")).get("for_gate") is False)})  # fmt: skip
-    return out
+        run = by_src.get(src)
+        rs: dict[str, Any] = (run.result.summary or {}) if run is not None else {}
+        src_opts = _d(_d(rs.get("jev")).get("options"))
+        ok = (run is not None and s.get("complete") is True
+              and not _d(s.get("claude")).get("pinned")
+              and _d(s.get("options")).get("for_gate") is False
+              and _d(s.get("band")).get("mapping_digest")
+              == _d(rs.get("band")).get("mapping_digest")
+              and _d(s.get("jev_options")).get("questions_digest")
+              == src_opts.get("questions_digest"))  # fmt: skip
+        rows.append({"d_run": d.run_id[:8], "source_run": src[:8], "ok": ok})
+    sources = [r["source_run"] for r in rows if r["ok"]]
+    covered = len(s1_runs) == 2 and sorted(sources) == sorted(k[:8] for k in by_src)
+    return {"rows": rows, "ok": covered and all(r["ok"] for r in rows)}
 
 
 def _parse_run(spec: str) -> Run:

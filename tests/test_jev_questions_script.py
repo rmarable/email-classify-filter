@@ -335,10 +335,22 @@ def test_d_source_check() -> None:
     band = {"mapping_digest": "m"}
     s1 = [JQ.Run(r.arm, r.round, r.path, r.result.model_copy(update={
         "summary": dict(r.result.summary or {}) | {"band": band}})) for r in s1]  # fmt: skip
-    good = result([case("a")], jev_source={"run_id": s1[0].result.run_id}, band=band)
-    bad = result([case("a")], jev_source={"run_id": "z" * 32}, band=band)
-    got = JQ.d_source_check([good, bad], s1)
-    assert [g["ok"] for g in got] == [True, False]
+    opts = {"questions_digest": NATIVE.digest}
+
+    def d(src: str, **over: Any) -> ResultFile:
+        return result([case("a")], **({"jev_source": {"run_id": src}, "band": band,
+                                       "jev_options": opts, "claude": {"pinned": False}}
+                                      | over))  # fmt: skip
+
+    ids = [r.result.run_id for r in s1]
+    good = JQ.d_source_check([d(ids[0]), d(ids[1])], s1)
+    assert good["ok"] is True
+    one = JQ.d_source_check([d(ids[0])], s1)  # OD-538 needs D on both runs (L4)
+    assert one["ok"] is False
+    bad = JQ.d_source_check([d(ids[0]), d("z" * 32)], s1)
+    assert [r["ok"] for r in bad["rows"]] == [True, False] and bad["ok"] is False
+    pinned = JQ.d_source_check([d(ids[0], claude={"pinned": True}), d(ids[1])], s1)
+    assert pinned["ok"] is False
 
 
 # record and the registration (diff review F1, F4)
@@ -348,8 +360,12 @@ def _repo(path: Path) -> Path:
     import subprocess  # noqa: PLC0415
 
     path.mkdir()
-    steps = (["init", "-q"], ["config", "user.email", "t@example.invalid"],
-             ["config", "user.name", "t"], ["commit", "-q", "--allow-empty", "-m", "x"])
+    steps = (
+        ["init", "-q"],
+        ["config", "user.email", "t@example.invalid"],
+        ["config", "user.name", "t"],
+        ["commit", "-q", "--allow-empty", "-m", "x"],
+    )
     for args in steps:
         subprocess.run(["git", "-C", str(path), *args], check=True)
     return path
@@ -399,6 +415,7 @@ def test_overlap_finds_a_shared_run(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     clean = tmp_path / "clean.eml"
     clean.write_text("From: a@b.example\nTo: c@d.example\nSubject: hi\n\nNothing alike here.\n")
     cards = [evalrun.Case("card", eml, {}, True, "t"), evalrun.Case("clean", clean, {}, True, "t")]
+
     def cases(_root: Path) -> list[evalrun.Case]:
         return cards
 

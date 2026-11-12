@@ -1125,10 +1125,12 @@ def test_preset_d_on_a_named_native_run(conn: sqlite3.Connection, db_path: Path,
     assert run.source["jev_options"]["questions"] == "native"
     assert all("fraud_risk" in w.derived.unsure for w in run.works if w.classification)
     native = evaljev.jev_native.load(evalrun.load_schema())
-    if run.state == "done":  # nothing went to the actor: the record is saved now
-        m = json.loads(_row(conn)["metrics"])
-        assert m["band"]["mapping_digest"] == jev_mapping.digest(native.mapping)
     assert claude_eval._d_mapping(run.source) == native.mapping  # pyright: ignore[reportPrivateUsage]
+    claude_eval.stop(lambda: db.connect(db_path), clock)  # end it: its record is saved (L1)
+    m = json.loads(_row(conn)["metrics"])
+    assert m["band"]["mapping_digest"] == jev_mapping.digest(native.mapping)
+    assert m["jev_options"]["mapping_digest"] == m["band"]["mapping_digest"]
+    assert m["options"]["for_gate"] is False
 
 
 def test_preset_d_refuses_a_named_run_with_signals_off(
