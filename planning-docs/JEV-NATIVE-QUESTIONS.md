@@ -210,7 +210,9 @@ These error types guided the structure. No card was tuned on, but the clauses th
   `request --card ID [--native] [--state s1|s3]` (offline request body); `register --root R
   --heldout3 H --out F` (every pre-registered value from code); `overlap --root R` (R1: every example
   and note against every card of both halves by 5-word overlap; must report 0 before the freeze);
-  `record` (HEAD and status of the worktree, main checkout and `eval/private` at each round's start
+  `record --rounds F --round N --at start|end --repo worktree=W --repo main=M --repo private=P
+  [--root R --heldout3 H] [--failed ARM]` (HEAD and status of the worktree, main checkout and
+  `eval/private` at each round's start
   and end; refuses a rounds file inside a repo unless ignored there, an overwrite, a missing repo;
   `--failed ARM` for a run with no result file); `report --worktree W --rounds F --root R --run
   ARM:ROUND:FILE … [--opus F …] [--d-run F …]` (Q12, R9, R17; takes the registration as committed
@@ -268,13 +270,15 @@ These error types guided the structure. No card was tuned on, but the clauses th
   - AC power, `caffeinate -i`, lid open.
   - Every run uses an absolute root in the main checkout (`/Users/rmarable/src/email-classify-filter/
     tests/eval/synthetic`; heldout3 and the Opus rescore likewise). Expected for the frozen set:
-    `cases` 399, `private_cases` 50, 45 injection cards, and the `set_version` written here before
-    the first run.
+    `cases` 399, `private_cases` 50, 45 injection cards, and the `set_version`, in the registration
+    file, in the freeze commit.
   - `jev-1.14.0`; the 4,000 window; redaction and signals on; rules only; concurrency 1;
     `--not-for-gate` on every run, J-claude included (so main's D source pick skips them, Q13);
     `--copy-to` the result folder.
-  - Each arm's expected `prompt_digest`, `gate_key` and question-file digest written here before
-    its first run; J-claude's equal the `SHIPPED_*` pins.
+  - Each arm's expected `prompt_digest`, `gate_key` and question-file digest in the registration
+    file, in the freeze commit; J-claude's equal the `SHIPPED_*` pins (`register` refuses
+    otherwise). `record --root R --heldout3 H --at start` also refuses unless the one running
+    `accept` started after the freeze commit.
   - TypeSafe's console rate limits read by the operator, or recorded as not read.
 - **Void runs** (P22, Q14, R9, R15, R18, diff review): a run counts only if it is a Jev run on the
   registered pin, redacted, with no eval switch off, complete, `faulted` empty,

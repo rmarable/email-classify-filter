@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -445,6 +446,13 @@ def test_preflight_refuses_a_round_that_cant_count(
 
     monkeypatch.setattr(JQ, "load_registration", loaded)
     monkeypatch.setattr(JQ, "register", computed)
+    later = datetime.now().astimezone() + timedelta(minutes=1)
+    accept_at: list[datetime | None] = [later]
+
+    def accept_started() -> datetime | None:
+        return accept_at[0]
+
+    monkeypatch.setattr(JQ, "_accept_started", accept_started)
     rounds = tmp_path / "rounds.json"
     JQ.record(rounds, "1", "start", repos, check=(tmp_path, tmp_path))
     fresh["pin"] = "other"
@@ -455,6 +463,13 @@ def test_preflight_refuses_a_round_that_cant_count(
     with pytest.raises(InvalidInputError, match="uncommitted changes in main"):
         JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
     (repos["main"] / "stray.txt").unlink()
+    accept_at[0] = None  # no `accept`, or started before the freeze commit (fix check 3 F3)
+    with pytest.raises(InvalidInputError, match="`accept` isn't running"):
+        JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
+    accept_at[0] = datetime(2000, 1, 1).astimezone()
+    with pytest.raises(InvalidInputError, match="started before the freeze commit"):
+        JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
+    accept_at[0] = later
     reg["freeze_commit"] = "0" * 40
     with pytest.raises(InvalidInputError, match="freeze commit"):
         JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))

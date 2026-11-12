@@ -192,7 +192,7 @@ def _set_info(root: Path) -> dict[str, Any]:
 
     cases, version = evalrun.load(root, fraud_only=False)
     halves = merged.membership(root)
-    return {"root": str(root), "set_version": version, "cases": len(cases),
+    return {"root": str(root.resolve()), "set_version": version, "cases": len(cases),
             "private_cases": len(halves[1]) if halves else 0,
             "injection_cards": sum(1 for c in cases
                                    if _d(c.expected.get("safety")).get("injection_target")),
@@ -274,6 +274,27 @@ def preflight(repos: dict[str, Path], root: Path, heldout3: Path) -> None:
         raise InvalidInputError("the worktree isn't at the freeze commit")
     if dirty := [k for k, p in repos.items() if _git(p, "status", "--porcelain")]:
         raise InvalidInputError(f"uncommitted changes in {', '.join(dirty)}")
+    started = _accept_started()
+    frozen = datetime.fromisoformat(_git(repos["worktree"], "show", "-s", "--format=%cI",
+                                         reg["freeze_commit"]))  # fmt: skip
+    if started is None or started < frozen:
+        raise InvalidInputError("`accept` isn't running, or started before the freeze commit"
+                                " (restart it from the worktree; fix check 3 F3)")  # fmt: skip
+
+
+def _accept_started() -> datetime | None:
+    """The start time of the one running `ecf-server local --install accept`, or None."""
+    try:
+        pids = subprocess.run(["pgrep", "-f", "ecf-server local --install accept"],
+                              check=False, capture_output=True,
+                              text=True).stdout.split()  # fmt: skip
+        if len(pids) != 1:
+            return None
+        lstart = subprocess.run(["ps", "-o", "lstart=", "-p", pids[0]], check=True,
+                                capture_output=True, text=True).stdout.strip()  # fmt: skip
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return datetime.strptime(lstart, "%a %b %d %H:%M:%S %Y").astimezone()
 
 
 def record(rounds: Path, n: str, at: str, repos: dict[str, Path],
