@@ -303,4 +303,4 @@ def test_the_service_never_loads_the_native_file() -> None:
 
     code = ("import sys, ecf_server.service, ecf_server.jev_dispatch, ecf_server.jev;"
             " assert 'ecf_server.jev_native' not in sys.modules")  # fmt: skip
-    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
+    subprocess.run([sys.executable, "-c", code], check=True)
