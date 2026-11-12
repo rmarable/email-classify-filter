@@ -1032,3 +1032,76 @@ def test_preset_d_drops_an_actors_hide_on_an_unsure_case(
     assert w.result is not None and "archive" not in w.result.actions
     assert "flag" in w.result.actions and "unsure: phishing" in (w.result.held or [])
     assert w.plan is not None and any(d.name == "archive" for d in w.plan.dropped)
+
+
+# Jev-designed questions (planning-docs/JEV-NATIVE-QUESTIONS.md §3.4, §4): a native run on the
+# fake, both state formats, and a 200 whose answer can't be used.
+
+
+class NativeFake:
+    """TypeSafe answering whatever questions it is asked: each Noul at 0.1 (the category
+    companion at 0.95), each Choice its first option, each Score its second level."""
+
+    def __init__(self, *, empty: bool = False) -> None:
+        self.empty = empty
+        self.bodies: list[dict[str, Any]] = []
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        sent: dict[str, Any] = json.loads(req.content)
+        self.bodies.append(sent)
+        if self.empty:
+            return httpx.Response(200, json={"model": PIN, "answers": {},
+                                             "usage": {"input_tokens": 10}})  # fmt: skip
+        answers: dict[str, Any] = {}
+        for qid, q in cast("dict[str, Any]", sent["questions"]).items():
+            if q["type"] == "noul":
+                answers[qid] = {"type": "noul", "noul": 0.95 if qid == "cat_fits" else 0.1}
+            elif q["type"] == "choice":
+                opts = list(q["criteria"])
+                answers[qid] = {"type": "choice", "choice": opts[0], "confidence": 0.8,
+                                "probabilities": {o: 0.9 if i == 0 else 0.1 / (len(opts) - 1)
+                                                  for i, o in enumerate(opts)}}  # fmt: skip
+            else:
+                n = len(q["criteria"])
+                answers[qid] = {"type": "score", "probabilities": {
+                    str(i): 0.7 if i == 1 else 0.3 / (n - 1) for i in range(n)}}  # fmt: skip
+        return httpx.Response(200, json={"model": PIN, "answers": answers,
+                                         "usage": {"input_tokens": 4000}})  # fmt: skip
+
+
+@pytest.mark.parametrize("state", ["s1", "s3"])
+def test_a_native_run_on_the_fake(conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+                                  root: Path, state: str) -> None:  # fmt: skip
+    del conn  # the database the run writes to
+    fake = NativeFake()
+    snap = run_jev(db_path, clock, root, fake, jev_questions="native", jev_state=state,
+                   for_gate=False)  # fmt: skip
+    assert snap["state"] == "done", snap
+    s = snap["result"]
+    assert s["complete"] is True and s["faulted"] == []
+    assert "jev_questions native" in s["options"]["measuring"]
+    schema = evalrun.load_schema()
+    native = evaljev.jev_native.load(schema)
+    o = s["jev"]["options"]
+    assert o["questions"] == "native" and o["questions_digest"] == native.digest
+    assert o["state"] == state and o["mapping_digest"] == s["band"]["mapping_digest"]
+    assert s["band"]["mapping_digest"] == jev_mapping.digest(native.mapping)
+    assert s["prompt_digest"] != jev.prompt_digest(schema, pin=PIN)
+    assert isinstance(s["started_at"], str)
+    assert "raw_flips" in s["determinism"] and "band_crossings" in s["determinism"]
+    sent = fake.bodies[0]
+    assert set(sent["questions"]) == set(native.questions)
+    assert isinstance(sent["state"], dict if state == "s3" else str)
+    r = load_result(Path(_path(db_path)))  # format 7: every case's raw answers (P7)
+    assert r.format == 7 and all(c.question_answers for c in r.cases)
+
+
+def test_an_unusable_answer_is_a_fault(conn: sqlite3.Connection, db_path: Path, clock: FakeClock,
+                                       root: Path) -> None:  # fmt: skip
+    """R8: a 200 whose answer doesn't compose is faulted `unusable_answer`, so the void rule
+    sees it (and the run stops past its fault limit, as for any fault)."""
+    del conn
+    snap = run_jev(db_path, clock, root, NativeFake(empty=True), jev_questions="native",
+                   for_gate=False)  # fmt: skip
+    s = snap["result"]
+    assert s["faulted"] and s["jev"]["faulted_cases"].get("unusable_answer")

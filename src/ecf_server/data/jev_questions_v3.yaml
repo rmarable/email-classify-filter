@@ -50,8 +50,8 @@ questions:
     type: noul
     instructions: "Is the email a sign-in alert, password reset, verification code or security warning about an account?"
     criteria:
-      "true": {what: "An alert or code about access to an account, genuine or fake", examples: ["New sign-in to your account from Chrome on Windows", "Your verification code is 482913", "Your account has been locked after failed sign-ins"], note: *self_claim}
-      "false": {what: "Any other email", examples: ["A newsletter about online safety", "Your SSL certificate expires in 7 days"]}
+      "true": {what: "An alert or code about access to an account, genuine or fake", examples: ["A login from a new tablet was noticed on your profile", "Use 771 204 to finish logging in", "Your account has been locked after failed sign-ins"], note: *self_claim}
+      "false": {what: "Any other email", examples: ["A newsletter about online safety", "The TLS cert on the shop site lapses next week"]}
   cat_pay_bill:
     type: noul
     instructions: "Does the email ask us to pay a bill?"
@@ -62,13 +62,13 @@ questions:
     type: noul
     instructions: "Does the email tell us to change the account or address we pay a bill to?"
     criteria:
-      "true": {what: "New payment details for paying someone, genuine or fake", examples: ["Our bank account has changed; please send future payments to the account below"], note: *self_claim}
+      "true": {what: "New payment details for paying someone, genuine or fake", examples: ["We have moved banks; remit future settlements to the details on our new letterhead"], note: *self_claim}
       "false": {what: "No change to where we pay", examples: ["Your statement is ready"]}
   cat_paid:
     type: noul
     instructions: "Does the email confirm money that we paid?"
     criteria:
-      "true": {what: "A receipt, order confirmation or 'payment received' from someone we pay, genuine or fake", examples: ["Thanks, we received your payment of $120", "Your order #8812 is confirmed"], note: *self_claim}
+      "true": {what: "A receipt, order confirmation or 'payment received' from someone we pay, genuine or fake", examples: ["Receipt: your settlement of 75 euros arrived", "Your order #8812 is confirmed"], note: *self_claim}
       "false": {what: "Not a confirmation of a payment we made", examples: ["Invoice #2231 is due", "Your refund of $35 has been issued"]}
   cat_incoming:
     type: noul
@@ -92,7 +92,7 @@ questions:
       partnership: {what: "A one-to-one proposal to work together: a pitch, an offer, a collaboration", not_for: "Mail sent to many", examples: ["Would you like to co-host a webinar with us?"]}
       bug_report: {what: "A report of a bug, defect, outage or incident", not_for: "A system's automatic warning", examples: ["The export button crashes the app"]}
       marketing: {what: "Mail sent to many: newsletters, promotions, advertising, and other unsolicited bulk mail", not_for: "A personal one-to-one pitch", examples: ["Spring sale: 20% off everything"]}
-      action_alert: {what: "A machine or service asking someone to act on a system", not_for: "Account sign-in or password alerts", examples: ["Your SSL certificate expires in 7 days", "Backup job failed"]}
+      action_alert: {what: "A machine or service asking someone to act on a system", not_for: "Account sign-in or password alerts", examples: ["The TLS cert on the shop site lapses next week", "Backup job failed"]}
       shipping: {what: "A delivery: tracking, delivered, missed, returns", not_for: "An order confirmation", examples: ["Your package is out for delivery"]}
       appointment: {what: "A meeting or service booking, or a reminder for one", not_for: "Travel bookings", examples: ["Reminder: dentist on Tuesday at 10:00"]}
       travel: {what: "Flights, trains, hotels or rental cars: itineraries, tickets, check-in, changes", not_for: "Local appointments", examples: ["Your boarding pass for flight 214"]}
@@ -127,7 +127,7 @@ questions:
     type: noul
     instructions: "Does the email ask us for a reply, a decision or an answer?"
     criteria:
-      "true": {what: "The sender is waiting for our answer or decision", examples: ["Can you let me know by Thursday?", "Which option do you prefer?"], note: *self_claim}
+      "true": {what: "The sender is waiting for our answer or decision", examples: ["Could you get back to me before the weekend?", "Which option do you prefer?"], note: *self_claim}
       "false": {what: "Nobody is waiting for our answer", examples: ["'Reply STOP to unsubscribe'", "A survey link in a newsletter"]}
   ra_deadline:
     type: noul
@@ -175,7 +175,7 @@ questions:
     type: noul
     instructions: "Does the email ask for gift cards, or for gift card codes?"
     criteria:
-      "true": {what: "A request to buy, send or share gift cards or their codes", examples: ["Can you buy six gift cards for a client and send me the codes?"], note: *self_claim}
+      "true": {what: "A request to buy, send or share gift cards or their codes", examples: ["Grab a few store vouchers for our partners and message me each voucher PIN"], note: *self_claim}
       "false": {what: "No request for gift cards", examples: ["A store's gift card promotion sent to many"]}
   fr_payroll_data:
     type: noul
@@ -188,7 +188,7 @@ questions:
     instructions: "Does the email ask us to give a password, a sign-in code or other credentials?"
     criteria:
       "true": {what: "A request to type, reply with or share a password, code or credential, including on a linked page", examples: ["Sign in here to keep receiving mail", "Reply with the code we just sent you"], note: *asked_for}
-      "false": {what: "No request for credentials", examples: ["Your code is 482913; never share it", "Reset your password from the app's own settings page", "A password-reset email that asks for nothing but choosing a new password, with no reply, call or payment asked"]}
+      "false": {what: "No request for credentials", examples: ["Use 771 204 to finish logging in; keep it to yourself", "Reset your password from the app's own settings page", "A password-reset email that asks for nothing but choosing a new password, with no reply, call or payment asked"]}
   fr_other_pattern:
     type: noul
     instructions: "Does the email follow another known scam pattern?"
@@ -200,7 +200,7 @@ questions:
     instructions: "Does the email ask us to move money, data, credentials or access?"
     criteria:
       "true": {what: "A request to pay, send data or credentials, or grant access, whatever the pattern", examples: ["Please pay the attached invoice", "Send us your login so we can fix the issue"], note: *self_claim}
-      "false": {what: "No such request", examples: ["New sign-in to your account from Chrome", "Your statement is ready", "A password-reset email that asks for nothing but choosing a new password, with no reply, call or payment asked"]}
+      "false": {what: "No such request", examples: ["A login from a new tablet was noticed on your profile", "Your statement is ready", "A password-reset email that asks for nothing but choosing a new password, with no reply, call or payment asked"]}
   fr_way_in_email:
     type: noul
     instructions: "Does the email give a link, phone number, bank account, address or reply route through which to pay, send data or credentials, or grant access?"
@@ -212,7 +212,7 @@ questions:
     instructions: "Does the email ask us to call a number or follow a link in it to secure, unlock or verify an account?"
     criteria:
       "true": {what: "A call-this-number or follow-this-link request to secure, unlock or verify an account", examples: ["Your card is frozen; ring 0800 000 000 to unfreeze it", "Confirm your mailbox here or lose access tonight"], note: *asked_for}
-      "false": {what: "No such request", examples: ["If this was not you, change your password in the app's own settings", "New sign-in to your account from Chrome"]}
+      "false": {what: "No such request", examples: ["If you don't recognise this, update your passphrase from within the app", "A login from a new tablet was noticed on your profile"]}
   fd_sender_mismatch:
     type: noul
     instructions: "Does the sender's name or claimed organization differ from the sender's email address?"
@@ -224,7 +224,7 @@ questions:
     instructions: "Does the email press for urgency or secrecy?"
     criteria:
       "true": {what: "Unusual pressure to act fast, or a request to keep it quiet", examples: ["Do this in the next hour", "Don't tell anyone about this"], note: *self_claim}
-      "false": {what: "No pressure or secrecy", examples: ["Whenever you get a chance"]}
+      "false": {what: "No pressure or secrecy", examples: ["No rush on this one"]}
   fd_unexpected:
     type: noul
     instructions: "Does a sender the email shows no relationship with ask us to pay, send data or credentials, open an attachment or follow a link?"

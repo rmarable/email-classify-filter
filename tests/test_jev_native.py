@@ -293,3 +293,14 @@ def test_raw_flips() -> None:
     flips, crossed = jev_native.raw_flips(NATIVE, ra, rb, dict(NATIVE.mapping.bands))
     assert set(flips) == {"cat_pay_bill", "phishing", "cat_topic"}  # 0.7, 0.5, the top option
     assert crossed == 1  # claims_internal crossed its 0.3 band, not its 0.5 threshold
+
+
+def test_the_service_never_loads_the_native_file() -> None:
+    """P8: only the Jev eval imports `jev_native` (the import-linter contract); importing the
+    service and its Jev dispatch leaves it unloaded."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    code = ("import sys, ecf_server.service, ecf_server.jev_dispatch, ecf_server.jev;"
+            " assert 'ecf_server.jev_native' not in sys.modules")  # fmt: skip
+    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603
