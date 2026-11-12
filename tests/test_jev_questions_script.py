@@ -424,8 +424,9 @@ def test_overlap_finds_a_shared_run(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert found and {f[0] for f in found} == {"card"}
 
 
-def test_preflight_refuses_a_round_that_cant_count(tmp_path: Path,
-                                                   monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
+def test_preflight_refuses_a_round_that_cant_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
     """Fix check F2: `record --at start` checks the registration, the freeze commit and clean
     repos before any call."""
     import subprocess  # noqa: PLC0415
@@ -434,14 +435,22 @@ def test_preflight_refuses_a_round_that_cant_count(tmp_path: Path,
     head = subprocess.run(["git", "-C", str(repos["worktree"]), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True).stdout.strip()  # fmt: skip
     reg = {"pin": "p", "freeze_commit": head}
-    monkeypatch.setattr(JQ, "load_registration", lambda _w: reg)
-    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "p"})
+    fresh = {"pin": "p"}
+
+    def loaded(_w: Path) -> dict[str, Any]:
+        return reg
+
+    def computed(_r: Path, _h: Path) -> dict[str, Any]:
+        return fresh
+
+    monkeypatch.setattr(JQ, "load_registration", loaded)
+    monkeypatch.setattr(JQ, "register", computed)
     rounds = tmp_path / "rounds.json"
     JQ.record(rounds, "1", "start", repos, check=(tmp_path, tmp_path))
-    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "other"})
+    fresh["pin"] = "other"
     with pytest.raises(InvalidInputError, match="recomputed"):
         JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))
-    monkeypatch.setattr(JQ, "register", lambda _r, _h: {"pin": "p"})
+    fresh["pin"] = "p"
     (repos["main"] / "stray.txt").write_text("x")
     with pytest.raises(InvalidInputError, match="uncommitted changes in main"):
         JQ.record(rounds, "2", "start", repos, check=(tmp_path, tmp_path))

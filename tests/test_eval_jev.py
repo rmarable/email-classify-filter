@@ -1176,8 +1176,9 @@ def test_the_route_passes_the_native_options(conn: sqlite3.Connection, db_path: 
     assert r.status_code == 400 and "--jev-questions native" in r.text
 
 
-def test_the_report_remap_reproduces_a_native_run(conn: sqlite3.Connection, db_path: Path,
-                                                   clock: FakeClock, root: Path) -> None:  # fmt: skip
+def test_the_report_remap_reproduces_a_native_run(
+    conn: sqlite3.Connection, db_path: Path, clock: FakeClock, root: Path,
+) -> None:  # fmt: skip
     """Fix check F3: the report's `Remapper.check_own` on a real native result: its own mapping
     gives back the file's `correct`, and a tampered `correct` is refused."""
     import importlib.util as iu  # noqa: PLC0415
@@ -1196,6 +1197,6 @@ def test_the_report_remap_reproduces_a_native_run(conn: sqlite3.Connection, db_p
     remap = jq.Remapper(evaljev.remap_inputs(root, clock, evalrun.load_schema()))
     remap.check_own(result)
     s = dict(result.summary or {})
-    s["correct"] = int(s["correct"]) + 1
+    s["correct"] = cast("int", s["correct"]) + 1
     with pytest.raises(InvalidInputError, match="its own mapping"):
         remap.check_own(result.model_copy(update={"summary": s}))
