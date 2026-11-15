@@ -2772,6 +2772,35 @@ v3.0.0 planning and build measurements recorded here (they continue §21.2):
   - **Dispatch:** run 1 448 s from first claim to last answer (largest gap 14.1 s). Run 2 932 s, largest gap 293 s: the main session gave one classifier spawn another case's claim token (case `6bc2472b…` with `704b6d94…`'s); the agent was refused ("that claim isn't current"), the claim expired after `CLAIM_TTL` (300 s), and `GRACE` (300 s) then held back the 67 actor cases; scores unaffected (the case was re-claimed and recorded). First expired claim in the last five full runs. Fix planned: `planning-docs/EVAL-CLAIM-MIX-UP.md`.
 - **Open from schema v3, stage S2** (OD-498, 2026-10-13; for the operator): (1) `ecf upgrade` to v3 will name A and B addresses among those that drop to `assist`, though their gate key doesn't change (§11.10); the `v2.2.3` client decides phase 1, so fixing it needs a release note or a rule change in a later client. (2) The `phishing` labels: done 2026-10-13, all 300 cards labelled (§16.1). (3) Whether schema v3 needs its own ADR, as v2 had (ADR 0024); stage S2 records only OD-498, and schema doc §13 plans an OD and ADR when the extension model is replaced (S4).
 
+### 21.4 Item-engine behaviours kept as they are (OD-841)
+
+Found while inventorying v1's item engine for the pure-planner refactor (D112-D114; inventory at 1d174d4). Each is
+today's behaviour, kept unchanged by the refactor and pinned by its golden traces; none is fixed yet. Most need a
+crash or an error between two of an event's database commits.
+
+1. **Turning outbound off doesn't stop a send already under way.** `ecf outbound disable` voids only grants not
+   yet used; a send whose grant was already consumed still goes, yet its card says "Not sent: outbound was turned
+   off" (D114 (10)).
+2. **Turning outbound off can stop halfway.** It cancels each delayed send first and turns outbound off last; if one
+   cancel fails (the item changed meanwhile), the command fails with outbound still on and the earlier sends
+   cancelled.
+3. **A Slack answer interrupted by a crash looks like an approval.** A payment or fraud answer from Slack is queued
+   in two steps; a crash between them leaves the item waiting for step-up with no answer stored. It never expires,
+   `ecf approve` refuses it (no approval open), and `ecf reject` closes it as rejected; `ecf item resolve` also ends it.
+4. **Held mail released at go-live can stall.** If an email moved from held to proposed then fails to be planned,
+   it stays at proposed; no sweep retries proposed items. `ecf item resolve` ends it.
+5. **Queued Undos fail after a lost lease.** Once a check loses its address lease, every Undo still queued for that
+   address in the same check is marked failed without touching the mailbox; undo them by hand.
+6. **A classification can be audited without being stored.** If an item moved on before Claude's classification
+   was stored, nothing is stored, but an `item.classified` audit row is still written.
+7. **The Claude queue can report a move that didn't happen.** When an item handed to the actor was moved on
+   meanwhile, the call still reports it as waiting for Claude (the next tick's state is right).
+8. **An approval request can be left without a grant.** If issuing the grant fails after the item moved to
+   awaiting approval, it waits with no grant: it never expires and no card is posted for it later. `ecf item
+   resolve` ends it.
+9. **A Claude submission's claim is ended without re-checking it.** Settling marks the claim done without checking
+   it is still held (the other path that ends a claim does check).
+
 ## 22. Diagrams
 
 ### 22.1 State diagram (hand-drawn until V1.0; generated from the transition table afterwards)
@@ -3777,6 +3806,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-654 | 2026-11-05 | (operator decision 2026-11-05; `planning-docs/EVAL-PRIVATE.md` draft 5, after the third Opus check) | `planning-docs/EVAL-PRIVATE.md`; amends OD-630 | **`starter-injection` pinned by its own bytes, and the move measured on the installed release's code:** the public exception is the card whose file hashes to its current sha256 (it differs from the shipped template since OD-252); the before-the-move figures and the reference gate run are taken with the installed release's code, on a copy of the install's data, once `git diff <release tag>..<branch base> -- src/` is shown to touch nothing the `null` run or `set_version` reads (Step 5), per set (versions, counts, card digests), never with `null-drafts` (wording amended at Step 6, 2026-11-10: the branch is never installed, X4 and X6). |
 | OD-732 | 2026-11-06 | (operator decision 2026-11-06, after M1 Phase R round 20 on draft 20, identity H1: "cross-machine and multi-user should be separate tasks"; "put these tasks on the roadmap as part of M2") | SPEC §1.2; `docs/roadmap/m1-aws-mode.md` (draft 21) | **Finishing a job from another computer moves to M2, as its own task:** in M1 a key rotation is finished only on the computer that holds its key text, and losing that computer mid-rotation is a stated limit (restore, then destroy); M2 gets two separate tasks, multi-user teams and finishing a maintenance job from another computer |
 | OD-840 | 2026-11-12 | (operator request 2026-11-12: re-test Jev with questions designed for it; plan `planning-docs/JEV-NATIVE-QUESTIONS.md` drafts 1-5, every review recommendation taken under the operator's standing instruction) | SPEC §7.9, §21.2 | **Jev-designed questions measured, eval only:** `ecf eval run --classifier-backend jev` gains `--jev-questions native`, `--jev-state s3` and `--jev-reverse-choices` (experiments, never for the gate); `/ecf-eval --preset D --source-run` takes a named Jev run, never for the gate; result files gain each question's raw answer (format 7). Stage A: no native arm passes (an urgent bug report loses its escalation in every native run); the JSON-state arm gains about 5 points over the Claude-style questions; Jev stays shelved (OD-516) |
+| OD-841 | 2026-11-15 | (planner step 1b inventory, D114) | SPEC §21.4 | Nine item-engine behaviours found in the v1 inventory (incl. D114 (10)'s "Not sent" card) recorded as v1 open items, kept unchanged by the planner refactor |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 

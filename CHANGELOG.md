@@ -5,6 +5,7 @@ Changelog). Milestone tags (`ms-…`) record internal progress and are not relea
 
 ## Next release (not yet tagged)
 
+- Nine known behaviours of how ecf moves an email through its states, mostly after a crash or error mid-step, are now listed as open items in SPEC §21.4 (e.g. turning outbound off doesn't stop a send already under way, though its card says "Not sent"); nothing changed in ecf (OD-841).
 - Measured: Jev (TypeSafe) asked questions designed for it, not ecf's schema questions, on the synthetic set. It gained about 5 points with a JSON state but still lost an urgent bug report's escalation in every run, so Jev stays an eval-only option (OD-840).
 - `ecf eval label` refuses a private set folder (`eval/private/<set>`) as its `--root` and names the public set to use; from the private folder a confirmed label didn't reach the merged view eval runs read (operator decision 2026-11-11).
 - A private test-set card checks that ecf's fraud triggers catch a note addressed to an automated reader, with a money ask, placed past what the model reads (OD-632). The test set changed, so a mailbox needs a new eval run before it can go live; mailboxes already live are unaffected.
