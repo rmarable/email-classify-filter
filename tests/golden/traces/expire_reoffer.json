@@ -1,0 +1,4229 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "approvals.request",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         null,
+         "{\"actions\": [{\"name\": \"archive\", \"target\": null}]}"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.050000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "approvals.request",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.051000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         null,
+         "{\"actions\": [{\"name\": \"archive\", \"target\": null}]}"
+        ],
+        "status": [
+         "proposed",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.051000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 0,
+   "name": "approvals.request",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {
+       "jobs": {
+        "+": [
+         {
+          "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+          "row": {
+           "address_id": "CAP",
+           "attempts": 0,
+           "claim_expires": null,
+           "claimed_by": null,
+           "created_at": "2026-10-01T12:03:00.056000Z",
+           "job_id": "e1c92093087e5dceed0263070ee98b19",
+           "last_error": null,
+           "max_attempts": 5,
+           "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Approve? archive email\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+           "queue": "slack_out",
+           "state": "queued",
+           "timeout_s": 30,
+           "visible_at": "2026-10-01T12:03:00.056000Z"
+          }
+         }
+        ]
+       }
+      },
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 1,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.051000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.052000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-15T12:00:00.052000Z",
+        "grant_id": "0509a34a515a393da710be4617dd1d16",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         null,
+         "{\"actions\": [{\"name\": \"archive\", \"target\": null}]}"
+        ],
+        "status": [
+         "proposed",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.051000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 0,
+   "name": "approvals.request",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.051000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.052000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-15T12:00:00.052000Z",
+        "grant_id": "0509a34a515a393da710be4617dd1d16",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         null,
+         "{\"actions\": [{\"name\": \"archive\", \"target\": null}]}"
+        ],
+        "status": [
+         "proposed",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.051000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.053000Z",
+        "job_id": "e1c92093087e5dceed0263070ee98b19",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Approve? archive email\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.053000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+        "event": "approval.expired",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.056000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+        "event": "approval.expired",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.056000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+        "event": "approval.expired",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.056000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.057000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.058000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-30T12:00:00.058000Z",
+        "grant_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ],
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 6,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+        "event": "approval.expired",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.056000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.057000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.058000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-30T12:00:00.058000Z",
+        "grant_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ],
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"2b460aab033240a63e0b4d4a1c333754\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-16T12:00:00.059000Z",
+        "job_id": "2b460aab033240a63e0b4d4a1c333754",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired, decide again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-16T12:00:00.059000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 7,
+   "event": 2,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+        "event": "approval.expired",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.056000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.057000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-16T12:00:00.058000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-30T12:00:00.058000Z",
+        "grant_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ],
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         0,
+         1
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-16T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"2b460aab033240a63e0b4d4a1c333754\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-16T12:00:00.059000Z",
+        "job_id": "2b460aab033240a63e0b4d4a1c333754",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired, decide again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-16T12:00:00.059000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 4,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.061000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         1,
+         2
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-16T12:00:00.057000Z",
+         "2026-10-31T12:00:00.061000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 4,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.061000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         1,
+         2
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-16T12:00:00.057000Z",
+         "2026-10-31T12:00:00.061000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 4,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.061000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\"}",
+        "event": "approval.expired",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.063000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         1,
+         2
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-16T12:00:00.057000Z",
+         "2026-10-31T12:00:00.061000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 4,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.061000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\"}",
+        "event": "approval.expired",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.063000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         1,
+         2
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-16T12:00:00.057000Z",
+         "2026-10-31T12:00:00.061000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"fda1a38f7f00c019abd0b999e670abd5\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.064000Z",
+        "job_id": "fda1a38f7f00c019abd0b999e670abd5",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired twice: ecf approve 00eeeeee offers it again, or ecf item resolve 00eeeeee\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.064000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 4,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.061000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\"}",
+        "event": "approval.expired",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.063000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "~": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "set": {
+        "status": [
+         "issued",
+         "voided"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "expiry_count": [
+         1,
+         2
+        ],
+        "status": [
+         "awaiting_approval",
+         "expired"
+        ],
+        "updated_at": [
+         "2026-10-16T12:00:00.057000Z",
+         "2026-10-31T12:00:00.061000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"fda1a38f7f00c019abd0b999e670abd5\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.064000Z",
+        "job_id": "fda1a38f7f00c019abd0b999e670abd5",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired twice: ecf approve 00eeeeee offers it again, or ecf item resolve 00eeeeee\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.064000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "awaiting_approval"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "issued",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "approved"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 6,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "approved"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 7,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[16]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.approved",
+        "id": 16,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.072000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "approved"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 8,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[16]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.approved",
+        "id": 16,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.072000Z"
+       }
+      },
+      {
+       "key": "[17]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"approved\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 17,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.073000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.073000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 9,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[16]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.approved",
+        "id": 16,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.072000Z"
+       }
+      },
+      {
+       "key": "[17]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"approved\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 17,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.073000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.073000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      },
+      {
+       "key": "[\"d098fae46ddbe4513f1972ecc5485401\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.074000Z",
+        "job_id": "d098fae46ddbe4513f1972ecc5485401",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-31T12:00:00.074000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 10,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[16]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.approved",
+        "id": 16,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.072000Z"
+       }
+      },
+      {
+       "key": "[17]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"approved\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 17,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.073000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "backlog": 0,
+        "catch_up_since": null,
+        "cooldown_until": null,
+        "deferred": 0,
+        "failing_since": null,
+        "last_error": null,
+        "last_error_at": null,
+        "last_finished_at": null,
+        "last_result": "{}",
+        "last_started_at": null,
+        "last_status": null,
+        "login_failures": 0,
+        "next_due_at": "2026-10-31T12:00:00.075000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.073000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      },
+      {
+       "key": "[\"d098fae46ddbe4513f1972ecc5485401\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.074000Z",
+        "job_id": "d098fae46ddbe4513f1972ecc5485401",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-31T12:00:00.074000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 11,
+   "event": 5,
+   "name": "approvals.approve (reoffer)",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.066000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+        "event": "approval.requested",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.067000Z"
+       }
+      },
+      {
+       "key": "[14]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.reoffered",
+        "id": 14,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.068000Z"
+       }
+      },
+      {
+       "key": "[15]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+        "event": "item.transitioned",
+        "id": 15,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[16]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "event": "approval.approved",
+        "id": 16,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.072000Z"
+       }
+      },
+      {
+       "key": "[17]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"approved\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 17,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-31T12:00:00.073000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "backlog": 0,
+        "catch_up_since": null,
+        "cooldown_until": null,
+        "deferred": 0,
+        "failing_since": null,
+        "last_error": null,
+        "last_error_at": null,
+        "last_finished_at": null,
+        "last_result": "{}",
+        "last_started_at": null,
+        "last_status": null,
+        "login_failures": 0,
+        "next_due_at": "2026-10-31T12:00:00.075000Z"
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+       "row": {
+        "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-11-14T12:00:00.067000Z",
+        "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+        "principal": "os_user",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "expired",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-31T12:00:00.061000Z",
+         "2026-10-31T12:00:00.073000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.069000Z",
+        "job_id": "4430acaae6662285dd151ed3c46d748a",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.069000Z"
+       }
+      },
+      {
+       "key": "[\"878f07bbc65885989409f925b1f9bcbd\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.076000Z",
+        "job_id": "878f07bbc65885989409f925b1f9bcbd",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Approved: archive email (running)\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-31T12:00:00.076000Z"
+       }
+      },
+      {
+       "key": "[\"d098fae46ddbe4513f1972ecc5485401\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-31T12:00:00.074000Z",
+        "job_id": "d098fae46ddbe4513f1972ecc5485401",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-31T12:00:00.074000Z"
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "Expiry: offered again once (awaiting_approval->expired->awaiting_approval), then left expired; `ecf approve` offers it again (_reoffer).",
+ "events": [
+  {
+   "commits": [
+    {
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "proposal": [
+          null,
+          "{\"actions\": [{\"name\": \"archive\", \"target\": null}]}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.049000Z",
+          "2026-10-01T12:00:00.050000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[4]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"proposed\", \"to\": \"awaiting_approval\"}",
+         "event": "item.transitioned",
+         "id": 4,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.051000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "proposed",
+          "awaiting_approval"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.050000Z",
+          "2026-10-01T12:00:00.051000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[5]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+         "event": "approval.requested",
+         "id": 5,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.052000Z"
+        }
+       }
+      ]
+     },
+     "grants": {
+      "+": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "row": {
+         "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+         "consumed_at": null,
+         "content_hash": "h",
+         "expires_at": "2026-10-15T12:00:00.052000Z",
+         "grant_id": "0509a34a515a393da710be4617dd1d16",
+         "principal": "os_user",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "status": "issued",
+         "stepup_nonce_id": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:00.053000Z",
+         "job_id": "e1c92093087e5dceed0263070ee98b19",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Approve? archive email\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"0509a34a515a393da710be4617dd1d16\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:00.053000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "approvals.request",
+   "result": "0509a34a515a393da710be4617dd1d16"
+  },
+  {
+   "commits": [],
+   "name": "advance 15 d",
+   "result": null
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[6]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+         "event": "item.transitioned",
+         "id": 6,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-16T12:00:00.054000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "expiry_count": [
+          0,
+          1
+         ],
+         "status": [
+          "awaiting_approval",
+          "expired"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.051000Z",
+          "2026-10-16T12:00:00.054000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "grants": {
+      "~": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "set": {
+         "status": [
+          "issued",
+          "voided"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[7]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+         "event": "approval.expired",
+         "id": 7,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-16T12:00:00.056000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[8]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+         "event": "item.transitioned",
+         "id": 8,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-16T12:00:00.057000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "expired",
+          "awaiting_approval"
+         ],
+         "updated_at": [
+          "2026-10-16T12:00:00.054000Z",
+          "2026-10-16T12:00:00.057000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[9]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+         "event": "approval.requested",
+         "id": 9,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-16T12:00:00.058000Z"
+        }
+       }
+      ]
+     },
+     "grants": {
+      "+": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "row": {
+         "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+         "consumed_at": null,
+         "content_hash": "h",
+         "expires_at": "2026-10-30T12:00:00.058000Z",
+         "grant_id": "df7ee75fb2287d3da6d338c3b231c903",
+         "principal": "os_user",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "status": "issued",
+         "stepup_nonce_id": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"2b460aab033240a63e0b4d4a1c333754\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-16T12:00:00.059000Z",
+         "job_id": "2b460aab033240a63e0b4d4a1c333754",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired, decide again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"df7ee75fb2287d3da6d338c3b231c903\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-16T12:00:00.059000Z"
+        }
+       }
+      ]
+     }
+    },
+    {}
+   ],
+   "name": "tick",
+   "result": {
+    "answers.expire": 0,
+    "approvals.advance_delays": 0,
+    "approvals.expire": 1,
+    "approvals.post_held_cards": 0,
+    "claude_queue.sweep": 0,
+    "decide.sweep": 0
+   }
+  },
+  {
+   "commits": [],
+   "name": "advance 15 d",
+   "result": null
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[10]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"awaiting_approval\", \"to\": \"expired\"}",
+         "event": "item.transitioned",
+         "id": 10,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.061000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "expiry_count": [
+          1,
+          2
+         ],
+         "status": [
+          "awaiting_approval",
+          "expired"
+         ],
+         "updated_at": [
+          "2026-10-16T12:00:00.057000Z",
+          "2026-10-31T12:00:00.061000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "grants": {
+      "~": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "set": {
+         "status": [
+          "issued",
+          "voided"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[11]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"df7ee75fb2287d3da6d338c3b231c903\"}",
+         "event": "approval.expired",
+         "id": 11,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.063000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"fda1a38f7f00c019abd0b999e670abd5\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-31T12:00:00.064000Z",
+         "job_id": "fda1a38f7f00c019abd0b999e670abd5",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Expired twice: ecf approve 00eeeeee offers it again, or ecf item resolve 00eeeeee\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-31T12:00:00.064000Z"
+        }
+       }
+      ]
+     }
+    },
+    {}
+   ],
+   "name": "tick",
+   "result": {
+    "answers.expire": 0,
+    "approvals.advance_delays": 0,
+    "approvals.expire": 1,
+    "approvals.post_held_cards": 0,
+    "claude_queue.sweep": 0,
+    "decide.sweep": 0
+   }
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[12]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"from\": \"expired\", \"to\": \"awaiting_approval\"}",
+         "event": "item.transitioned",
+         "id": 12,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.066000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "expired",
+          "awaiting_approval"
+         ],
+         "updated_at": [
+          "2026-10-31T12:00:00.061000Z",
+          "2026-10-31T12:00:00.066000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[13]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\", \"actions\": [{\"name\": \"archive\", \"target\": null}]}",
+         "event": "approval.requested",
+         "id": 13,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.067000Z"
+        }
+       }
+      ]
+     },
+     "grants": {
+      "+": [
+       {
+        "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+        "row": {
+         "action_hash": "080ae61e020f074161c90235493133666b748abdd776094073494fd3a5472d40",
+         "consumed_at": null,
+         "content_hash": "h",
+         "expires_at": "2026-11-14T12:00:00.067000Z",
+         "grant_id": "aebcf718c240a30529b6e38d5324a9a3",
+         "principal": "os_user",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "status": "issued",
+         "stepup_nonce_id": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[14]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+         "event": "approval.reoffered",
+         "id": 14,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.068000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"4430acaae6662285dd151ed3c46d748a\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-31T12:00:00.069000Z",
+         "job_id": "4430acaae6662285dd151ed3c46d748a",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Offered again\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"approve\", \"label\": \"Approve: archive email\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": \"primary\"}, {\"action\": \"reject\", \"label\": \"Reject\", \"ref\": \"aebcf718c240a30529b6e38d5324a9a3\", \"style\": null}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-31T12:00:00.069000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[15]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"from\": \"awaiting_approval\", \"to\": \"approved\"}",
+         "event": "item.transitioned",
+         "id": 15,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.070000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "awaiting_approval",
+          "approved"
+         ],
+         "updated_at": [
+          "2026-10-31T12:00:00.066000Z",
+          "2026-10-31T12:00:00.070000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "grants": {
+      "~": [
+       {
+        "key": "[\"aebcf718c240a30529b6e38d5324a9a3\"]",
+        "set": {
+         "status": [
+          "issued",
+          "approved"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[16]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+         "event": "approval.approved",
+         "id": 16,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.072000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[17]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"approved\", \"to\": \"executing\"}",
+         "event": "item.transitioned",
+         "id": 17,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-31T12:00:00.073000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "approved",
+          "executing"
+         ],
+         "updated_at": [
+          "2026-10-31T12:00:00.070000Z",
+          "2026-10-31T12:00:00.073000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"d098fae46ddbe4513f1972ecc5485401\"]",
+        "row": {
+         "address_id": "ap",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-31T12:00:00.074000Z",
+         "job_id": "d098fae46ddbe4513f1972ecc5485401",
+         "last_error": null,
+         "max_attempts": 3,
+         "payload": "{\"stable_id\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"grant_id\": \"aebcf718c240a30529b6e38d5324a9a3\"}",
+         "queue": "actions",
+         "state": "queued",
+         "timeout_s": 120,
+         "visible_at": "2026-10-31T12:00:00.074000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "check_state": {
+      "+": [
+       {
+        "key": "[\"ap\"]",
+        "row": {
+         "address_id": "ap",
+         "backlog": 0,
+         "catch_up_since": null,
+         "cooldown_until": null,
+         "deferred": 0,
+         "failing_since": null,
+         "last_error": null,
+         "last_error_at": null,
+         "last_finished_at": null,
+         "last_result": "{}",
+         "last_started_at": null,
+         "last_status": null,
+         "login_failures": 0,
+         "next_due_at": "2026-10-31T12:00:00.075000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"878f07bbc65885989409f925b1f9bcbd\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-31T12:00:00.076000Z",
+         "job_id": "878f07bbc65885989409f925b1f9bcbd",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Approved: archive email (running)\", \"fields\": [[\"Action\", \"archive email\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-31T12:00:00.076000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "approvals.approve (reoffer)",
+   "result": {
+    "status": "executing"
+   }
+  }
+ ],
+ "mail_start": {},
+ "scenario": "expire_reoffer",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "test",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"proposed\"}",
+    "event": "item.transitioned",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   }
+  },
+  "items": {
+   "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+    "claude_since": null,
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": null,
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": null,
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "news@vendor-a.example",
+    "sender_name": null,
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale": 0,
+    "status": "proposed",
+    "subject": "Test message 0",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.049000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

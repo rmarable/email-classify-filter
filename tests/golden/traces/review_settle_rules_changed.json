@@ -1,0 +1,1434 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "attempts": 0,
+        "bound_hash": "6bb2ea57608b3933e821db43e81c632ac42304843bfb12b0d5e3db128ff594b0",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:01.055000Z",
+        "expires_at": "2026-10-01T12:10:01.055000Z",
+        "nonce_id": "e1c92093087e5dceed0263070ee98b19",
+        "person": "operator",
+        "purpose": "config_apply",
+        "target": "{\"document\": {\"templates\": {\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": false, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}}}",
+        "verified_at": null
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "attempts": 0,
+        "bound_hash": "6bb2ea57608b3933e821db43e81c632ac42304843bfb12b0d5e3db128ff594b0",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:01.055000Z",
+        "expires_at": "2026-10-01T12:10:01.055000Z",
+        "nonce_id": "e1c92093087e5dceed0263070ee98b19",
+        "person": "operator",
+        "purpose": "config_apply",
+        "target": "{\"document\": {\"templates\": {\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": false, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}}}",
+        "verified_at": null
+       }
+      }
+     ]
+    },
+    "rate": {
+     "+": [
+      {
+       "key": "[\"stepup.verify\"]",
+       "row": {
+        "count": 1,
+        "key": "stepup.verify",
+        "window_start": "2026-10-01T12:00:01.056000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"verified\"}",
+        "event": "stepup.verified",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "attempts": 1,
+        "bound_hash": "6bb2ea57608b3933e821db43e81c632ac42304843bfb12b0d5e3db128ff594b0",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:01.055000Z",
+        "expires_at": "2026-10-01T12:10:01.055000Z",
+        "nonce_id": "e1c92093087e5dceed0263070ee98b19",
+        "person": "operator",
+        "purpose": "config_apply",
+        "target": "{\"document\": {\"templates\": {\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": false, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}}}",
+        "verified_at": "2026-10-01T12:00:01.057000Z"
+       }
+      }
+     ]
+    },
+    "rate": {
+     "+": [
+      {
+       "key": "[\"stepup.verify\"]",
+       "row": {
+        "count": 1,
+        "key": "stepup.verify",
+        "window_start": "2026-10-01T12:00:01.056000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 2,
+   "name": "config.apply",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 2,
+   "name": "config.apply",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"sha256\": \"f3b2bd855a0283a3e2b57cf367754ca1ddfb3f679127a159a483df21f765e038\", \"changes\": [{\"section\": \"templates\", \"change\": \"~ack\"}]}",
+        "event": "config.applied",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.059000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "settings": {
+     "~": [
+      {
+       "key": "[\"config.templates\"]",
+       "set": {
+        "updated_at": [
+         "2026-10-01T12:00:01.053000Z",
+         "2026-10-01T12:00:01.059000Z"
+        ],
+        "updated_by": [
+         "test",
+         "os_user"
+        ],
+        "value": [
+         "{\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": true, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}",
+         "{\"templates\":[{\"body\":\"Hello {sender_name},\\n\\nThanks, we got it.\\n\",\"enabled\":false,\"id\":\"ack\",\"subject\":\"Re: {subject}\"}],\"version\":1}"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 2,
+   "name": "config.apply",
+   "notify": [
+    [
+     "[ecf-alert] Security Notice",
+     "Security-relevant config changed: templates: ~ack"
+    ]
+   ],
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"sha256\": \"f3b2bd855a0283a3e2b57cf367754ca1ddfb3f679127a159a483df21f765e038\", \"changes\": [{\"section\": \"templates\", \"change\": \"~ack\"}]}",
+        "event": "config.applied",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.059000Z"
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "U0ME1",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.060000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"notice:0509a34a515a393d:U0ME1\", \"channel\": \"U0ME1\", \"card\": {\"title\": \"[ecf-alert] Security Notice\", \"fields\": [], \"text\": \"Security-relevant config changed: templates: ~ack\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": null, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "settings": {
+     "~": [
+      {
+       "key": "[\"config.templates\"]",
+       "set": {
+        "updated_at": [
+         "2026-10-01T12:00:01.053000Z",
+         "2026-10-01T12:00:01.059000Z"
+        ],
+        "updated_by": [
+         "test",
+         "os_user"
+        ],
+        "value": [
+         "{\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": true, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}",
+         "{\"templates\":[{\"body\":\"Hello {sender_name},\\n\\nThanks, we got it.\\n\",\"enabled\":false,\"id\":\"ack\",\"subject\":\"Re: {subject}\"}],\"version\":1}"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 2,
+   "name": "config.apply",
+   "notify": [
+    [
+     "[ecf-alert] Security Notice",
+     "Security-relevant config changed: templates: ~ack"
+    ]
+   ],
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {
+       "claims": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "state": [
+            "held",
+            "released"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"sha256\": \"f3b2bd855a0283a3e2b57cf367754ca1ddfb3f679127a159a483df21f765e038\", \"changes\": [{\"section\": \"templates\", \"change\": \"~ack\"}]}",
+        "event": "config.applied",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.059000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"dms\": 1, \"summary\": false, \"email\": false}",
+        "event": "security.notice",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:01.061000Z"
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "U0ME1",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.060000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"notice:0509a34a515a393d:U0ME1\", \"channel\": \"U0ME1\", \"card\": {\"title\": \"[ecf-alert] Security Notice\", \"fields\": [], \"text\": \"Security-relevant config changed: templates: ~ack\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": null, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "settings": {
+     "~": [
+      {
+       "key": "[\"config.templates\"]",
+       "set": {
+        "updated_at": [
+         "2026-10-01T12:00:01.053000Z",
+         "2026-10-01T12:00:01.059000Z"
+        ],
+        "updated_by": [
+         "test",
+         "os_user"
+        ],
+        "value": [
+         "{\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": true, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}",
+         "{\"templates\":[{\"body\":\"Hello {sender_name},\\n\\nThanks, we got it.\\n\",\"enabled\":false,\"id\":\"ack\",\"subject\":\"Re: {subject}\"}],\"version\":1}"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 3,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 3,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "awaiting_claude"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 3,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"need\": \"act\", \"agent\": \"ecf-actor\", \"outcome\": \"awaiting_claude\"}",
+        "event": "claude.submitted",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.064000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "awaiting_claude"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "`ecf config apply` disables the template a held reply names before settle: the claim ends, nothing applied; the item waits for the next round.",
+ "events": [
+  {
+   "commits": [],
+   "name": "config.apply (step-up asked)",
+   "raises": {
+    "message": "this needs step-up",
+    "type": "StepupRequiredError"
+   }
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[5]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+         "event": "stepup.requested",
+         "id": 5,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:01.055000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "+": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "row": {
+         "attempts": 0,
+         "bound_hash": "6bb2ea57608b3933e821db43e81c632ac42304843bfb12b0d5e3db128ff594b0",
+         "code": "AAAA",
+         "consumed_at": null,
+         "created_at": "2026-10-01T12:00:01.055000Z",
+         "expires_at": "2026-10-01T12:10:01.055000Z",
+         "nonce_id": "e1c92093087e5dceed0263070ee98b19",
+         "person": "operator",
+         "purpose": "config_apply",
+         "target": "{\"document\": {\"templates\": {\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": false, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}}}",
+         "verified_at": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "rate": {
+      "+": [
+       {
+        "key": "[\"stepup.verify\"]",
+        "row": {
+         "count": 1,
+         "key": "stepup.verify",
+         "window_start": "2026-10-01T12:00:01.056000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[6]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"verified\"}",
+         "event": "stepup.verified",
+         "id": 6,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:01.057000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "~": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "set": {
+         "attempts": [
+          0,
+          1
+         ],
+         "verified_at": [
+          null,
+          "2026-10-01T12:00:01.057000Z"
+         ]
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "stepup",
+   "result": "e1c92093087e5dceed0263070ee98b19"
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[7]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"e1c92093087e5dceed0263070ee98b19\", \"purpose\": \"config_apply\", \"result\": \"ok\"}",
+         "event": "stepup.consumed",
+         "id": 7,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:01.058000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "~": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "set": {
+         "consumed_at": [
+          null,
+          "2026-10-01T12:00:01.058000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[8]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"sha256\": \"f3b2bd855a0283a3e2b57cf367754ca1ddfb3f679127a159a483df21f765e038\", \"changes\": [{\"section\": \"templates\", \"change\": \"~ack\"}]}",
+         "event": "config.applied",
+         "id": 8,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:01.059000Z"
+        }
+       }
+      ]
+     },
+     "settings": {
+      "~": [
+       {
+        "key": "[\"config.templates\"]",
+        "set": {
+         "updated_at": [
+          "2026-10-01T12:00:01.053000Z",
+          "2026-10-01T12:00:01.059000Z"
+         ],
+         "updated_by": [
+          "test",
+          "os_user"
+         ],
+         "value": [
+          "{\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": true, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}",
+          "{\"templates\":[{\"body\":\"Hello {sender_name},\\n\\nThanks, we got it.\\n\",\"enabled\":false,\"id\":\"ack\",\"subject\":\"Re: {subject}\"}],\"version\":1}"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "row": {
+         "address_id": "U0ME1",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:01.060000Z",
+         "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"notice:0509a34a515a393d:U0ME1\", \"channel\": \"U0ME1\", \"card\": {\"title\": \"[ecf-alert] Security Notice\", \"fields\": [], \"text\": \"Security-relevant config changed: templates: ~ack\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": null, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:01.060000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[9]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"dms\": 1, \"summary\": false, \"email\": false}",
+         "event": "security.notice",
+         "id": 9,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:01.061000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "config.apply",
+   "notify": [
+    [
+     "[ecf-alert] Security Notice",
+     "Security-relevant config changed: templates: ~ack"
+    ]
+   ],
+   "result": {
+    "applied": true,
+    "changed": true,
+    "changes": [
+     {
+      "change": "~ack",
+      "section": "templates"
+     }
+    ],
+    "notes": [],
+    "schema": null,
+    "sha256": "f3b2bd855a0283a3e2b57cf367754ca1ddfb3f679127a159a483df21f765e038",
+    "type": "Result"
+   }
+  },
+  {
+   "commits": [
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "state": [
+          "held",
+          "done"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "outcome": [
+          null,
+          "awaiting_claude"
+         ],
+         "reported": [
+          1,
+          0
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[10]",
+        "row": {
+         "actor": "mcp:session-",
+         "address_id": "ap",
+         "data": "{\"need\": \"act\", \"agent\": \"ecf-actor\", \"outcome\": \"awaiting_claude\"}",
+         "event": "claude.submitted",
+         "id": 10,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.064000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "claude_review.settle",
+   "result": {
+    "accepted": true,
+    "errors": []
+   }
+  }
+ ],
+ "mail_start": {},
+ "scenario": "review_settle_rules_changed",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 1,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": "smtp.acme.example",
+    "smtp_port": 465,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"rule\": \"requires_reply\", \"source\": \"rule\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+    "event": "policy.decided",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   },
+   "[4]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+    "event": "item.transitioned",
+    "id": 4,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "claims": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "agent": "ecf-actor",
+    "batch_id": "claude:0509a34a515a:ecf-actor",
+    "claimed_at": "2026-10-01T12:00:01.052000Z",
+    "expires_at": "2026-10-01T12:05:01.052000Z",
+    "fence": 1,
+    "invalid": 0,
+    "need": "act",
+    "outcome": null,
+    "reported": 1,
+    "session_id": "session-one",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "state": "held",
+    "token_hash": "8b95afbb00d4e572f02c8042e7ba3428b7e785b085f274dff1cc54e494bb257c"
+   }
+  },
+  "excerpts": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "actor_text": "Please send the W-9 again. Longer text.",
+    "classifier_chars": null,
+    "classifier_text": "short text",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  "items": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"customer_request\", \"priority\": \"low\", \"requires_action\": true, \"requires_reply\": true, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\", \"bank_detail_change\": false, \"regulator_claim\": false, \"phishing\": false, \"claims_internal\": false, \"private_individual\": false}",
+    "claude_since": "2026-10-01T12:00:00.050000Z",
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": "rule",
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true, \"attachments\": [{\"name\": \"w9.pdf\", \"type\": \"application/pdf\", \"size\": 1200, \"inline\": false}, {\"name\": null, \"type\": \"image/png\", \"size\": 90, \"inline\": true}]}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{\"internaldate\": \"2026-10-02T09:00Z\"}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "ann@cust.example",
+    "sender_name": "Ann",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "stale": 0,
+    "status": "awaiting_claude",
+    "subject": "W-9 please",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"config.forward_allow_list\"]": {
+    "key": "config.forward_allow_list",
+    "updated_at": "2026-10-01T12:00:01.053000Z",
+    "updated_by": "test",
+    "value": "[{\"id\": \"ap_lead\", \"address\": \"lead@acme.example\"}]"
+   },
+   "[\"config.templates\"]": {
+    "key": "config.templates",
+    "updated_at": "2026-10-01T12:00:01.053000Z",
+    "updated_by": "test",
+    "value": "{\"version\": 1, \"templates\": [{\"id\": \"ack\", \"enabled\": true, \"subject\": \"Re: {subject}\", \"body\": \"Hello {sender_name},\\n\\nThanks, we got it.\\n\"}]}"
+   },
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

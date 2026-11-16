@@ -1,0 +1,2223 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "digests.queue_undo",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.071000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[9]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+           "event": "item.transitioned",
+           "id": 9,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.073000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "executed",
+            "undoing"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.066000Z",
+            "2026-10-01T12:03:00.073000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[10]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undoing\", \"to\": \"undone\"}",
+           "event": "item.transitioned",
+           "id": 10,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.074000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undoing",
+            "undone"
+           ],
+           "updated_at": [
+            "2026-10-01T12:03:00.073000Z",
+            "2026-10-01T12:03:00.074000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "proposal": [
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"done\"}"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "jobs": {
+        "+": [
+         {
+          "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+          "row": {
+           "address_id": "CAP",
+           "attempts": 0,
+           "claim_expires": null,
+           "claimed_by": null,
+           "created_at": "2026-10-01T12:03:00.076000Z",
+           "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+           "last_error": null,
+           "max_attempts": 5,
+           "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Undone for 00eeeeee (Test message 0): archive back to INBOX, label marketing.\"}",
+           "queue": "slack_out",
+           "state": "queued",
+           "timeout_s": 30,
+           "visible_at": "2026-10-01T12:03:00.076000Z"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.071000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "mail": {
+      "after": {
+       "INBOX": {
+        "3": {
+         "flags": [],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      },
+      "before": {
+       "Archive": {
+        "2": {
+         "flags": [
+          "$ecf_t_marketing"
+         ],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      }
+     },
+     "result": {
+      "close_gone": 0,
+      "digests._undos_in_check": 1,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{}",
+        "event": "action.undo_requested",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.066000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.061000Z",
+         "2026-10-01T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "digests.queue_undo",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.072000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[9]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+           "event": "item.transitioned",
+           "id": 9,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.074000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "executed",
+            "undoing"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.066000Z",
+            "2026-10-01T12:03:00.074000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[10]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undoing\", \"to\": \"undone\"}",
+           "event": "item.transitioned",
+           "id": 10,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.075000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undoing",
+            "undone"
+           ],
+           "updated_at": [
+            "2026-10-01T12:03:00.074000Z",
+            "2026-10-01T12:03:00.075000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "proposal": [
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"done\"}"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "jobs": {
+        "+": [
+         {
+          "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+          "row": {
+           "address_id": "CAP",
+           "attempts": 0,
+           "claim_expires": null,
+           "claimed_by": null,
+           "created_at": "2026-10-01T12:03:00.077000Z",
+           "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+           "last_error": null,
+           "max_attempts": 5,
+           "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Undone for 00eeeeee (Test message 0): archive back to INBOX, label marketing.\"}",
+           "queue": "slack_out",
+           "state": "queued",
+           "timeout_s": 30,
+           "visible_at": "2026-10-01T12:03:00.077000Z"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.072000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "mail": {
+      "after": {
+       "INBOX": {
+        "3": {
+         "flags": [],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      },
+      "before": {
+       "Archive": {
+        "2": {
+         "flags": [
+          "$ecf_t_marketing"
+         ],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      }
+     },
+     "result": {
+      "close_gone": 0,
+      "digests._undos_in_check": 1,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{}",
+        "event": "action.undo_requested",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.066000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "~": [
+      {
+       "key": "[\"ap\"]",
+       "set": {
+        "next_due_at": [
+         "2026-10-01T12:00:00.056000Z",
+         "2026-10-01T12:00:00.067000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.061000Z",
+         "2026-10-01T12:00:00.066000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.073000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[9]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+           "event": "item.transitioned",
+           "id": 9,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.075000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "executed",
+            "undoing"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.066000Z",
+            "2026-10-01T12:03:00.075000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[10]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undoing\", \"to\": \"undone\"}",
+           "event": "item.transitioned",
+           "id": 10,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.076000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undoing",
+            "undone"
+           ],
+           "updated_at": [
+            "2026-10-01T12:03:00.075000Z",
+            "2026-10-01T12:03:00.076000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "proposal": [
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+            "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"done\"}"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "jobs": {
+        "+": [
+         {
+          "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+          "row": {
+           "address_id": "CAP",
+           "attempts": 0,
+           "claim_expires": null,
+           "claimed_by": null,
+           "created_at": "2026-10-01T12:03:00.078000Z",
+           "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+           "last_error": null,
+           "max_attempts": 5,
+           "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Undone for 00eeeeee (Test message 0): archive back to INBOX, label marketing.\"}",
+           "queue": "slack_out",
+           "state": "queued",
+           "timeout_s": 30,
+           "visible_at": "2026-10-01T12:03:00.078000Z"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.073000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "mail": {
+      "after": {
+       "INBOX": {
+        "3": {
+         "flags": [],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      },
+      "before": {
+       "Archive": {
+        "2": {
+         "flags": [
+          "$ecf_t_marketing"
+         ],
+         "mid": "<contract-0@synthetic.acme.example>",
+         "sha": "310ca416e30a"
+        }
+       }
+      }
+     },
+     "result": {
+      "close_gone": 0,
+      "digests._undos_in_check": 1,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:03:00.068000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "leases": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "expires_at": "2026-10-01T12:03:00.068000Z",
+        "fencing_token": 1,
+        "holder": "golden-check"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.074000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[10]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undoing\", \"to\": \"resolved_by_mailbox\"}",
+           "event": "item.transitioned",
+           "id": 10,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.075000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undoing",
+            "resolved_by_mailbox"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.069000Z",
+            "2026-10-01T12:03:00.075000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.074000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": {
+      "close_gone": 1,
+      "digests._undos_in_check": 0,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:03:00.068000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+        "event": "item.transitioned",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.069000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "executed",
+         "undoing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.066000Z",
+         "2026-10-01T12:00:00.069000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "leases": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "expires_at": "2026-10-01T12:03:00.068000Z",
+        "fencing_token": 1,
+        "holder": "golden-check"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.075000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[11]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undo_failed\", \"to\": \"resolved_by_mailbox\"}",
+           "event": "item.transitioned",
+           "id": 11,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.076000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undo_failed",
+            "resolved_by_mailbox"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.070000Z",
+            "2026-10-01T12:03:00.076000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.075000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": {
+      "close_gone": 1,
+      "digests._undos_in_check": 0,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:03:00.068000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"undoing\", \"to\": \"undo_failed\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+        "event": "item.transitioned",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.069000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "executed",
+         "undo_failed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.066000Z",
+         "2026-10-01T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "leases": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "expires_at": "2026-10-01T12:03:00.068000Z",
+        "fencing_token": 1,
+        "holder": "golden-check"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.076000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[11]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undo_failed\", \"to\": \"resolved_by_mailbox\"}",
+           "event": "item.transitioned",
+           "id": 11,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.077000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undo_failed",
+            "resolved_by_mailbox"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.070000Z",
+            "2026-10-01T12:03:00.077000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.076000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": {
+      "close_gone": 1,
+      "digests._undos_in_check": 0,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:03:00.068000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"undoing\", \"to\": \"undo_failed\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+        "event": "item.transitioned",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.069000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"failed\"}"
+        ],
+        "status": [
+         "executed",
+         "undo_failed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.066000Z",
+         "2026-10-01T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "leases": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "expires_at": "2026-10-01T12:03:00.068000Z",
+        "fencing_token": 1,
+        "holder": "golden-check"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.077000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[11]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undo_failed\", \"to\": \"resolved_by_mailbox\"}",
+           "event": "item.transitioned",
+           "id": 11,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.078000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undo_failed",
+            "resolved_by_mailbox"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.070000Z",
+            "2026-10-01T12:03:00.078000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.077000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": {
+      "close_gone": 1,
+      "digests._undos_in_check": 0,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:03:00.068000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"undoing\", \"to\": \"undo_failed\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+        "event": "item.transitioned",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.069000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"failed\"}"
+        ],
+        "status": [
+         "executed",
+         "undo_failed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.066000Z",
+         "2026-10-01T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.072000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Couldn't undo 00eeeeee (Test message 0): the check lost its lease\"}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.072000Z"
+       }
+      }
+     ]
+    },
+    "leases": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "expires_at": "2026-10-01T12:03:00.068000Z",
+        "fencing_token": 1,
+        "holder": "golden-check"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 6,
+   "event": 2,
+   "name": "check",
+   "recovery": {
+    "check": {
+     "commits": [
+      {
+       "leases": {
+        "+": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.078000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[11]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"undo_failed\", \"to\": \"resolved_by_mailbox\"}",
+           "event": "item.transitioned",
+           "id": 11,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+           "ts": "2026-10-01T12:03:00.079000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+          "set": {
+           "status": [
+            "undo_failed",
+            "resolved_by_mailbox"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:00.070000Z",
+            "2026-10-01T12:03:00.079000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {},
+      {
+       "leases": {
+        "-": [
+         {
+          "key": "[\"ap\"]",
+          "row": {
+           "address_id": "ap",
+           "expires_at": "2026-10-01T12:06:00.078000Z",
+           "fencing_token": 1,
+           "holder": "golden-check"
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "result": {
+      "close_gone": 1,
+      "digests._undos_in_check": 0,
+      "draft_actions.run_in_check": 0,
+      "draft_data.track_in_check": 0,
+      "mailbox_actions.run_in_check": 0,
+      "send.settle_in_check": {
+       "copies": 0,
+       "failed": 0,
+       "sent": 0,
+       "type": "Settled"
+      }
+     }
+    },
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"undoing\", \"to\": \"undo_failed\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.070000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+        "event": "item.transitioned",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.069000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"failed\"}"
+        ],
+        "status": [
+         "executed",
+         "undo_failed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.066000Z",
+         "2026-10-01T12:00:00.070000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.072000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Couldn't undo 00eeeeee (Test message 0): the check lost its lease\"}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.072000Z"
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "The lease is lost before the queued Undo runs (executed->undoing->undo_failed, no IMAP).",
+ "events": [
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[8]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{}",
+         "event": "action.undo_requested",
+         "id": 8,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.066000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "proposal": [
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}}",
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.061000Z",
+          "2026-10-01T12:00:00.066000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "check_state": {
+      "~": [
+       {
+        "key": "[\"ap\"]",
+        "set": {
+         "next_due_at": [
+          "2026-10-01T12:00:00.056000Z",
+          "2026-10-01T12:00:00.067000Z"
+         ]
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "digests.queue_undo",
+   "result": "plan"
+  },
+  {
+   "commits": [],
+   "name": "lease lost",
+   "result": null
+  },
+  {
+   "commits": [
+    {
+     "leases": {
+      "+": [
+       {
+        "key": "[\"ap\"]",
+        "row": {
+         "address_id": "ap",
+         "expires_at": "2026-10-01T12:03:00.068000Z",
+         "fencing_token": 1,
+         "holder": "golden-check"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[9]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"executed\", \"to\": \"undoing\"}",
+         "event": "item.transitioned",
+         "id": 9,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.069000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "executed",
+          "undoing"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.066000Z",
+          "2026-10-01T12:00:00.069000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[10]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"undoing\", \"to\": \"undo_failed\"}",
+         "event": "item.transitioned",
+         "id": 10,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.070000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "undoing",
+          "undo_failed"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.069000Z",
+          "2026-10-01T12:00:00.070000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "proposal": [
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"queued\"}",
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}, \"undo\": \"failed\"}"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:00.072000Z",
+         "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"ephemeral\", \"channel\": \"CAP\", \"user\": \"U0ME1\", \"text\": \"Couldn't undo 00eeeeee (Test message 0): the check lost its lease\"}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:00.072000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "leases": {
+      "-": [
+       {
+        "key": "[\"ap\"]",
+        "row": {
+         "address_id": "ap",
+         "expires_at": "2026-10-01T12:03:00.068000Z",
+         "fencing_token": 1,
+         "holder": "golden-check"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "check",
+   "result": {
+    "close_gone": 0,
+    "digests._undos_in_check": 1,
+    "draft_actions.run_in_check": 0,
+    "draft_data.track_in_check": 0,
+    "mailbox_actions.run_in_check": 0,
+    "send.settle_in_check": {
+     "copies": 0,
+     "failed": 0,
+     "sent": 0,
+     "type": "Settled"
+    }
+   }
+  }
+ ],
+ "mail_start": {
+  "Archive": {
+   "2": {
+    "flags": [
+     "$ecf_t_marketing"
+    ],
+    "mid": "<contract-0@synthetic.acme.example>",
+    "sha": "310ca416e30a"
+   }
+  }
+ },
+ "scenario": "undo_lease_lost",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.047000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   },
+   "[3]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"rule\": \"marketing\", \"source\": \"rule\", \"actions\": [{\"name\": \"label\", \"target\": \"marketing\", \"mode\": \"auto\"}, {\"name\": \"archive\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+    "event": "policy.decided",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.051000Z"
+   },
+   "[4]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"proposed\"}",
+    "event": "item.transitioned",
+    "id": 4,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.052000Z"
+   },
+   "[5]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+    "event": "item.transitioned",
+    "id": 5,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.054000Z"
+   },
+   "[6]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"executing\", \"to\": \"executed\"}",
+    "event": "item.transitioned",
+    "id": 6,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.061000Z"
+   },
+   "[7]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"grant_id\": \"0509a34a515a393da710be4617dd1d16\", \"done\": [\"label marketing\", \"archive to Archive\"]}",
+    "event": "action.executed",
+    "id": 7,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.062000Z"
+   }
+  },
+  "check_state": {
+   "[\"ap\"]": {
+    "address_id": "ap",
+    "backlog": 0,
+    "catch_up_since": null,
+    "cooldown_until": null,
+    "deferred": 0,
+    "failing_since": null,
+    "last_error": null,
+    "last_error_at": null,
+    "last_finished_at": null,
+    "last_result": "{}",
+    "last_started_at": null,
+    "last_status": null,
+    "login_failures": 0,
+    "next_due_at": "2026-10-01T12:00:00.056000Z"
+   }
+  },
+  "cursors": {
+   "[\"ap\"]": {
+    "address_id": "ap",
+    "deferred_since": null,
+    "deferred_uids": "[]",
+    "last_uid": 1,
+    "recovering_until_uid": 0,
+    "uidvalidity": 1,
+    "version": 1
+   }
+  },
+  "grants": {
+   "[\"0509a34a515a393da710be4617dd1d16\"]": {
+    "action_hash": "ed2194e501cdbc6a69b13db382560f7ec1cf7de0c5c49407171d4d0ccbbfecfa",
+    "consumed_at": "2026-10-01T12:00:00.059000Z",
+    "content_hash": "d70ce7a579ee97e3380ac4e25e92f86961f566273e9127d22113faeab1c2338c",
+    "expires_at": "2026-10-01T13:00:00.053000Z",
+    "grant_id": "0509a34a515a393da710be4617dd1d16",
+    "principal": "service",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "status": "consumed",
+    "stepup_nonce_id": null
+   }
+  },
+  "items": {
+   "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+    "claude_since": null,
+    "content_hash": "d70ce7a579ee97e3380ac4e25e92f86961f566273e9127d22113faeab1c2338c",
+    "created_at": "2026-10-01T12:00:00.047000Z",
+    "decision_source": "rule",
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{\"uid\": 1, \"uidvalidity\": 1}",
+    "message_id": "<contract-0@synthetic.acme.example>",
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": "{\"actions\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"name\": \"archive\", \"target\": null}], \"done\": [{\"name\": \"label\", \"target\": \"marketing\"}, {\"folder\": \"Archive\", \"name\": \"archive\"}], \"draft_withheld\": null, \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"marketing\"}, {\"mode\": \"auto\", \"name\": \"archive\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"marketing\", \"to_actor\": false}}",
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "news@vendor-a.example",
+    "sender_name": null,
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale": 0,
+    "status": "executed",
+    "subject": "Test message 0",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.061000Z"
+   }
+  },
+  "jobs": {
+   "[\"e1c92093087e5dceed0263070ee98b19\"]": {
+    "address_id": "ap",
+    "attempts": 1,
+    "claim_expires": null,
+    "claimed_by": "actions",
+    "created_at": "2026-10-01T12:00:00.055000Z",
+    "job_id": "e1c92093087e5dceed0263070ee98b19",
+    "last_error": null,
+    "max_attempts": 3,
+    "payload": "{\"stable_id\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"grant_id\": \"0509a34a515a393da710be4617dd1d16\"}",
+    "queue": "actions",
+    "state": "done",
+    "timeout_s": 120,
+    "visible_at": "2026-10-01T12:00:00.055000Z"
+   }
+  },
+  "probe": {
+   "[\"ap\"]": {
+    "address_id": "ap",
+    "capabilities": "{\"append_limit\": null, \"condstore\": true, \"gmail\": false, \"gmail_inbox\": null, \"move\": true, \"uidplus\": true}",
+    "host": "imap.acme.example",
+    "max_message_bytes": null,
+    "max_size_source": null,
+    "permanent_keywords": 1,
+    "probed_at": "2026-10-01T12:00:00.046000Z",
+    "saves_sent": null,
+    "smtp": null,
+    "special_use": "{\"\\\\Drafts\": \"Drafts\", \"\\\\Sent\": \"Sent\"}",
+    "warnings": "[]"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

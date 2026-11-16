@@ -1,0 +1,1728 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "released"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "proposed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 6,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "proposed"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.058000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 7,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.060000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 8,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.061000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"6170000000000000000000000000000000000000000000000000000000000000\", \"grant_id\": \"e1c92093087e5dceed0263070ee98b19\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-01T12:00:01.061000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 9,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "backlog": 0,
+        "catch_up_since": null,
+        "cooldown_until": null,
+        "deferred": 0,
+        "failing_since": null,
+        "last_error": null,
+        "last_error_at": null,
+        "last_finished_at": null,
+        "last_result": "{}",
+        "last_started_at": null,
+        "last_status": null,
+        "login_failures": 0,
+        "next_due_at": "2026-10-01T12:00:01.062000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.061000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"6170000000000000000000000000000000000000000000000000000000000000\", \"grant_id\": \"e1c92093087e5dceed0263070ee98b19\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-01T12:00:01.061000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 10,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.060000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "backlog": 0,
+        "catch_up_since": null,
+        "cooldown_until": null,
+        "deferred": 0,
+        "failing_since": null,
+        "last_error": null,
+        "last_error_at": null,
+        "last_finished_at": null,
+        "last_result": "{}",
+        "last_started_at": null,
+        "last_status": null,
+        "login_failures": 0,
+        "next_due_at": "2026-10-01T12:00:01.062000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "executing"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.061000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"6170000000000000000000000000000000000000000000000000000000000000\", \"grant_id\": \"e1c92093087e5dceed0263070ee98b19\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-01T12:00:01.061000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 11,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.057000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+        "event": "item.transitioned",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.060000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"need\": \"act\", \"agent\": \"ecf-actor\", \"outcome\": \"executing\"}",
+        "event": "claude.submitted",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.064000Z"
+       }
+      }
+     ]
+    },
+    "check_state": {
+     "+": [
+      {
+       "key": "[\"ap\"]",
+       "row": {
+        "address_id": "ap",
+        "backlog": 0,
+        "catch_up_since": null,
+        "cooldown_until": null,
+        "deferred": 0,
+        "failing_since": null,
+        "last_error": null,
+        "last_error_at": null,
+        "last_finished_at": null,
+        "last_result": "{}",
+        "last_started_at": null,
+        "last_status": null,
+        "login_failures": 0,
+        "next_due_at": "2026-10-01T12:00:01.062000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "executing"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "grants": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+        "consumed_at": null,
+        "content_hash": "h",
+        "expires_at": "2026-10-01T13:00:01.059000Z",
+        "grant_id": "e1c92093087e5dceed0263070ee98b19",
+        "principal": "service",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "status": "approved",
+        "stepup_nonce_id": null
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "decision_source": [
+         "rule",
+         "actor"
+        ],
+        "proposal": [
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+         "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+        ],
+        "status": [
+         "awaiting_claude",
+         "executing"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.050000Z",
+         "2026-10-01T12:00:01.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "ap",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:01.061000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 3,
+        "payload": "{\"stable_id\": \"6170000000000000000000000000000000000000000000000000000000000000\", \"grant_id\": \"e1c92093087e5dceed0263070ee98b19\"}",
+        "queue": "actions",
+        "state": "queued",
+        "timeout_s": 120,
+        "visible_at": "2026-10-01T12:00:01.061000Z"
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "The session ends between settle's claim read and its claim update: the update is unfenced, so the released claim is marked done and the proposal applied.",
+ "events": [
+  {
+   "commits": [
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "state": [
+          "held",
+          "released"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "state": [
+          "released",
+          "done"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {},
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[5]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"rule\": \"requires_reply\", \"source\": \"actor\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+         "event": "policy.decided",
+         "id": 5,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.057000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "decision_source": [
+          "rule",
+          "actor"
+         ],
+         "proposal": [
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+          "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": {\"action\": \"flag\", \"agent\": \"ecf-actor\", \"model\": \"claude-opus-5-5\", \"reason\": \"x\", \"target\": null}, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": false}}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.050000Z",
+          "2026-10-01T12:00:01.057000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[6]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"awaiting_claude\", \"to\": \"proposed\"}",
+         "event": "item.transitioned",
+         "id": 6,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.058000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "status": [
+          "awaiting_claude",
+          "proposed"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:01.057000Z",
+          "2026-10-01T12:00:01.058000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "grants": {
+      "+": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "row": {
+         "action_hash": "a60202cd199fe42b21b17f4d7695a3da307add1e27d5a371abb8fb7f1ea23f02",
+         "consumed_at": null,
+         "content_hash": "h",
+         "expires_at": "2026-10-01T13:00:01.059000Z",
+         "grant_id": "e1c92093087e5dceed0263070ee98b19",
+         "principal": "service",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "status": "approved",
+         "stepup_nonce_id": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[7]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"proposed\", \"to\": \"executing\"}",
+         "event": "item.transitioned",
+         "id": 7,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.060000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "status": [
+          "proposed",
+          "executing"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:01.058000Z",
+          "2026-10-01T12:00:01.060000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "row": {
+         "address_id": "ap",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:01.061000Z",
+         "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+         "last_error": null,
+         "max_attempts": 3,
+         "payload": "{\"stable_id\": \"6170000000000000000000000000000000000000000000000000000000000000\", \"grant_id\": \"e1c92093087e5dceed0263070ee98b19\"}",
+         "queue": "actions",
+         "state": "queued",
+         "timeout_s": 120,
+         "visible_at": "2026-10-01T12:00:01.061000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "check_state": {
+      "+": [
+       {
+        "key": "[\"ap\"]",
+        "row": {
+         "address_id": "ap",
+         "backlog": 0,
+         "catch_up_since": null,
+         "cooldown_until": null,
+         "deferred": 0,
+         "failing_since": null,
+         "last_error": null,
+         "last_error_at": null,
+         "last_finished_at": null,
+         "last_result": "{}",
+         "last_started_at": null,
+         "last_status": null,
+         "login_failures": 0,
+         "next_due_at": "2026-10-01T12:00:01.062000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "outcome": [
+          null,
+          "executing"
+         ],
+         "reported": [
+          1,
+          0
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[8]",
+        "row": {
+         "actor": "mcp:session-",
+         "address_id": "ap",
+         "data": "{\"need\": \"act\", \"agent\": \"ecf-actor\", \"outcome\": \"executing\"}",
+         "event": "claude.submitted",
+         "id": 8,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.064000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "claude_review.settle",
+   "result": {
+    "accepted": true,
+    "errors": []
+   }
+  }
+ ],
+ "mail_start": {},
+ "scenario": "review_settle_races_release",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"rule\": \"requires_reply\", \"source\": \"rule\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+    "event": "policy.decided",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   },
+   "[4]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+    "event": "item.transitioned",
+    "id": 4,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "claims": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "agent": "ecf-actor",
+    "batch_id": "claude:0509a34a515a:ecf-actor",
+    "claimed_at": "2026-10-01T12:00:01.052000Z",
+    "expires_at": "2026-10-01T12:05:01.052000Z",
+    "fence": 1,
+    "invalid": 0,
+    "need": "act",
+    "outcome": null,
+    "reported": 1,
+    "session_id": "session-one",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "state": "held",
+    "token_hash": "8b95afbb00d4e572f02c8042e7ba3428b7e785b085f274dff1cc54e494bb257c"
+   }
+  },
+  "excerpts": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "actor_text": "Please send the W-9 again. Longer text.",
+    "classifier_chars": null,
+    "classifier_text": "short text",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  "items": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"customer_request\", \"priority\": \"low\", \"requires_action\": true, \"requires_reply\": true, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\", \"bank_detail_change\": false, \"regulator_claim\": false, \"phishing\": false, \"claims_internal\": false, \"private_individual\": false}",
+    "claude_since": "2026-10-01T12:00:00.050000Z",
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": "rule",
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true, \"attachments\": [{\"name\": \"w9.pdf\", \"type\": \"application/pdf\", \"size\": 1200, \"inline\": false}, {\"name\": null, \"type\": \"image/png\", \"size\": 90, \"inline\": true}]}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{\"internaldate\": \"2026-10-02T09:00Z\"}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "ann@cust.example",
+    "sender_name": "Ann",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "stale": 0,
+    "status": "awaiting_claude",
+    "subject": "W-9 please",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

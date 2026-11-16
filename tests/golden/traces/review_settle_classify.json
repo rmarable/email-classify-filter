@@ -1,0 +1,1397 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.053000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[5]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+           "event": "policy.decided",
+           "id": 5,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+           "ts": "2026-10-01T12:03:01.058000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "decision_source": [
+            null,
+            "rule"
+           ],
+           "proposal": [
+            null,
+            "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:01.054000Z",
+            "2026-10-01T12:03:01.058000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[6]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+           "event": "item.transitioned",
+           "id": 6,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+           "ts": "2026-10-01T12:03:01.059000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "claude_since": [
+            "2026-10-01T12:00:00.048000Z",
+            "2026-10-01T12:03:01.059000Z"
+           ],
+           "status": [
+            "classified",
+            "awaiting_claude"
+           ],
+           "updated_at": [
+            "2026-10-01T12:03:01.058000Z",
+            "2026-10-01T12:03:01.059000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 1
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      },
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.054000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "status": [
+         "awaiting_claude",
+         "classified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {
+       "audit": {
+        "+": [
+         {
+          "key": "[6]",
+          "row": {
+           "actor": "service",
+           "address_id": "ap",
+           "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+           "event": "item.transitioned",
+           "id": 6,
+           "origin": null,
+           "outcome": "ok",
+           "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+           "ts": "2026-10-01T12:03:01.059000Z"
+          }
+         }
+        ]
+       },
+       "items": {
+        "~": [
+         {
+          "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+          "set": {
+           "claude_since": [
+            "2026-10-01T12:00:00.048000Z",
+            "2026-10-01T12:03:01.059000Z"
+           ],
+           "status": [
+            "classified",
+            "awaiting_claude"
+           ],
+           "updated_at": [
+            "2026-10-01T12:00:01.055000Z",
+            "2026-10-01T12:03:01.059000Z"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 1,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      },
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.054000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "decision_source": [
+         null,
+         "rule"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "proposal": [
+         null,
+         "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "status": [
+         "awaiting_claude",
+         "classified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.055000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      },
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.054000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.056000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "claude_since": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ],
+        "decision_source": [
+         null,
+         "rule"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "proposal": [
+         null,
+         "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 6,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      },
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.054000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.056000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "awaiting_claude"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "claude_since": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ],
+        "decision_source": [
+         null,
+         "rule"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "proposal": [
+         null,
+         "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 7,
+   "event": 0,
+   "name": "claude_review.settle",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[3]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+        "event": "item.classified",
+        "id": 3,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.053000Z"
+       }
+      },
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.054000Z"
+       }
+      },
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+        "event": "policy.decided",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.055000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+        "event": "item.transitioned",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.056000Z"
+       }
+      },
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "mcp:session-",
+        "address_id": "ap",
+        "data": "{\"need\": \"classify\", \"agent\": \"ecf-classifier\", \"outcome\": \"awaiting_claude\"}",
+        "event": "claude.submitted",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+        "ts": "2026-10-01T12:00:01.058000Z"
+       }
+      }
+     ]
+    },
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "outcome": [
+         null,
+         "awaiting_claude"
+        ],
+        "reported": [
+         1,
+         0
+        ],
+        "state": [
+         "held",
+         "done"
+        ]
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "batch_id": [
+         null,
+         "claude:0509a34a515a:ecf-classifier"
+        ],
+        "classification": [
+         null,
+         "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+        ],
+        "claude_since": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ],
+        "decision_source": [
+         null,
+         "rule"
+        ],
+        "pinned_models": [
+         null,
+         "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+        ],
+        "proposal": [
+         null,
+         "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+        ],
+        "schema_version": [
+         1,
+         3
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.048000Z",
+         "2026-10-01T12:00:01.056000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 1,
+   "name": "tick",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {}
+  }
+ ],
+ "doc": "A held classification settles: claim done, the item classified (awaiting_claude->classified) and decided.",
+ "events": [
+  {
+   "commits": [
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "state": [
+          "held",
+          "done"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[3]",
+        "row": {
+         "actor": "mcp:session-",
+         "address_id": "ap",
+         "data": "{\"digests\": {\"prompt\": \"2027371008433b6d\", \"rules\": \"12deda798c9d1371\", \"schema\": \"756c2ed14cd77119\"}, \"fields\": {\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}, \"model\": \"claude-opus-5-5\", \"provider\": \"claude\"}",
+         "event": "item.classified",
+         "id": 3,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.053000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "batch_id": [
+          null,
+          "claude:0509a34a515a:ecf-classifier"
+         ],
+         "classification": [
+          null,
+          "{\"bank_detail_change\": false, \"category\": \"customer_request\", \"claims_internal\": false, \"deadline_mentioned\": false, \"fraud_risk\": \"none\", \"payment_related\": false, \"phishing\": false, \"priority\": \"low\", \"private_individual\": false, \"regulator_claim\": false, \"requires_action\": false, \"requires_reply\": false, \"sender_type\": \"vendor\"}"
+         ],
+         "pinned_models": [
+          null,
+          "{\"agent\": \"ecf-classifier\", \"classifier\": \"claude-opus-5-5\", \"pin_key\": \"pins-70ead5b0206adbd2\", \"prompt\": \"2027371008433b6db97c0f3f182b48b9474db2f10052eed4d7a52108656fd0b2\", \"provider\": \"claude\", \"rules\": \"12deda798c9d1371106cb1113c6a0cb8ea0fbfb3f8fbb25b541463c553b5c421\", \"schema\": \"schema-756c2ed14cd77119\"}"
+         ],
+         "schema_version": [
+          1,
+          3
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.048000Z",
+          "2026-10-01T12:00:01.053000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[4]",
+        "row": {
+         "actor": "mcp:session-",
+         "address_id": "ap",
+         "data": "{\"from\": \"awaiting_claude\", \"to\": \"classified\"}",
+         "event": "item.transitioned",
+         "id": 4,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.054000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "status": [
+          "awaiting_claude",
+          "classified"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:01.053000Z",
+          "2026-10-01T12:00:01.054000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[5]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"rule\": \"otherwise\", \"source\": \"rule\", \"actions\": [], \"dropped\": []}",
+         "event": "policy.decided",
+         "id": 5,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.055000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "decision_source": [
+          null,
+          "rule"
+         ],
+         "proposal": [
+          null,
+          "{\"actions\": [], \"draft_withheld\": null, \"plan\": {\"actions\": [], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"otherwise\", \"to_actor\": true}}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:01.054000Z",
+          "2026-10-01T12:00:01.055000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[6]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+         "event": "item.transitioned",
+         "id": 6,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.056000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "claude_since": [
+          "2026-10-01T12:00:00.048000Z",
+          "2026-10-01T12:00:01.056000Z"
+         ],
+         "status": [
+          "classified",
+          "awaiting_claude"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:01.055000Z",
+          "2026-10-01T12:00:01.056000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "outcome": [
+          null,
+          "awaiting_claude"
+         ],
+         "reported": [
+          1,
+          0
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[7]",
+        "row": {
+         "actor": "mcp:session-",
+         "address_id": "ap",
+         "data": "{\"need\": \"classify\", \"agent\": \"ecf-classifier\", \"outcome\": \"awaiting_claude\"}",
+         "event": "claude.submitted",
+         "id": 7,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+         "ts": "2026-10-01T12:00:01.058000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "claude_review.settle",
+   "result": {
+    "accepted": true,
+    "errors": []
+   }
+  },
+  {
+   "commits": [
+    {}
+   ],
+   "name": "tick",
+   "result": {
+    "answers.expire": 0,
+    "approvals.advance_delays": 0,
+    "approvals.expire": 0,
+    "approvals.post_held_cards": 0,
+    "claude_queue.sweep": 0,
+    "decide.sweep": 0
+   }
+  }
+ ],
+ "mail_start": {},
+ "scenario": "review_settle_classify",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"awaiting_claude\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   }
+  },
+  "claims": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "agent": "ecf-classifier",
+    "batch_id": "claude:0509a34a515a:ecf-classifier",
+    "claimed_at": "2026-10-01T12:00:01.050000Z",
+    "expires_at": "2026-10-01T12:05:01.050000Z",
+    "fence": 1,
+    "invalid": 0,
+    "need": "classify",
+    "outcome": null,
+    "reported": 1,
+    "session_id": "session-one",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "state": "held",
+    "token_hash": "8b95afbb00d4e572f02c8042e7ba3428b7e785b085f274dff1cc54e494bb257c"
+   }
+  },
+  "excerpts": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "actor_text": "Please send the W-9 again. Longer text.",
+    "classifier_chars": null,
+    "classifier_text": "short text",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  "items": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": null,
+    "claude_since": "2026-10-01T12:00:00.048000Z",
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": null,
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true, \"attachments\": [{\"name\": \"w9.pdf\", \"type\": \"application/pdf\", \"size\": 1200, \"inline\": false}, {\"name\": null, \"type\": \"image/png\", \"size\": 90, \"inline\": true}]}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{\"internaldate\": \"2026-10-02T09:00Z\"}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": null,
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "ann@cust.example",
+    "sender_name": "Ann",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "stale": 0,
+    "status": "awaiting_claude",
+    "subject": "W-9 please",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.048000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

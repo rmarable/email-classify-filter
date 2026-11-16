@@ -1,0 +1,349 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "items.create_item",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[1]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{}",
+        "event": "item.created",
+        "id": 1,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.046000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "+": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "row": {
+        "address_id": "ap",
+        "batch_id": null,
+        "clarification_rounds": 0,
+        "classification": null,
+        "claude_since": null,
+        "content_hash": "h",
+        "created_at": "2026-10-01T12:00:00.046000Z",
+        "decision_source": null,
+        "duplicate_message_id": 0,
+        "expiry_count": 0,
+        "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true}",
+        "fallback_at": null,
+        "hash_version": 1,
+        "human_correction": null,
+        "locator": "{}",
+        "message_id": null,
+        "model_attempts": 0,
+        "model_failed": 0,
+        "model_failed_at": null,
+        "origin": null,
+        "pinned_models": null,
+        "prechecked": 0,
+        "proposal": null,
+        "proposed_by": null,
+        "review": null,
+        "schema_version": 1,
+        "sender": "news@vendor-a.example",
+        "sender_name": null,
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "stale": 0,
+        "status": "new",
+        "subject": "Test message 0",
+        "suppressed_action": null,
+        "uid": null,
+        "uidvalidity": null,
+        "updated_at": "2026-10-01T12:00:00.046000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "items.create_item",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[1]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{}",
+        "event": "item.created",
+        "id": 1,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.046000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "+": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "row": {
+        "address_id": "ap",
+        "batch_id": null,
+        "clarification_rounds": 0,
+        "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+        "claude_since": null,
+        "content_hash": "h",
+        "created_at": "2026-10-01T12:00:00.046000Z",
+        "decision_source": null,
+        "duplicate_message_id": 0,
+        "expiry_count": 0,
+        "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true}",
+        "fallback_at": null,
+        "hash_version": 1,
+        "human_correction": null,
+        "locator": "{}",
+        "message_id": null,
+        "model_attempts": 0,
+        "model_failed": 0,
+        "model_failed_at": null,
+        "origin": null,
+        "pinned_models": null,
+        "prechecked": 0,
+        "proposal": null,
+        "proposed_by": null,
+        "review": null,
+        "schema_version": 1,
+        "sender": "news@vendor-a.example",
+        "sender_name": null,
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "stale": 0,
+        "status": "new",
+        "subject": "Test message 0",
+        "suppressed_action": null,
+        "uid": null,
+        "uidvalidity": null,
+        "updated_at": "2026-10-01T12:00:00.046000Z"
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "items.create_item: a fetched message inserted at new, with its audit row.",
+ "events": [
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[1]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{}",
+         "event": "item.created",
+         "id": 1,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.046000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "+": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "row": {
+         "address_id": "ap",
+         "batch_id": null,
+         "clarification_rounds": 0,
+         "classification": null,
+         "claude_since": null,
+         "content_hash": "h",
+         "created_at": "2026-10-01T12:00:00.046000Z",
+         "decision_source": null,
+         "duplicate_message_id": 0,
+         "expiry_count": 0,
+         "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true}",
+         "fallback_at": null,
+         "hash_version": 1,
+         "human_correction": null,
+         "locator": "{}",
+         "message_id": null,
+         "model_attempts": 0,
+         "model_failed": 0,
+         "model_failed_at": null,
+         "origin": null,
+         "pinned_models": null,
+         "prechecked": 0,
+         "proposal": null,
+         "proposed_by": null,
+         "review": null,
+         "schema_version": 1,
+         "sender": "news@vendor-a.example",
+         "sender_name": null,
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "stale": 0,
+         "status": "new",
+         "subject": "Test message 0",
+         "suppressed_action": null,
+         "uid": null,
+         "uidvalidity": null,
+         "updated_at": "2026-10-01T12:00:00.046000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "classification": [
+          null,
+          "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}"
+         ]
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "items.create_item",
+   "result": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  }
+ ],
+ "mail_start": {},
+ "scenario": "create_item",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

@@ -1,0 +1,1056 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "answers.ask",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "proposal": [
+         null,
+         "{\"question\": \"Which cost center?\"}"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.050000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "answers.ask",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"needs_clarification\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.051000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "clarification_rounds": [
+         0,
+         1
+        ],
+        "proposal": [
+         null,
+         "{\"question\": \"Which cost center?\"}"
+        ],
+        "status": [
+         "proposed",
+         "needs_clarification"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.051000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 0,
+   "name": "answers.ask",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[4]",
+       "row": {
+        "actor": "service",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"needs_clarification\"}",
+        "event": "item.transitioned",
+        "id": 4,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.051000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "clarification_rounds": [
+         0,
+         1
+        ],
+        "proposal": [
+         null,
+         "{\"question\": \"Which cost center?\"}"
+        ],
+        "status": [
+         "proposed",
+         "needs_clarification"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.051000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.052000Z",
+        "job_id": "0509a34a515a393da710be4617dd1d16",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"ecf has a question (round 1 of 2)\", \"fields\": [[\"Question\", \"Which cost center?\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"answer\", \"label\": \"Answer\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": \"primary\"}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"Question from ecf's model (it can be wrong)\", \"mention\": \"U0ME1\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.052000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 1,
+   "name": "form answer",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+        "event": "item.transitioned",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.053000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "claude_since": [
+         null,
+         "2026-10-01T12:00:00.053000Z"
+        ],
+        "status": [
+         "needs_clarification",
+         "clarified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-01T12:00:00.053000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 1,
+   "name": "form answer",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+        "event": "item.transitioned",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.053000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "claude_since": [
+         null,
+         "2026-10-01T12:00:00.053000Z"
+        ],
+        "proposal": [
+         "{\"question\": \"Which cost center?\"}",
+         "{\"question\": \"Which cost center?\", \"answers\": [{\"question\": \"Which cost center?\", \"answer\": \"CC-7\", \"by\": \"slack:U0ME1\", \"at\": \"2026-10-01T12:00:00.054000Z\"}]}"
+        ],
+        "status": [
+         "needs_clarification",
+         "clarified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-01T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 1,
+   "name": "form answer",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+        "event": "item.transitioned",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.053000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"length\": 4}",
+        "event": "answer.recorded",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.055000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "claude_since": [
+         null,
+         "2026-10-01T12:00:00.053000Z"
+        ],
+        "proposal": [
+         "{\"question\": \"Which cost center?\"}",
+         "{\"question\": \"Which cost center?\", \"answers\": [{\"question\": \"Which cost center?\", \"answer\": \"CC-7\", \"by\": \"slack:U0ME1\", \"at\": \"2026-10-01T12:00:00.054000Z\"}]}"
+        ],
+        "status": [
+         "needs_clarification",
+         "clarified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-01T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 1,
+   "name": "form answer",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+        "event": "item.transitioned",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.053000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"length\": 4}",
+        "event": "answer.recorded",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.055000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "claude_since": [
+         null,
+         "2026-10-01T12:00:00.053000Z"
+        ],
+        "proposal": [
+         "{\"question\": \"Which cost center?\"}",
+         "{\"question\": \"Which cost center?\", \"answers\": [{\"question\": \"Which cost center?\", \"answer\": \"CC-7\", \"by\": \"slack:U0ME1\", \"at\": \"2026-10-01T12:00:00.054000Z\"}]}"
+        ],
+        "status": [
+         "needs_clarification",
+         "clarified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-01T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.056000Z",
+        "job_id": "e1c92093087e5dceed0263070ee98b19",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Answered: ecf will use your answer\", \"fields\": [[\"Question\", \"Which cost center?\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.056000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 1,
+   "name": "form answer",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[5]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+        "event": "item.transitioned",
+        "id": 5,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.053000Z"
+       }
+      },
+      {
+       "key": "[6]",
+       "row": {
+        "actor": "slack:U0ME1",
+        "address_id": "ap",
+        "data": "{\"length\": 4}",
+        "event": "answer.recorded",
+        "id": 6,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.055000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "claude_since": [
+         null,
+         "2026-10-01T12:00:00.053000Z"
+        ],
+        "proposal": [
+         "{\"question\": \"Which cost center?\"}",
+         "{\"question\": \"Which cost center?\", \"answers\": [{\"question\": \"Which cost center?\", \"answer\": \"CC-7\", \"by\": \"slack:U0ME1\", \"at\": \"2026-10-01T12:00:00.054000Z\"}]}"
+        ],
+        "status": [
+         "needs_clarification",
+         "clarified"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.051000Z",
+         "2026-10-01T12:00:00.054000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "jobs": {
+     "+": [
+      {
+       "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.057000Z",
+        "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"answer:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:1\", \"channel\": \"CAP\", \"card\": {\"title\": \"Your answer\", \"fields\": [], \"text\": \"CC-7\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"identity\": null, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.057000Z"
+       }
+      },
+      {
+       "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+       "row": {
+        "address_id": "CAP",
+        "attempts": 0,
+        "claim_expires": null,
+        "claimed_by": null,
+        "created_at": "2026-10-01T12:00:00.056000Z",
+        "job_id": "e1c92093087e5dceed0263070ee98b19",
+        "last_error": null,
+        "max_attempts": 5,
+        "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Answered: ecf will use your answer\", \"fields\": [[\"Question\", \"Which cost center?\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+        "queue": "slack_out",
+        "state": "queued",
+        "timeout_s": 30,
+        "visible_at": "2026-10-01T12:00:00.056000Z"
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "A plain item's answer from the Slack form (needs_clarification->clarified).",
+ "events": [
+  {
+   "commits": [
+    {
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "proposal": [
+          null,
+          "{\"question\": \"Which cost center?\"}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.049000Z",
+          "2026-10-01T12:00:00.050000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[4]",
+        "row": {
+         "actor": "service",
+         "address_id": "ap",
+         "data": "{\"from\": \"proposed\", \"to\": \"needs_clarification\"}",
+         "event": "item.transitioned",
+         "id": 4,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.051000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "clarification_rounds": [
+          0,
+          1
+         ],
+         "status": [
+          "proposed",
+          "needs_clarification"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.050000Z",
+          "2026-10-01T12:00:00.051000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:00.052000Z",
+         "job_id": "0509a34a515a393da710be4617dd1d16",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"ecf has a question (round 1 of 2)\", \"fields\": [[\"Question\", \"Which cost center?\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [{\"action\": \"answer\", \"label\": \"Answer\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": \"primary\"}, {\"action\": \"show_excerpt\", \"label\": \"Show excerpt\", \"ref\": \"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"style\": null}], \"note\": \"Question from ecf's model (it can be wrong)\", \"mention\": \"U0ME1\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:00.052000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "answers.ask",
+   "result": "needs_clarification"
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[5]",
+        "row": {
+         "actor": "slack:U0ME1",
+         "address_id": "ap",
+         "data": "{\"from\": \"needs_clarification\", \"to\": \"clarified\"}",
+         "event": "item.transitioned",
+         "id": 5,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.053000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "claude_since": [
+          null,
+          "2026-10-01T12:00:00.053000Z"
+         ],
+         "status": [
+          "needs_clarification",
+          "clarified"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.051000Z",
+          "2026-10-01T12:00:00.053000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "proposal": [
+          "{\"question\": \"Which cost center?\"}",
+          "{\"question\": \"Which cost center?\", \"answers\": [{\"question\": \"Which cost center?\", \"answer\": \"CC-7\", \"by\": \"slack:U0ME1\", \"at\": \"2026-10-01T12:00:00.054000Z\"}]}"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.053000Z",
+          "2026-10-01T12:00:00.054000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[6]",
+        "row": {
+         "actor": "slack:U0ME1",
+         "address_id": "ap",
+         "data": "{\"length\": 4}",
+         "event": "answer.recorded",
+         "id": 6,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.055000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"e1c92093087e5dceed0263070ee98b19\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:00.056000Z",
+         "job_id": "e1c92093087e5dceed0263070ee98b19",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"channel\": \"CAP\", \"card\": {\"title\": \"Answered: ecf will use your answer\", \"fields\": [[\"Question\", \"Which cost center?\"], [\"From\", \"news@vendor-a.example\"], [\"Subject\", \"Test message 0\"], [\"Classified\", \"marketing, low priority, by a model no longer installed\"], [\"Why\", \"\"], [\"Sender check\", \"pass\"], [\"Flags\", \"none\"], [\"Done\", \"nothing yet\"], [\"Open\", \"ecf item show 00eeeeee\"]], \"text\": \"\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": null, \"identity\": {\"name\": \"ecf ap\", \"icon_emoji\": \":incoming_envelope:\"}, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:00.056000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "jobs": {
+      "+": [
+       {
+        "key": "[\"df7ee75fb2287d3da6d338c3b231c903\"]",
+        "row": {
+         "address_id": "CAP",
+         "attempts": 0,
+         "claim_expires": null,
+         "claimed_by": null,
+         "created_at": "2026-10-01T12:00:00.057000Z",
+         "job_id": "df7ee75fb2287d3da6d338c3b231c903",
+         "last_error": null,
+         "max_attempts": 5,
+         "payload": "{\"op\": \"post\", \"key\": \"answer:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:1\", \"channel\": \"CAP\", \"card\": {\"title\": \"Your answer\", \"fields\": [], \"text\": \"CC-7\", \"buttons\": [], \"note\": \"\", \"mention\": \"\", \"context\": \"\", \"warnings\": [], \"status\": \"\"}, \"thread_key\": \"item:00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"identity\": null, \"pin\": false}",
+         "queue": "slack_out",
+         "state": "queued",
+         "timeout_s": 30,
+         "visible_at": "2026-10-01T12:00:00.057000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "form answer",
+   "result": null
+  }
+ ],
+ "mail_start": {},
+ "scenario": "answer_slack_plain",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "test",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"proposed\"}",
+    "event": "item.transitioned",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   }
+  },
+  "items": {
+   "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+    "claude_since": null,
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": null,
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": null,
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "news@vendor-a.example",
+    "sender_name": null,
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale": 0,
+    "status": "proposed",
+    "subject": "Test message 0",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.049000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

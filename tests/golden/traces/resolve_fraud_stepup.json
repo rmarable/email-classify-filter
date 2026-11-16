@@ -1,0 +1,1265 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.054000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "attempts": 0,
+        "bound_hash": "3ec4894617dfcf141003959b453a186523c307f2e39affa97718c5560f4d7f70",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:00.054000Z",
+        "expires_at": "2026-10-01T12:10:00.054000Z",
+        "nonce_id": "0509a34a515a393da710be4617dd1d16",
+        "person": "operator",
+        "purpose": "item_resolve",
+        "target": "{\"ids\": [\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]}",
+        "verified_at": null
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.054000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "attempts": 0,
+        "bound_hash": "3ec4894617dfcf141003959b453a186523c307f2e39affa97718c5560f4d7f70",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:00.054000Z",
+        "expires_at": "2026-10-01T12:10:00.054000Z",
+        "nonce_id": "0509a34a515a393da710be4617dd1d16",
+        "person": "operator",
+        "purpose": "item_resolve",
+        "target": "{\"ids\": [\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]}",
+        "verified_at": null
+       }
+      }
+     ]
+    },
+    "rate": {
+     "+": [
+      {
+       "key": "[\"stepup.verify\"]",
+       "row": {
+        "count": 1,
+        "key": "stepup.verify",
+        "window_start": "2026-10-01T12:00:00.055000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 1,
+   "name": "stepup",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[7]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.requested",
+        "id": 7,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.054000Z"
+       }
+      },
+      {
+       "key": "[8]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"verified\"}",
+        "event": "stepup.verified",
+        "id": 8,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.056000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "+": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "row": {
+        "attempts": 1,
+        "bound_hash": "3ec4894617dfcf141003959b453a186523c307f2e39affa97718c5560f4d7f70",
+        "code": "AAAA",
+        "consumed_at": null,
+        "created_at": "2026-10-01T12:00:00.054000Z",
+        "expires_at": "2026-10-01T12:10:00.054000Z",
+        "nonce_id": "0509a34a515a393da710be4617dd1d16",
+        "person": "operator",
+        "purpose": "item_resolve",
+        "target": "{\"ids\": [\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]}",
+        "verified_at": "2026-10-01T12:00:00.056000Z"
+       }
+      }
+     ]
+    },
+    "rate": {
+     "+": [
+      {
+       "key": "[\"stepup.verify\"]",
+       "row": {
+        "count": 1,
+        "key": "stepup.verify",
+        "window_start": "2026-10-01T12:00:00.055000Z"
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 1,
+   "event": 2,
+   "name": "inbox.resolve",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 2,
+   "name": "inbox.resolve",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.058000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.058000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 3,
+   "event": 2,
+   "name": "inbox.resolve",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.058000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"reason\": \"done\"}",
+        "event": "item.resolved",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.059000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.058000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 4,
+   "event": 2,
+   "name": "inbox.resolve",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.058000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"reason\": \"done\"}",
+        "event": "item.resolved",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.059000Z"
+       }
+      },
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.060000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.058000Z"
+        ]
+       }
+      },
+      {
+       "key": "[\"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.053000Z",
+         "2026-10-01T12:00:00.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 5,
+   "event": 2,
+   "name": "inbox.resolve",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "audit": {
+     "+": [
+      {
+       "key": "[10]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 10,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.058000Z"
+       }
+      },
+      {
+       "key": "[11]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"reason\": \"done\"}",
+        "event": "item.resolved",
+        "id": 11,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.059000Z"
+       }
+      },
+      {
+       "key": "[12]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+        "event": "item.transitioned",
+        "id": 12,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.060000Z"
+       }
+      },
+      {
+       "key": "[13]",
+       "row": {
+        "actor": "os_user",
+        "address_id": "ap",
+        "data": "{\"reason\": \"done\"}",
+        "event": "item.resolved",
+        "id": 13,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ts": "2026-10-01T12:00:00.061000Z"
+       }
+      },
+      {
+       "key": "[9]",
+       "row": {
+        "actor": "os_user",
+        "address_id": null,
+        "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+        "event": "stepup.consumed",
+        "id": 9,
+        "origin": null,
+        "outcome": "ok",
+        "stable_id": null,
+        "ts": "2026-10-01T12:00:00.057000Z"
+       }
+      }
+     ]
+    },
+    "items": {
+     "~": [
+      {
+       "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.049000Z",
+         "2026-10-01T12:00:00.058000Z"
+        ]
+       }
+      },
+      {
+       "key": "[\"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+       "set": {
+        "status": [
+         "proposed",
+         "resolved_manual"
+        ],
+        "updated_at": [
+         "2026-10-01T12:00:00.053000Z",
+         "2026-10-01T12:00:00.060000Z"
+        ]
+       }
+      }
+     ]
+    },
+    "nonces": {
+     "~": [
+      {
+       "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+       "set": {
+        "consumed_at": [
+         null,
+         "2026-10-01T12:00:00.057000Z"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "Resolving a set with a fraud item needs step-up for all.",
+ "events": [
+  {
+   "commits": [],
+   "name": "inbox.resolve (step-up asked)",
+   "raises": {
+    "message": "this needs step-up",
+    "type": "StepupRequiredError"
+   }
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[7]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+         "event": "stepup.requested",
+         "id": 7,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:00.054000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "+": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "row": {
+         "attempts": 0,
+         "bound_hash": "3ec4894617dfcf141003959b453a186523c307f2e39affa97718c5560f4d7f70",
+         "code": "AAAA",
+         "consumed_at": null,
+         "created_at": "2026-10-01T12:00:00.054000Z",
+         "expires_at": "2026-10-01T12:10:00.054000Z",
+         "nonce_id": "0509a34a515a393da710be4617dd1d16",
+         "person": "operator",
+         "purpose": "item_resolve",
+         "target": "{\"ids\": [\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\", \"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]}",
+         "verified_at": null
+        }
+       }
+      ]
+     }
+    },
+    {
+     "rate": {
+      "+": [
+       {
+        "key": "[\"stepup.verify\"]",
+        "row": {
+         "count": 1,
+         "key": "stepup.verify",
+         "window_start": "2026-10-01T12:00:00.055000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[8]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"verified\"}",
+         "event": "stepup.verified",
+         "id": 8,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:00.056000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "~": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "set": {
+         "attempts": [
+          0,
+          1
+         ],
+         "verified_at": [
+          null,
+          "2026-10-01T12:00:00.056000Z"
+         ]
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "stepup",
+   "result": "0509a34a515a393da710be4617dd1d16"
+  },
+  {
+   "commits": [
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[9]",
+        "row": {
+         "actor": "os_user",
+         "address_id": null,
+         "data": "{\"nonce_id\": \"0509a34a515a393da710be4617dd1d16\", \"purpose\": \"item_resolve\", \"result\": \"ok\"}",
+         "event": "stepup.consumed",
+         "id": 9,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": null,
+         "ts": "2026-10-01T12:00:00.057000Z"
+        }
+       }
+      ]
+     },
+     "nonces": {
+      "~": [
+       {
+        "key": "[\"0509a34a515a393da710be4617dd1d16\"]",
+        "set": {
+         "consumed_at": [
+          null,
+          "2026-10-01T12:00:00.057000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[10]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+         "event": "item.transitioned",
+         "id": 10,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.058000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "proposed",
+          "resolved_manual"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.049000Z",
+          "2026-10-01T12:00:00.058000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[11]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"reason\": \"done\"}",
+         "event": "item.resolved",
+         "id": 11,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.059000Z"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[12]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"from\": \"proposed\", \"to\": \"resolved_manual\"}",
+         "event": "item.transitioned",
+         "id": 12,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.060000Z"
+        }
+       }
+      ]
+     },
+     "items": {
+      "~": [
+       {
+        "key": "[\"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]",
+        "set": {
+         "status": [
+          "proposed",
+          "resolved_manual"
+         ],
+         "updated_at": [
+          "2026-10-01T12:00:00.053000Z",
+          "2026-10-01T12:00:00.060000Z"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {
+     "audit": {
+      "+": [
+       {
+        "key": "[13]",
+        "row": {
+         "actor": "os_user",
+         "address_id": "ap",
+         "data": "{\"reason\": \"done\"}",
+         "event": "item.resolved",
+         "id": 13,
+         "origin": null,
+         "outcome": "ok",
+         "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+         "ts": "2026-10-01T12:00:00.061000Z"
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "name": "inbox.resolve",
+   "result": [
+    "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+   ]
+  }
+ ],
+ "mail_start": {},
+ "scenario": "resolve_fraud_stepup",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "test",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"proposed\"}",
+    "event": "item.transitioned",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   },
+   "[4]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 4,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.050000Z"
+   },
+   "[5]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 5,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.052000Z"
+   },
+   "[6]": {
+    "actor": "test",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"proposed\"}",
+    "event": "item.transitioned",
+    "id": 6,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ts": "2026-10-01T12:00:00.053000Z"
+   }
+  },
+  "items": {
+   "[\"00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+    "claude_since": null,
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": null,
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {\"fraud\": [\"bank details from an unconfirmed sender\"]}}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": null,
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "news@vendor-a.example",
+    "sender_name": null,
+    "stable_id": "00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale": 0,
+    "status": "proposed",
+    "subject": "Test message 0",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.049000Z"
+   },
+   "[\"01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"marketing\", \"priority\": \"low\", \"requires_action\": false, \"requires_reply\": false, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\"}",
+    "claude_since": null,
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.050000Z",
+    "decision_source": null,
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": null,
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "news@vendor-a.example",
+    "sender_name": null,
+    "stable_id": "01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "stale": 0,
+    "status": "proposed",
+    "subject": "Test message 1",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.053000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}

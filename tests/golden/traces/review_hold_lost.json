@@ -1,0 +1,300 @@
+{
+ "crashes": [
+  {
+   "after_commit": 1,
+   "event": 0,
+   "name": "claude_review.propose_action",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "claimed",
+         "released"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "after_commit": 2,
+   "event": 0,
+   "name": "claude_review.propose_action",
+   "recovery": {
+    "restart": {
+     "commits": [
+      {},
+      {},
+      {}
+     ],
+     "result": null
+    },
+    "tick": {
+     "commits": [
+      {}
+     ],
+     "result": {
+      "answers.expire": 0,
+      "approvals.advance_delays": 0,
+      "approvals.expire": 0,
+      "approvals.post_held_cards": 0,
+      "claude_queue.sweep": 0,
+      "decide.sweep": 0
+     }
+    }
+   },
+   "state": {
+    "claims": {
+     "~": [
+      {
+       "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+       "set": {
+        "state": [
+         "claimed",
+         "released"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "doc": "The session ends between the claim check and the hold: _hold's fenced update misses.",
+ "events": [
+  {
+   "commits": [
+    {
+     "claims": {
+      "~": [
+       {
+        "key": "[\"6170000000000000000000000000000000000000000000000000000000000000\"]",
+        "set": {
+         "state": [
+          "claimed",
+          "released"
+         ]
+        }
+       }
+      ]
+     }
+    },
+    {}
+   ],
+   "name": "claude_review.propose_action",
+   "raises": {
+    "message": "that claim has ended",
+    "type": "ConflictError"
+   }
+  }
+ ],
+ "mail_start": {},
+ "scenario": "review_hold_lost",
+ "start": {
+  "addresses": {
+   "[\"ap\"]": {
+    "actor_id": null,
+    "address_id": "ap",
+    "classifier_id": null,
+    "created_at": "2026-10-01T12:00:00.044000Z",
+    "display_name": null,
+    "email": "ap@acme.example",
+    "outbound": 0,
+    "outbound_dismissed_at": null,
+    "outbound_reminded_at": null,
+    "outbound_reminders": 0,
+    "outbound_snoozed_until": null,
+    "overrides": "{}",
+    "paused": 0,
+    "preset": "C",
+    "removed_at": null,
+    "sends_tripped_at": null,
+    "sensitivity": "standard",
+    "smtp_host": null,
+    "smtp_port": null,
+    "stage": "live"
+   }
+  },
+  "audit": {
+   "[1]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{}",
+    "event": "item.created",
+    "id": 1,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.046000Z"
+   },
+   "[2]": {
+    "actor": "classifier",
+    "address_id": "ap",
+    "data": "{\"from\": \"new\", \"to\": \"classified\"}",
+    "event": "item.transitioned",
+    "id": 2,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.048000Z"
+   },
+   "[3]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"rule\": \"requires_reply\", \"source\": \"rule\", \"actions\": [{\"name\": \"label\", \"target\": \"customer_request\", \"mode\": \"auto\"}, {\"name\": \"flag\", \"target\": null, \"mode\": \"auto\"}], \"dropped\": []}",
+    "event": "policy.decided",
+    "id": 3,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.049000Z"
+   },
+   "[4]": {
+    "actor": "service",
+    "address_id": "ap",
+    "data": "{\"from\": \"classified\", \"to\": \"awaiting_claude\"}",
+    "event": "item.transitioned",
+    "id": 4,
+    "origin": null,
+    "outcome": "ok",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "ts": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "claims": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "agent": "ecf-actor",
+    "batch_id": "claude:0509a34a515a:ecf-actor",
+    "claimed_at": "2026-10-01T12:00:01.052000Z",
+    "expires_at": "2026-10-01T12:05:01.052000Z",
+    "fence": 1,
+    "invalid": 0,
+    "need": "act",
+    "outcome": null,
+    "reported": 1,
+    "session_id": "session-one",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "state": "claimed",
+    "token_hash": "8b95afbb00d4e572f02c8042e7ba3428b7e785b085f274dff1cc54e494bb257c"
+   }
+  },
+  "excerpts": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "actor_text": "Please send the W-9 again. Longer text.",
+    "classifier_chars": null,
+    "classifier_text": "short text",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  "items": {
+   "[\"6170000000000000000000000000000000000000000000000000000000000000\"]": {
+    "address_id": "ap",
+    "batch_id": null,
+    "clarification_rounds": 0,
+    "classification": "{\"category\": \"customer_request\", \"priority\": \"low\", \"requires_action\": true, \"requires_reply\": true, \"payment_related\": false, \"deadline_mentioned\": false, \"sender_type\": \"vendor\", \"fraud_risk\": \"none\", \"bank_detail_change\": false, \"regulator_claim\": false, \"phishing\": false, \"claims_internal\": false, \"private_individual\": false}",
+    "claude_since": "2026-10-01T12:00:00.050000Z",
+    "content_hash": "h",
+    "created_at": "2026-10-01T12:00:00.046000Z",
+    "decision_source": "rule",
+    "duplicate_message_id": 0,
+    "expiry_count": 0,
+    "facts": "{\"triggers\": {}, \"auth_result\": \"pass\", \"sender_seen_before\": true, \"bulk_signal\": true, \"bulk_corroborates\": true, \"attachments\": [{\"name\": \"w9.pdf\", \"type\": \"application/pdf\", \"size\": 1200, \"inline\": false}, {\"name\": null, \"type\": \"image/png\", \"size\": 90, \"inline\": true}]}",
+    "fallback_at": null,
+    "hash_version": 1,
+    "human_correction": null,
+    "locator": "{\"internaldate\": \"2026-10-02T09:00Z\"}",
+    "message_id": null,
+    "model_attempts": 0,
+    "model_failed": 0,
+    "model_failed_at": null,
+    "origin": null,
+    "pinned_models": null,
+    "prechecked": 0,
+    "proposal": "{\"actions\": [{\"name\": \"label\", \"target\": \"customer_request\"}, {\"name\": \"flag\", \"target\": null}], \"draft_withheld\": \"bulk\", \"plan\": {\"actions\": [{\"mode\": \"auto\", \"name\": \"label\", \"target\": \"customer_request\"}, {\"mode\": \"auto\", \"name\": \"flag\", \"target\": null}], \"actor\": null, \"dropped\": [], \"high_risk\": false, \"offer_confirm\": false, \"payment_or_fraud\": false, \"rule\": \"requires_reply\", \"to_actor\": true}}",
+    "proposed_by": null,
+    "review": null,
+    "schema_version": 1,
+    "sender": "ann@cust.example",
+    "sender_name": "Ann",
+    "stable_id": "6170000000000000000000000000000000000000000000000000000000000000",
+    "stale": 0,
+    "status": "awaiting_claude",
+    "subject": "W-9 please",
+    "suppressed_action": null,
+    "uid": null,
+    "uidvalidity": null,
+    "updated_at": "2026-10-01T12:00:00.050000Z"
+   }
+  },
+  "routes": {
+   "[\"ap\", \"slack\"]": {
+    "address_id": "ap",
+    "invited": "",
+    "name": "ecf-default-ap",
+    "route_ref": "CAP",
+    "surface": "slack",
+    "thread_refs": "{}"
+   }
+  },
+  "settings": {
+   "[\"install.generation\"]": {
+    "key": "install.generation",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "0"
+   },
+   "[\"install.id\"]": {
+    "key": "install.id",
+    "updated_at": "2026-10-01T12:00:00.043000Z",
+    "updated_by": "migration",
+    "value": "\"1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d\""
+   },
+   "[\"slack_app_id\"]": {
+    "key": "slack_app_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"A1\""
+   },
+   "[\"slack_member_id\"]": {
+    "key": "slack_member_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"U0ME1\""
+   },
+   "[\"slack_team_id\"]": {
+    "key": "slack_team_id",
+    "updated_at": "2026-10-01T12:00:00.045000Z",
+    "updated_by": "test",
+    "value": "\"T1\""
+   }
+  }
+ }
+}
