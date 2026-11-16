@@ -2772,7 +2772,7 @@ v3.0.0 planning and build measurements recorded here (they continue §21.2):
   - **Dispatch:** run 1 448 s from first claim to last answer (largest gap 14.1 s). Run 2 932 s, largest gap 293 s: the main session gave one classifier spawn another case's claim token (case `6bc2472b…` with `704b6d94…`'s); the agent was refused ("that claim isn't current"), the claim expired after `CLAIM_TTL` (300 s), and `GRACE` (300 s) then held back the 67 actor cases; scores unaffected (the case was re-claimed and recorded). First expired claim in the last five full runs. Fix planned: `planning-docs/EVAL-CLAIM-MIX-UP.md`.
 - **Open from schema v3, stage S2** (OD-498, 2026-10-13; for the operator): (1) `ecf upgrade` to v3 will name A and B addresses among those that drop to `assist`, though their gate key doesn't change (§11.10); the `v2.2.3` client decides phase 1, so fixing it needs a release note or a rule change in a later client. (2) The `phishing` labels: done 2026-10-13, all 300 cards labelled (§16.1). (3) Whether schema v3 needs its own ADR, as v2 had (ADR 0024); stage S2 records only OD-498, and schema doc §13 plans an OD and ADR when the extension model is replaced (S4).
 
-### 21.4 Item-engine behaviours kept as they are (OD-841)
+### 21.4 Item-engine behaviours kept as they are (OD-841, OD-842)
 
 Found while inventorying v1's item engine for the pure-planner refactor (D112-D114; inventory at 1d174d4). Each is
 today's behaviour, kept unchanged by the refactor and pinned by its golden traces; none is fixed yet. Most need a
@@ -2800,6 +2800,28 @@ crash or an error between two of an event's database commits.
    resolve` ends it.
 9. **A Claude submission's claim is ended without re-checking it.** Settling marks the claim done without checking
    it is still held (the other path that ends a claim does check).
+
+Items 10-16 (OD-842) were found by the coverage baseline's hand scenarios (planner step 2, D117), each driven by
+another writer committing between two of an event's commits:
+
+10. **A delayed send can leave its countdown behind.** A high-value send resolved by hand between its move to
+    delayed and the countdown being written leaves a countdown for a closed item; the approval still answers
+    "delayed" and announces the countdown, and the next countdown tick removes it.
+11. **A send that fails after its item was resolved keeps an approved grant.** On a retryable failure the used
+    grant is set back to approved and stays approved on the closed item; on the last attempt the move to failed
+    raises an error instead.
+12. **A grant can be issued for an item already resolved.** A request for approval, expiry's re-offer and the
+    re-offer each issue a grant for an item resolved between their move and the grant; the request also posts its
+    card.
+13. **A cancel during the countdown can stop the tick.** A send cancelled between its countdown ending and its
+    start makes the countdown step raise, and the error ends that tick.
+14. **A held Claude result is applied after its claim ended** (follows from 9). It is applied after its session
+    ended, or after another session re-claimed the item; that new claim stays open on an item now executing.
+15. **Batch approvals can stop partway.** `ecf approve --pending` asks for step-up once, then approves one by one;
+    an item closing mid-batch stops it with the earlier items already approved. `ecf approve --scan` commits its
+    re-offer of expired approvals before asking for step-up.
+16. **A requeued send's first attempt stays pending.** After three retryable failures and a requeue, the first
+    attempt's sent record stays pending and is never settled.
 
 ## 22. Diagrams
 
@@ -3807,6 +3829,7 @@ Generated from every dated operator-decision marker in the plan outside its Revi
 | OD-732 | 2026-11-06 | (operator decision 2026-11-06, after M1 Phase R round 20 on draft 20, identity H1: "cross-machine and multi-user should be separate tasks"; "put these tasks on the roadmap as part of M2") | SPEC §1.2; `docs/roadmap/m1-aws-mode.md` (draft 21) | **Finishing a job from another computer moves to M2, as its own task:** in M1 a key rotation is finished only on the computer that holds its key text, and losing that computer mid-rotation is a stated limit (restore, then destroy); M2 gets two separate tasks, multi-user teams and finishing a maintenance job from another computer |
 | OD-840 | 2026-11-12 | (operator request 2026-11-12: re-test Jev with questions designed for it; plan `planning-docs/JEV-NATIVE-QUESTIONS.md` drafts 1-5, every review recommendation taken under the operator's standing instruction) | SPEC §7.9, §21.2 | **Jev-designed questions measured, eval only:** `ecf eval run --classifier-backend jev` gains `--jev-questions native`, `--jev-state s3` and `--jev-reverse-choices` (experiments, never for the gate); `/ecf-eval --preset D --source-run` takes a named Jev run, never for the gate; result files gain each question's raw answer (format 7). Stage A: no native arm passes (an urgent bug report loses its escalation in every native run); the JSON-state arm gains about 5 points over the Claude-style questions; Jev stays shelved (OD-516) |
 | OD-841 | 2026-11-15 | (planner step 1b inventory, D114) | SPEC §21.4 | Nine item-engine behaviours found in the v1 inventory (incl. D114 (10)'s "Not sent" card) recorded as v1 open items, kept unchanged by the planner refactor |
+| OD-842 | 2026-11-16 | (planner step 2 coverage baseline, D117) | SPEC §21.4 | Seven more item-engine behaviours, found by the golden-trace race scenarios, recorded as v1 open items (items 10-16), kept unchanged by the planner refactor |
 
 ### 23.5 Group 1 documentation findings (2026-09-26)
 
